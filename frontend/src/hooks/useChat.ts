@@ -52,6 +52,15 @@ export function useChat(projectId: string | null, stage: StageName | null) {
           setStreaming(false);
           break;
         case 'error':
+          setMessages(prev => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: event.content || 'An error occurred. Please try again.',
+              timestamp: new Date().toISOString(),
+              isError: true,
+            },
+          ]);
           setStreamingContent('');
           setStreaming(false);
           break;

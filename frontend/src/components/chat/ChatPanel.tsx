@@ -34,15 +34,17 @@ export function ChatPanel({ messages, streaming, streamingContent, onSend }: Pro
     <div className="chat-panel">
       <div className="messages">
         {messages.map((msg, i) => (
-          <div key={i} className={`message ${msg.role}`}>
+          <div key={i} className={`message ${msg.role}${msg.isError ? ' error' : ''}`}>
             <div className="message-role">{msg.role === 'user' ? 'You' : 'Agent'}</div>
             <div className="message-content">{msg.content}</div>
           </div>
         ))}
-        {streaming && streamingContent && (
+        {streaming && (
           <div className="message assistant streaming">
             <div className="message-role">Agent</div>
-            <div className="message-content">{streamingContent}</div>
+            <div className="message-content">
+              {streamingContent || <span className="typing-indicator"><span /><span /><span /></span>}
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />

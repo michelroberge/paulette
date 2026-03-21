@@ -2,7 +2,10 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
+	"os/exec"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -82,6 +85,22 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
 		http.Error(w, "failed to save project: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Git commit the approved artifact
+	if artifactPath, ok := pipeline.ArtifactPaths[previousStage]; ok {
+		gitAdd := exec.Command("git", "add", artifactPath)
+		gitAdd.Dir = project.HostDir
+		if err := gitAdd.Run(); err != nil {
+			log.Printf("git add failed for %s: %v", artifactPath, err)
+		} else {
+			commitMsg := fmt.Sprintf("approve(%s): artifact", previousStage)
+			gitCommit := exec.Command("git", "commit", "-m", commitMsg)
+			gitCommit.Dir = project.HostDir
+			if err := gitCommit.Run(); err != nil {
+				log.Printf("git commit failed for %s: %v", artifactPath, err)
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
