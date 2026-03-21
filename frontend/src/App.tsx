@@ -5,17 +5,26 @@ import { StagesSidebar } from './components/layout/StagesSidebar';
 import { ChatPanel } from './components/chat/ChatPanel';
 import { ArtifactPreview } from './components/artifact/ArtifactPreview';
 import { ApproveButton } from './components/pipeline/ApproveButton';
+import { CompletionView } from './components/pipeline/CompletionView';
 import { getPipeline } from './api/pipeline';
 import { useChat } from './hooks/useChat';
 import type { Project, PipelineState, StageName } from './types';
 import './App.css';
+
+const KICKOFF_MESSAGES: Partial<Record<StageName, string>> = {
+  vision: "Let's start building your product vision. What's the core idea — what problem are you solving and for whom?",
+  ux: "I've reviewed the approved vision. Let me propose the initial user flows and screen descriptions for this product.",
+  architecture: "I've reviewed the vision and UX design. Let me propose the technical architecture — stack, components, APIs, and data models.",
+  build: "I've reviewed all approved artifacts. Let me create a concrete build plan with milestones and tasks.",
+  review: "I've reviewed all approved artifacts. Let me perform a structured validation and give you my assessment.",
+};
 
 function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
   const [selectedStage, setSelectedStage] = useState<StageName | null>(null);
 
-  const { messages, streaming, streamingContent, artifactUpdated, loadHistory, send } =
+  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send } =
     useChat(project?.id ?? null, selectedStage);
 
   const loadPipeline = useCallback(async () => {
@@ -36,6 +45,15 @@ function App() {
   useEffect(() => {
     loadHistory();
   }, [loadHistory]);
+
+  // Auto-kickoff: when entering a stage with no history, send the opening message
+  useEffect(() => {
+    if (!historyLoaded || messages.length > 0 || streaming) return;
+    const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
+    if (currentStageInfo?.status !== 'active') return;
+    const kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
+    if (kickoff) send(kickoff);
+  }, [historyLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleApproved = async () => {
     const state = await loadPipeline();
@@ -61,29 +79,39 @@ function App() {
         />
 
         <main className="main-content">
-          <ChatPanel
-            messages={messages}
-            streaming={streaming}
-            streamingContent={streamingContent}
-            onSend={send}
-          />
-
-          {selectedStage && selectedStage !== 'complete' && (
-            <ArtifactPreview
-              projectId={project.id}
-              stage={selectedStage}
-              refreshTrigger={artifactUpdated}
+          {pipeline?.currentStage === 'complete' && selectedStage === 'complete' ? (
+            <CompletionView
+              project={project}
+              onNewProject={() => { setProject(null); setPipeline(null); }}
+              onViewStage={stage => setSelectedStage(stage)}
             />
-          )}
-
-          {isActiveStage && (
-            <div className="approve-bar">
-              <ApproveButton
-                projectId={project.id}
-                disabled={streaming}
-                onApproved={handleApproved}
+          ) : (
+            <>
+              <ChatPanel
+                messages={messages}
+                streaming={streaming}
+                streamingContent={streamingContent}
+                onSend={send}
               />
-            </div>
+
+              {selectedStage && selectedStage !== 'complete' && (
+                <ArtifactPreview
+                  projectId={project.id}
+                  stage={selectedStage}
+                  refreshTrigger={artifactUpdated}
+                />
+              )}
+
+              {isActiveStage && (
+                <div className="approve-bar">
+                  <ApproveButton
+                    projectId={project.id}
+                    disabled={streaming}
+                    onApproved={handleApproved}
+                  />
+                </div>
+              )}
+            </>
           )}
         </main>
       </div>

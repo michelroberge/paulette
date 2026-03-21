@@ -3,6 +3,14 @@ import ReactMarkdown from 'react-markdown';
 import { getArtifact } from '../../api/artifacts';
 import type { StageName } from '../../types';
 
+const STAGE_LABELS: Record<string, string> = {
+  vision: 'Vision',
+  ux: 'UX Design',
+  architecture: 'Architecture',
+  build: 'Build Plan',
+  review: 'Review',
+};
+
 interface Props {
   projectId: string;
   stage: StageName;
@@ -32,7 +40,7 @@ export function ArtifactPreview({ projectId, stage, refreshTrigger }: Props) {
 
   return (
     <div className="artifact-preview">
-      <h4>Artifact</h4>
+      <h4>{STAGE_LABELS[stage] ?? stage} Artifact</h4>
       <div className="artifact-content">
         <ReactMarkdown>{content}</ReactMarkdown>
       </div>

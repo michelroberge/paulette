@@ -308,6 +308,97 @@ body {
   cursor: not-allowed;
 }
 
+/* Completion View */
+.completion-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2rem;
+  padding: 3rem;
+  text-align: center;
+}
+
+.completion-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.completion-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #22c55e;
+  color: white;
+  font-size: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.completion-header h2 {
+  font-size: 1.75rem;
+}
+
+.completion-subtitle {
+  color: #94a3b8;
+}
+
+.completion-artifacts {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 1.5rem 2rem;
+  min-width: 300px;
+}
+
+.completion-artifacts h3 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  margin-bottom: 1rem;
+}
+
+.completion-artifacts ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.completion-artifact-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.artifact-check {
+  color: #22c55e;
+  font-size: 0.9rem;
+}
+
+.artifact-link {
+  background: none;
+  border: none;
+  color: #93c5fd;
+  cursor: pointer;
+  font-size: 0.9rem;
+  text-align: left;
+  padding: 0;
+}
+
+.artifact-link:hover {
+  text-decoration: underline;
+}
+
+.completion-actions {
+  margin-top: 1rem;
+}
+
 /* Project List */
 .project-list {
   max-width: 800px;
@@ -369,6 +460,72 @@ body {
 
 .project-card.new-project .plus {
   font-size: 2rem;
+}
+
+.project-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+
+.project-card-header h3 {
+  margin: 0;
+}
+
+.delete-button {
+  background: none;
+  border: none;
+  color: #64748b;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.delete-button:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Stage progress pip bar */
+.stage-progress {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 0.6rem;
+}
+
+.stage-pip {
+  width: 20px;
+  height: 4px;
+  border-radius: 2px;
+  background: #334155;
+}
+
+.stage-pip.done {
+  background: #22c55e;
+}
+
+.stage-pip.active {
+  background: #3b82f6;
+}
+
+.stage-label {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-left: 4px;
+}
+
+.form-actions button.danger {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: white;
+}
+
+.form-actions button.danger:hover {
+  background: #dc2626;
 }
 
 /* Modal */

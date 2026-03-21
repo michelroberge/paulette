@@ -2,7 +2,11 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -30,6 +34,7 @@ type createProjectRequest struct {
 	Name    string `json:"name"`
 	Author  string `json:"author"`
 	HostDir string `json:"hostDir"`
+	Version string `json:"version"`
 }
 
 func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -43,16 +48,30 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	version := req.Version
+	if version == "" {
+		version = "0.1.0"
+	}
+
 	now := time.Now()
 	project := &model.Project{
 		ID:           uuid.New().String(),
 		Name:         req.Name,
 		Author:       req.Author,
-		Version:      "0.1.0",
+		Version:      version,
 		HostDir:      req.HostDir,
 		CurrentStage: model.StageVision,
 		CreatedAt:    now,
 		UpdatedAt:    now,
+	}
+
+	// Git init the host directory if not already a git repo
+	if _, err := os.Stat(filepath.Join(req.HostDir, ".git")); os.IsNotExist(err) {
+		gitInit := exec.Command("git", "init")
+		gitInit.Dir = req.HostDir
+		if out, err := gitInit.CombinedOutput(); err != nil {
+			log.Printf("git init failed in %s: %v: %s", req.HostDir, err, out)
+		}
 	}
 
 	// Initialize .ai-factory directory structure

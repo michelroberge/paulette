@@ -7,11 +7,16 @@ export function useChat(projectId: string | null, stage: StageName | null) {
   const [streaming, setStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [artifactUpdated, setArtifactUpdated] = useState(0);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   const loadHistory = useCallback(async () => {
     if (!projectId || !stage) return;
+    setHistoryLoaded(false);
+    setMessages([]);
     const { messages } = await getChatHistory(projectId, stage);
     setMessages(messages);
+    setHistoryLoaded(true);
+    return messages;
   }, [projectId, stage]);
 
   const send = useCallback(async (message: string) => {
@@ -68,5 +73,5 @@ export function useChat(projectId: string | null, stage: StageName | null) {
     });
   }, [projectId, stage, streaming]);
 
-  return { messages, streaming, streamingContent, artifactUpdated, loadHistory, send };
+  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send };
 }
