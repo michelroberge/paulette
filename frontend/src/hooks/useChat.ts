@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { getChatHistory, sendMessage } from '../api/chat';
 import type { Message, StageName, StreamEvent } from '../types';
 
-export function useChat(projectId: string | null, stage: StageName | null) {
+export function useChat(projectId: string | null, stage: StageName | null, reloadTrigger?: number) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
@@ -17,7 +17,7 @@ export function useChat(projectId: string | null, stage: StageName | null) {
     setMessages(messages);
     setHistoryLoaded(true);
     return messages;
-  }, [projectId, stage]);
+  }, [projectId, stage, reloadTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = useCallback(async (message: string) => {
     if (!projectId || !stage || streaming) return;

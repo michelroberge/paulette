@@ -24,9 +24,10 @@ function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
   const [selectedStage, setSelectedStage] = useState<StageName | null>(null);
+  const [chatReloadTrigger, setChatReloadTrigger] = useState(0);
 
   const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send } =
-    useChat(project?.id ?? null, selectedStage);
+    useChat(project?.id ?? null, selectedStage, chatReloadTrigger);
 
   const loadPipeline = useCallback(async () => {
     if (!project) return;
@@ -60,6 +61,7 @@ function App() {
     const state = await resetStage(project!.id, stage);
     setPipeline(state);
     setSelectedStage(stage);
+    setChatReloadTrigger(t => t + 1);
   };
 
   const handleApproved = async () => {
