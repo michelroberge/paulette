@@ -55,6 +55,7 @@ func (s *Server) Router() http.Handler {
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo)
+	rh := handler.NewResetHandler(s.registry, s.projectRepo)
 
 	r.Route("/api/projects", func(r chi.Router) {
 		r.Post("/", ph.Create)
@@ -72,6 +73,8 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/{id}/stages/ux/mock", mh.Get)
 		r.Post("/{id}/stages/ux/mock", mh.Generate)
+
+		r.Post("/{id}/stages/{stage}/reset", rh.Reset)
 	})
 
 	return r

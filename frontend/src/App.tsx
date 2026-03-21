@@ -7,7 +7,7 @@ import { ArtifactPreview } from './components/artifact/ArtifactPreview';
 import { UxPanel } from './components/ux/UxPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
-import { getPipeline } from './api/pipeline';
+import { getPipeline, resetStage } from './api/pipeline';
 import { useChat } from './hooks/useChat';
 import type { Project, PipelineState, StageName } from './types';
 import './App.css';
@@ -56,6 +56,12 @@ function App() {
     if (kickoff) send(kickoff);
   }, [historyLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleReset = async (stage: StageName) => {
+    const state = await resetStage(project!.id, stage);
+    setPipeline(state);
+    setSelectedStage(stage);
+  };
+
   const handleApproved = async () => {
     const state = await loadPipeline();
     if (state) setSelectedStage(state.currentStage);
@@ -77,6 +83,7 @@ function App() {
           pipeline={pipeline}
           selectedStage={selectedStage}
           onSelectStage={setSelectedStage}
+          onReset={handleReset}
         />
 
         <main className="main-content">
