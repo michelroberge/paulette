@@ -14,6 +14,7 @@ export async function generateMock(
   projectId: string,
   refinement: string,
   onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const url = apiStreamUrl(`/projects/${projectId}/stages/ux/mock`);
 
@@ -21,6 +22,7 @@ export async function generateMock(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refinement }),
+    signal,
   });
 
   if (!res.ok) {
@@ -34,25 +36,32 @@ export async function generateMock(
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6).trim();
-        if (data) {
-          try {
-            onEvent(JSON.parse(data));
-          } catch {
-            // skip malformed
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          if (data) {
+            try {
+              onEvent(JSON.parse(data));
+            } catch {
+              // skip malformed
+            }
           }
         }
       }
     }
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return;
+    throw err;
+  } finally {
+    reader.cancel();
   }
 }

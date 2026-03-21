@@ -26,7 +26,7 @@ function App() {
   const [selectedStage, setSelectedStage] = useState<StageName | null>(null);
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0);
 
-  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send } =
+  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send, stop } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger);
 
   const loadPipeline = useCallback(async () => {
@@ -102,6 +102,7 @@ function App() {
                 streaming={streaming}
                 streamingContent={streamingContent}
                 onSend={send}
+                onStop={stop}
               />
 
               {selectedStage && selectedStage !== 'complete' && (

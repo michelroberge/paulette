@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -13,14 +14,17 @@ const mockSystemPrompt = `You are a UI mockup generator for an AI Product Factor
 
 Requirements:
 - Generate a SINGLE self-contained HTML file with all CSS in a <style> block and no external dependencies
-- Show each key screen as a distinct labeled section
 - Use a modern dark wireframe aesthetic: dark background (#0f172a), slate panels (#1e293b), blue accents (#3b82f6), light text (#e2e8f0)
 - Navigation bars, sidebars, buttons, cards, inputs, and lists should look like realistic UI components
 - Use Unicode symbols for icons (e.g. ☰ ✓ ← → ✕ ⚙ 🔍 + ●)
 - Include realistic placeholder text — product names, usernames, dates, descriptions
-- Each screen must have a clear title label above it (e.g. "Screen 1: Dashboard")
-- Structure: a scrollable page showing all screens top to bottom with some spacing between them
 - Screens should have a realistic fixed width (e.g. 1024px centered) with a subtle drop shadow
+
+Screen navigation:
+- If the document describes multiple screens or pages, implement a tab bar at the very top of the page with one tab per screen
+- Clicking a tab shows only that screen and hides all others (use inline JavaScript to toggle visibility)
+- The active tab should be visually highlighted
+- If there is only one screen, no tab bar is needed — just render it directly
 
 Output ONLY the HTML file. Start with <!DOCTYPE html> and end with </html>. Do not include any explanation, markdown, or code fences.`
 
@@ -83,6 +87,9 @@ func GenerateMock(ctx context.Context, uxArtifact string, refinement string) (<-
 					}
 				}
 			case "result":
+				if event.Usage != nil {
+					ch <- StreamEvent{Type: "tokens", Content: strconv.Itoa(event.Usage.OutputTokens)}
+				}
 				if fullResponse.Len() == 0 && event.Result != "" {
 					fullResponse.WriteString(event.Result)
 					ch <- StreamEvent{Type: "chunk", Content: event.Result}

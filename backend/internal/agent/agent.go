@@ -24,6 +24,12 @@ type claudeEvent struct {
 	Message *claudeMessage  `json:"message,omitempty"`
 	Result  string          `json:"result,omitempty"`
 	IsError bool            `json:"is_error,omitempty"`
+	Usage   *claudeUsage    `json:"usage,omitempty"`
+}
+
+type claudeUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 type claudeMessage struct {
@@ -111,6 +117,12 @@ func ExtractArtifact(response string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(matches[1]), true
+}
+
+// StripArtifact removes the ARTIFACT:START...ARTIFACT:END block from a response string.
+func StripArtifact(response string) string {
+	stripped := artifactRegex.ReplaceAllString(response, "")
+	return strings.TrimSpace(stripped)
 }
 
 func formatConversation(history []model.Message, newMessage string) string {

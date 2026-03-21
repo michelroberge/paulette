@@ -35,6 +35,6 @@ export interface ChatHistory {
 }
 
 export interface StreamEvent {
-  type: 'chunk' | 'artifact' | 'done' | 'error';
+  type: 'chunk' | 'artifact' | 'done' | 'error' | 'tokens';
   content: string;
 }

@@ -1,14 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { Message } from '../../types';
+
+const ARTIFACT_RE = /<!--\s*ARTIFACT:START\s*-->[\s\S]*?<!--\s*ARTIFACT:END\s*-->/g;
+function stripArtifact(text: string) {
+  return text.replace(ARTIFACT_RE, '').trim();
+}
 
 interface Props {
   messages: Message[];
   streaming: boolean;
   streamingContent: string;
   onSend: (message: string) => void;
+  onStop?: () => void;
 }
 
-export function ChatPanel({ messages, streaming, streamingContent, onSend }: Props) {
+export function ChatPanel({ messages, streaming, streamingContent, onSend, onStop }: Props) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -36,14 +44,21 @@ export function ChatPanel({ messages, streaming, streamingContent, onSend }: Pro
         {messages.map((msg, i) => (
           <div key={i} className={`message ${msg.role}${msg.isError ? ' error' : ''}`}>
             <div className="message-role">{msg.role === 'user' ? 'You' : 'Agent'}</div>
-            <div className="message-content">{msg.content}</div>
+            <div className="message-content">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+            </div>
           </div>
         ))}
         {streaming && (
           <div className="message assistant streaming">
-            <div className="message-role">Agent</div>
+            <div className="message-role">
+              Agent
+              <span className="thinking-label">
+                <span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" />
+              </span>
+            </div>
             <div className="message-content">
-              {streamingContent || <span className="typing-indicator"><span /><span /><span /></span>}
+              {stripArtifact(streamingContent) || '\u00A0'}
             </div>
           </div>
         )}
@@ -59,9 +74,15 @@ export function ChatPanel({ messages, streaming, streamingContent, onSend }: Pro
           disabled={streaming}
           rows={2}
         />
-        <button type="submit" disabled={streaming || !input.trim()}>
-          {streaming ? '...' : 'Send'}
-        </button>
+        {streaming ? (
+          <button type="button" className="stop-button" onClick={onStop}>
+            Stop
+          </button>
+        ) : (
+          <button type="submit" disabled={!input.trim()}>
+            Send
+          </button>
+        )}
       </form>
     </div>
   );

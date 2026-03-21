@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { getChatHistory, sendMessage } from '../api/chat';
 import type { Message, StageName, StreamEvent } from '../types';
 
@@ -8,6 +8,7 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
   const [streamingContent, setStreamingContent] = useState('');
   const [artifactUpdated, setArtifactUpdated] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   const loadHistory = useCallback(async () => {
     if (!projectId || !stage) return;
@@ -18,6 +19,13 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     setHistoryLoaded(true);
     return messages;
   }, [projectId, stage, reloadTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStreamingContent('');
+    setStreaming(false);
+  }, []);
 
   const send = useCallback(async (message: string) => {
     if (!projectId || !stage || streaming) return;
@@ -32,6 +40,8 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     setStreaming(true);
     setStreamingContent('');
 
+    const controller = new AbortController();
+    abortRef.current = controller;
     let fullContent = '';
 
     await sendMessage(projectId, stage, message, (event: StreamEvent) => {
@@ -44,12 +54,12 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
           setArtifactUpdated(prev => prev + 1);
           break;
         case 'done':
-          // Add completed assistant message
+          // Add completed assistant message (backend strips artifact block from content)
           setMessages(prev => [
             ...prev,
             {
               role: 'assistant',
-              content: fullContent,
+              content: event.content || fullContent,
               timestamp: new Date().toISOString(),
             },
           ]);
@@ -70,8 +80,8 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
           setStreaming(false);
           break;
       }
-    });
+    }, controller.signal);
   }, [projectId, stage, streaming]);
 
-  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send };
+  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send, stop };
 }

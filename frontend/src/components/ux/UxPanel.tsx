@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useMock } from '../../hooks/useMock';
 import { getArtifact } from '../../api/artifacts';
 
@@ -13,9 +14,9 @@ export function UxPanel({ projectId, refreshTrigger }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [refinement, setRefinement] = useState('');
-  const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  const { html, generating, streamingText, loaded, load, generate } = useMock(projectId);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const { html, generating, tokenCount, loaded, load, generate, stop } = useMock(projectId);
 
   // Load artifact
   useEffect(() => {
@@ -32,12 +33,12 @@ export function UxPanel({ projectId, refreshTrigger }: Props) {
     load();
   }, [load]);
 
-  // Render HTML into iframe via srcdoc
-  useEffect(() => {
-    if (iframeRef.current && html) {
-      iframeRef.current.srcdoc = html;
-    }
-  }, [html]);
+  const handleIframeLoad = () => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    const height = iframe.contentDocument?.body?.scrollHeight;
+    if (height) iframe.style.height = `${height}px`;
+  };
 
   const handleGenerate = () => {
     setTab('mock');
@@ -72,13 +73,19 @@ export function UxPanel({ projectId, refreshTrigger }: Props) {
               disabled={generating || !artifactExists}
             />
           )}
-          <button
-            className="generate-mock-button"
-            onClick={handleGenerate}
-            disabled={generating}
-          >
-            {generating ? 'Generating...' : html ? 'Regenerate Mock' : 'Generate Mock Preview'}
-          </button>
+          {generating ? (
+            <button className="stop-button" onClick={stop}>
+              Stop
+            </button>
+          ) : (
+            <button
+              className="generate-mock-button"
+              onClick={handleGenerate}
+              disabled={!artifactExists}
+            >
+              {html ? 'Regenerate Mock' : 'Generate Mock Preview'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -86,7 +93,7 @@ export function UxPanel({ projectId, refreshTrigger }: Props) {
         {tab === 'artifact' && (
           artifactExists ? (
             <div className="artifact-content">
-              <ReactMarkdown>{artifactContent}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactContent}</ReactMarkdown>
             </div>
           ) : (
             <div className="artifact-preview empty">
@@ -102,8 +109,10 @@ export function UxPanel({ projectId, refreshTrigger }: Props) {
                 <div className="mock-stream-header">
                   <span className="mock-stream-dot" />
                   Generating wireframes...
+                  {tokenCount > 0 && (
+                    <span className="mock-stream-tokens">{tokenCount.toLocaleString()} tokens</span>
+                  )}
                 </div>
-                <pre className="mock-stream-text">{streamingText}</pre>
               </div>
             )}
 
@@ -117,9 +126,11 @@ export function UxPanel({ projectId, refreshTrigger }: Props) {
             {!generating && html && (
               <iframe
                 ref={iframeRef}
+                srcDoc={html}
                 className="mock-iframe"
-                sandbox="allow-scripts"
+                sandbox="allow-scripts allow-same-origin"
                 title="UI Mock Preview"
+                onLoad={handleIframeLoad}
               />
             )}
           </>

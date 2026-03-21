@@ -10,6 +10,7 @@ export async function sendMessage(
   stage: StageName,
   message: string,
   onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const url = apiStreamUrl(`/projects/${projectId}/stages/${stage}/chat`);
 
@@ -17,6 +18,7 @@ export async function sendMessage(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
+    signal,
   });
 
   if (!res.ok) {
@@ -30,26 +32,33 @@ export async function sendMessage(
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6).trim();
-        if (data) {
-          try {
-            const event: StreamEvent = JSON.parse(data);
-            onEvent(event);
-          } catch {
-            // skip malformed JSON
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6).trim();
+          if (data) {
+            try {
+              const event: StreamEvent = JSON.parse(data);
+              onEvent(event);
+            } catch {
+              // skip malformed JSON
+            }
           }
         }
       }
     }
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return;
+    throw err;
+  } finally {
+    reader.cancel();
   }
 }

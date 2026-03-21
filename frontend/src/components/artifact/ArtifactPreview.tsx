@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { getArtifact } from '../../api/artifacts';
 import type { StageName } from '../../types';
 
@@ -42,7 +43,7 @@ export function ArtifactPreview({ projectId, stage, refreshTrigger }: Props) {
     <div className="artifact-preview">
       <h4>{STAGE_LABELS[stage] ?? stage} Artifact</h4>
       <div className="artifact-content">
-        <ReactMarkdown>{content}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
       </div>
     </div>
   );

@@ -134,15 +134,16 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Save full assistant response
+			// Save assistant response without artifact block
+			chatContent := agent.StripArtifact(event.Content)
 			assistantMsg := model.Message{
 				Role:      model.RoleAssistant,
-				Content:   event.Content,
+				Content:   chatContent,
 				Timestamp: time.Now(),
 			}
 			h.chatRepo.AppendMessage(project.HostDir, stage, assistantMsg)
 
-			sseWrite(w, flusher, agent.StreamEvent{Type: "done"})
+			sseWrite(w, flusher, agent.StreamEvent{Type: "done", Content: chatContent})
 		} else {
 			sseWrite(w, flusher, event)
 		}
