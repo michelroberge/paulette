@@ -4,6 +4,7 @@ import { ProjectHeader } from './components/layout/ProjectHeader';
 import { StagesSidebar } from './components/layout/StagesSidebar';
 import { ChatPanel } from './components/chat/ChatPanel';
 import { ArtifactPreview } from './components/artifact/ArtifactPreview';
+import { UxPanel } from './components/ux/UxPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { getPipeline } from './api/pipeline';
@@ -95,11 +96,18 @@ function App() {
               />
 
               {selectedStage && selectedStage !== 'complete' && (
-                <ArtifactPreview
-                  projectId={project.id}
-                  stage={selectedStage}
-                  refreshTrigger={artifactUpdated}
-                />
+                selectedStage === 'ux' ? (
+                  <UxPanel
+                    projectId={project.id}
+                    refreshTrigger={artifactUpdated}
+                  />
+                ) : (
+                  <ArtifactPreview
+                    projectId={project.id}
+                    stage={selectedStage}
+                    refreshTrigger={artifactUpdated}
+                  />
+                )
               )}
 
               {isActiveStage && (

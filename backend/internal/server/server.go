@@ -54,6 +54,7 @@ func (s *Server) Router() http.Handler {
 	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo)
+	mh := handler.NewMockHandler(s.registry, s.artifactRepo)
 
 	r.Route("/api/projects", func(r chi.Router) {
 		r.Post("/", ph.Create)
@@ -68,6 +69,9 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/{id}/stages/{stage}/chat", ch.GetHistory)
 		r.Post("/{id}/stages/{stage}/chat", ch.Send)
+
+		r.Get("/{id}/stages/ux/mock", mh.Get)
+		r.Post("/{id}/stages/ux/mock", mh.Generate)
 	})
 
 	return r
