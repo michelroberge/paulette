@@ -2,3 +2,10 @@
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Backend
+backend/backend
