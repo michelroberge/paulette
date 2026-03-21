@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,7 +10,9 @@ import (
 
 	"github.com/michelroberge/ai-app-factory/backend/internal/agent"
 	"github.com/michelroberge/ai-app-factory/backend/internal/model"
+	fsrepo "github.com/michelroberge/ai-app-factory/backend/internal/repository/fs"
 	"github.com/michelroberge/ai-app-factory/backend/internal/repository"
+	"github.com/michelroberge/ai-app-factory/backend/internal/stream"
 )
 
 const mockRelPath = ".ai-factory/ux/mock.html"
@@ -19,10 +20,11 @@ const mockRelPath = ".ai-factory/ux/mock.html"
 type MockHandler struct {
 	registry     repository.RegistryRepo
 	artifactRepo repository.ArtifactRepo
+	runs         *stream.Manager
 }
 
-func NewMockHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo) *MockHandler {
-	return &MockHandler{registry: registry, artifactRepo: artifactRepo}
+func NewMockHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager) *MockHandler {
+	return &MockHandler{registry: registry, artifactRepo: artifactRepo, runs: runs}
 }
 
 type mockGetResponse struct {
@@ -67,6 +69,12 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for existing active run — reconnect to it
+	if existing := h.runs.Active(id, "ux", "mock"); existing != nil {
+		existing.StreamTo(w, r, 0)
+		return
+	}
+
 	var req generateMockRequest
 	json.NewDecoder(r.Body).Decode(&req) // optional body — ignore decode errors
 
@@ -80,35 +88,118 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, err := agent.GenerateMock(r.Context(), uxContent, req.Refinement)
+	frameworkCfg, _ := fsrepo.ReadFramework(project.HostDir)
+
+	// Start a managed run
+	run := h.runs.Start(id, "ux", "mock")
+	if run == nil {
+		http.Error(w, "mock generation is already running", http.StatusConflict)
+		return
+	}
+
+	events, err := agent.GenerateMock(run.Context(), uxContent, req.Refinement, frameworkCfg)
 	if err != nil {
+		run.Finish(h.runs)
 		http.Error(w, "failed to start mock generation: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+	// Background goroutine: process events, save result
+	go func() {
+		defer run.Finish(h.runs)
+
+		for event := range events {
+			if event.Type == "done" {
+				html := agent.ExtractHTML(event.Content)
+				// Save to disk
+				p := filepath.Join(project.HostDir, mockRelPath)
+				if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
+					os.WriteFile(p, []byte(html), 0644)
+				}
+				run.Emit(agent.StreamEvent{Type: "done", Content: html})
+			} else {
+				run.Emit(event)
+			}
+		}
+	}()
+
+	run.StreamTo(w, r, 0)
+}
+
+// --- Framework endpoints ---
+
+type frameworkResponse struct {
+	Framework  string `json:"framework"`
+	CustomName string `json:"customName,omitempty"`
+}
+
+type frameworkSetRequest struct {
+	Framework  string `json:"framework"`
+	CustomName string `json:"customName,omitempty"`
+}
+
+// GetFramework returns the stored framework config for a project.
+func (h *MockHandler) GetFramework(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	for event := range events {
-		if event.Type == "done" {
-			html := agent.ExtractHTML(event.Content)
-			// Save to disk
-			p := filepath.Join(project.HostDir, mockRelPath)
-			if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
-				os.WriteFile(p, []byte(html), 0644)
-			}
-			sseWrite(w, flusher, agent.StreamEvent{Type: "done", Content: html})
-		} else {
-			sseWrite(w, flusher, event)
-		}
+	cfg, err := fsrepo.ReadFramework(project.HostDir)
+	if err != nil {
+		http.Error(w, "failed to read framework: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	fmt.Fprintf(w, "\n")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(frameworkResponse{
+		Framework:  string(cfg.Framework),
+		CustomName: cfg.CustomName,
+	})
+}
+
+// SetFramework stores the framework selection for a project.
+func (h *MockHandler) SetFramework(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	var req frameworkSetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	validFrameworks := map[string]bool{
+		"tailwind": true, "bootstrap": true, "mui": true,
+		"shadcn": true, "vanilla": true, "other": true,
+	}
+	if !validFrameworks[req.Framework] {
+		http.Error(w, "invalid framework: "+req.Framework, http.StatusBadRequest)
+		return
+	}
+	if req.Framework == "other" && req.CustomName == "" {
+		http.Error(w, "customName is required when framework is 'other'", http.StatusBadRequest)
+		return
+	}
+
+	cfg := &model.FrameworkConfig{
+		Framework:  model.UXFramework(req.Framework),
+		CustomName: req.CustomName,
+	}
+	if err := fsrepo.WriteFramework(project.HostDir, cfg); err != nil {
+		http.Error(w, "failed to save framework: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(frameworkResponse{
+		Framework:  req.Framework,
+		CustomName: req.CustomName,
+	})
 }

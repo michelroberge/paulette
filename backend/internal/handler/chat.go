@@ -4,6 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -12,19 +16,23 @@ import (
 	"github.com/michelroberge/ai-app-factory/backend/internal/model"
 	"github.com/michelroberge/ai-app-factory/backend/internal/pipeline"
 	"github.com/michelroberge/ai-app-factory/backend/internal/repository"
+	fsrepo "github.com/michelroberge/ai-app-factory/backend/internal/repository/fs"
+	"github.com/michelroberge/ai-app-factory/backend/internal/stream"
 )
 
 type ChatHandler struct {
 	registry     repository.RegistryRepo
 	chatRepo     repository.ChatRepo
 	artifactRepo repository.ArtifactRepo
+	runs         *stream.Manager
 }
 
-func NewChatHandler(registry repository.RegistryRepo, chatRepo repository.ChatRepo, artifactRepo repository.ArtifactRepo) *ChatHandler {
+func NewChatHandler(registry repository.RegistryRepo, chatRepo repository.ChatRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager) *ChatHandler {
 	return &ChatHandler{
 		registry:     registry,
 		chatRepo:     chatRepo,
 		artifactRepo: artifactRepo,
+		runs:         runs,
 	}
 }
 
@@ -63,6 +71,12 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for existing active run — if so, reconnect to it
+	if existing := h.runs.Active(id, string(stage), "chat"); existing != nil {
+		existing.StreamTo(w, r, 0)
+		return
+	}
+
 	var req sendMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -92,7 +106,31 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	systemPrompt := agent.GetSystemPrompt(stage, previousArtifacts)
+	var frameworkCfg *model.FrameworkConfig
+	if stage == model.StageUX {
+		frameworkCfg, _ = fsrepo.ReadFramework(project.HostDir)
+	}
+
+	// Build enhancement context if this is an enhancement iteration
+	var enhCtx *agent.EnhancementContext
+	if project.EnhancementVision != "" {
+		enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
+		// Load summary from current .ai-factory (it was archived but also kept)
+		summaryPath := filepath.Join(project.HostDir, ".ai-factory", "summary.md")
+		if data, err := os.ReadFile(summaryPath); err == nil {
+			enhCtx.Summary = string(data)
+		}
+		// Load prior iteration's artifact for this stage
+		prevVersion := findPriorIterationVersion(project.HostDir)
+		if prevVersion != "" {
+			priorArtifactPath := filepath.Join(project.HostDir, ".ai-factory", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
+			if data, err := os.ReadFile(priorArtifactPath); err == nil {
+				enhCtx.PriorArtifact = string(data)
+			}
+		}
+	}
+
+	systemPrompt := agent.GetSystemPrompt(stage, previousArtifacts, frameworkCfg, enhCtx)
 
 	// Get chat history for context
 	history, err := h.chatRepo.GetHistory(project.HostDir, stage)
@@ -105,53 +143,78 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 		history = history[:len(history)-1]
 	}
 
-	// Start Claude CLI subprocess
-	events, err := agent.Chat(r.Context(), systemPrompt, history, req.Message)
+	// Start a managed run
+	run := h.runs.Start(id, string(stage), "chat")
+	if run == nil {
+		http.Error(w, "an agent is already running for this stage", http.StatusConflict)
+		return
+	}
+
+	// Start Claude CLI subprocess using the run's context (survives client disconnect)
+	events, err := agent.Chat(run.Context(), systemPrompt, history, req.Message)
 	if err != nil {
+		run.Finish(h.runs)
 		http.Error(w, "failed to start agent: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Set up SSE
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
-		return
-	}
+	// Background goroutine: process agent events, emit through run
+	go func() {
+		defer run.Finish(h.runs)
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	for event := range events {
-		if event.Type == "done" {
-			// Extract and save artifact if present
-			if artifact, found := agent.ExtractArtifact(event.Content); found {
-				if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
-					sseWrite(w, flusher, agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
-				} else {
-					sseWrite(w, flusher, agent.StreamEvent{Type: "artifact", Content: string(stage) + "/" + string(stage) + ".md"})
+		for event := range events {
+			if event.Type == "done" {
+				// Extract and save artifact if present
+				if artifact, found := agent.ExtractArtifact(event.Content); found {
+					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
+						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
+					} else {
+						run.Emit(agent.StreamEvent{Type: "artifact", Content: string(stage) + "/" + string(stage) + ".md"})
+					}
 				}
-			}
 
-			// Save assistant response without artifact block
-			chatContent := agent.StripArtifact(event.Content)
-			assistantMsg := model.Message{
-				Role:      model.RoleAssistant,
-				Content:   chatContent,
-				Timestamp: time.Now(),
-			}
-			h.chatRepo.AppendMessage(project.HostDir, stage, assistantMsg)
+				// Save assistant response without artifact block
+				chatContent := agent.StripArtifact(event.Content)
+				assistantMsg := model.Message{
+					Role:      model.RoleAssistant,
+					Content:   chatContent,
+					Timestamp: time.Now(),
+				}
+				h.chatRepo.AppendMessage(project.HostDir, stage, assistantMsg)
 
-			sseWrite(w, flusher, agent.StreamEvent{Type: "done", Content: chatContent})
-		} else {
-			sseWrite(w, flusher, event)
+				run.Emit(agent.StreamEvent{Type: "done", Content: chatContent})
+			} else {
+				run.Emit(event)
+			}
 		}
-	}
+	}()
+
+	// Stream to this client (blocks until run finishes or client disconnects)
+	run.StreamTo(w, r, 0)
 }
 
 func sseWrite(w http.ResponseWriter, flusher http.Flusher, event agent.StreamEvent) {
 	data, _ := json.Marshal(event)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	flusher.Flush()
+}
+
+// findPriorIterationVersion finds the most recent archived iteration version.
+func findPriorIterationVersion(hostDir string) string {
+	iterDir := filepath.Join(hostDir, ".ai-factory", "iterations")
+	entries, err := os.ReadDir(iterDir)
+	if err != nil {
+		return ""
+	}
+	var versions []string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "v") {
+			versions = append(versions, e.Name()[1:]) // strip "v" prefix
+		}
+	}
+	if len(versions) == 0 {
+		return ""
+	}
+	sort.Strings(versions)
+	return versions[len(versions)-1]
 }

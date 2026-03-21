@@ -7,6 +7,7 @@ type BeadStatus string
 const (
 	BeadStatusOpen       BeadStatus = "open"
 	BeadStatusInProgress BeadStatus = "in_progress"
+	BeadStatusReviewing  BeadStatus = "reviewing"
 	BeadStatusClosed     BeadStatus = "closed"
 	BeadStatusBlocked    BeadStatus = "blocked"
 )
@@ -26,6 +27,7 @@ type Bead struct {
 	Type        BeadType   `json:"type"`
 	Status      BeadStatus `json:"status"`
 	Priority    int        `json:"priority"`
+	EpicID      string     `json:"epicId,omitempty"` // parent epic ID (tasks only)
 	Deps        []string   `json:"deps"`
 }
 

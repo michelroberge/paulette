@@ -28,14 +28,16 @@ type StageInfo struct {
 }
 
 type Project struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Author       string    `json:"author"`
-	Version      string    `json:"version"`
-	HostDir      string    `json:"hostDir"`
-	CurrentStage StageName `json:"currentStage"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	Author            string    `json:"author"`
+	Version           string    `json:"version"`
+	HostDir           string    `json:"hostDir"`
+	CurrentStage      StageName `json:"currentStage"`
+	Iteration         int       `json:"iteration"`
+	EnhancementVision string    `json:"enhancementVision,omitempty"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 type PipelineState struct {

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/michelroberge/ai-app-factory/backend/internal/model"
 	"github.com/michelroberge/ai-app-factory/backend/internal/repository"
 	fsrepo "github.com/michelroberge/ai-app-factory/backend/internal/repository/fs"
+	"github.com/michelroberge/ai-app-factory/backend/internal/stream"
 )
 
 // beadGraphMu serializes writes to beads-graph.json per project host directory.
@@ -30,13 +33,15 @@ func beadGraphLock(hostDir string) *sync.Mutex {
 type BeadHandler struct {
 	registry     repository.RegistryRepo
 	artifactRepo repository.ArtifactRepo
+	runs         *stream.Manager
 }
 
-func NewBeadHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo) *BeadHandler {
-	return &BeadHandler{registry: registry, artifactRepo: artifactRepo}
+func NewBeadHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager) *BeadHandler {
+	return &BeadHandler{registry: registry, artifactRepo: artifactRepo, runs: runs}
 }
 
-// GetGraph returns the current bead graph JSON for a project.
+// GetGraph returns the current bead graph JSON for a project,
+// reconciled with live bd status so the UI always reflects reality.
 func (h *BeadHandler) GetGraph(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	project, err := h.registry.Get(id)
@@ -51,22 +56,55 @@ func (h *BeadHandler) GetGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reconcile graph with live bd status
+	if len(graph.Beads) > 0 {
+		if changed := reconcileGraphWithBd(r.Context(), project.HostDir, graph); changed {
+			fsrepo.WriteBeadGraph(project.HostDir, graph)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(graph)
 }
 
-// Generate parses build.md and creates beads via the bd CLI, streaming progress via SSE.
-func (h *BeadHandler) Generate(w http.ResponseWriter, r *http.Request) {
+// reconcileGraphWithBd queries `bd list --json` for all beads and updates
+// the graph in-place so statuses match reality. Returns true if anything changed.
+func reconcileGraphWithBd(ctx context.Context, hostDir string, graph *model.BeadGraph) bool {
+	out, err := runBd(ctx, hostDir, "list", "--json")
+	if err != nil || strings.TrimSpace(out) == "" || strings.TrimSpace(out) == "[]" {
+		return false
+	}
+
+	var live []struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(out), &live); err != nil {
+		return false
+	}
+
+	liveStatus := make(map[string]model.BeadStatus, len(live))
+	for _, b := range live {
+		liveStatus[b.ID] = model.BeadStatus(b.Status)
+	}
+
+	changed := false
+	for i := range graph.Beads {
+		if s, ok := liveStatus[graph.Beads[i].ID]; ok && s != graph.Beads[i].Status {
+			graph.Beads[i].Status = s
+			changed = true
+		}
+	}
+	return changed
+}
+
+// Watch opens a long-lived SSE connection that polls bd every 10s
+// and pushes bead_update events when statuses change.
+func (h *BeadHandler) Watch(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	project, err := h.registry.Get(id)
 	if err != nil {
 		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
-
-	buildContent, _ := h.artifactRepo.Read(project.HostDir, model.StageBuild)
-	if buildContent == "" {
-		http.Error(w, "no build artifact — complete the Build stage first", http.StatusBadRequest)
 		return
 	}
 
@@ -79,148 +117,269 @@ func (h *BeadHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	flusher.Flush()
 
 	ctx := r.Context()
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
-	// Step 1: Parse build.md with Claude
-	sseWrite(w, flusher, agent.StreamEvent{Type: "log", Content: "Parsing build plan..."})
+	// Track last-known status per bead to detect changes
+	prev := map[string]model.BeadStatus{}
 
-	events, err := agent.ParseBuildPlan(ctx, buildContent)
-	if err != nil {
-		sseWrite(w, flusher, agent.StreamEvent{Type: "error", Content: "Failed to start parser: " + err.Error()})
-		return
-	}
-
-	var fullResponse string
-	for event := range events {
-		if event.Type == "done" {
-			fullResponse = event.Content
-		} else if event.Type == "chunk" {
-			sseWrite(w, flusher, event)
+	// Seed from the current graph file
+	if graph, err := fsrepo.ReadBeadGraph(project.HostDir); err == nil {
+		for _, b := range graph.Beads {
+			prev[b.ID] = b.Status
 		}
 	}
 
-	jsonBytes, ok2 := agent.ExtractBeadJSON(fullResponse)
-	if !ok2 {
-		sseWrite(w, flusher, agent.StreamEvent{Type: "error", Content: "Failed to extract JSON from parser response"})
+	emitJSON := func(event agent.StreamEvent) {
+		data, _ := json.Marshal(event)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// Send an initial ping so the client knows the connection is live
+	emitJSON(agent.StreamEvent{Type: "ping", Content: "watching"})
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			out, err := runBd(ctx, project.HostDir, "list", "--json")
+			if err != nil || strings.TrimSpace(out) == "" || strings.TrimSpace(out) == "[]" {
+				continue
+			}
+
+			var live []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			}
+			if json.Unmarshal([]byte(out), &live) != nil {
+				continue
+			}
+
+			mu := beadGraphLock(project.HostDir)
+			var updates []model.Bead
+			for _, b := range live {
+				s := model.BeadStatus(b.Status)
+				if old, ok := prev[b.ID]; ok && old != s {
+					prev[b.ID] = s
+					updates = append(updates, model.Bead{ID: b.ID, Status: s})
+				} else if !ok {
+					prev[b.ID] = s
+				}
+			}
+
+			if len(updates) > 0 {
+				// Persist to graph file
+				mu.Lock()
+				graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+				if err == nil {
+					for i := range graph.Beads {
+						for _, u := range updates {
+							if graph.Beads[i].ID == u.ID {
+								graph.Beads[i].Status = u.Status
+							}
+						}
+					}
+					fsrepo.WriteBeadGraph(project.HostDir, graph)
+				}
+				mu.Unlock()
+
+				// Stream each change
+				for _, u := range updates {
+					beadJSON, _ := json.Marshal(u)
+					emitJSON(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
+				}
+			}
+		}
+	}
+}
+
+// Generate parses build.md and creates beads via the bd CLI, streaming progress via SSE.
+func (h *BeadHandler) Generate(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
 		return
 	}
 
-	var plan model.ParsedBuildPlan
-	if err := json.Unmarshal(jsonBytes, &plan); err != nil {
-		sseWrite(w, flusher, agent.StreamEvent{Type: "error", Content: "Failed to parse JSON: " + err.Error()})
+	// Check for existing active run — reconnect to it
+	if existing := h.runs.Active(id, "build", "beads-generate"); existing != nil {
+		existing.StreamTo(w, r, 0)
 		return
 	}
 
-	// Step 2: Ensure bd is initialized
-	sseWrite(w, flusher, agent.StreamEvent{Type: "log", Content: "Checking bd status..."})
-	if err := ensureBdInit(ctx, project.HostDir, w, flusher); err != nil {
-		sseWrite(w, flusher, agent.StreamEvent{Type: "error", Content: "bd init failed: " + err.Error()})
+	buildContent, _ := h.artifactRepo.Read(project.HostDir, model.StageBuild)
+	if buildContent == "" {
+		http.Error(w, "no build artifact — complete the Build stage first", http.StatusBadRequest)
 		return
 	}
 
-	// Step 3: Create epics and tasks
-	graph := &model.BeadGraph{
-		GeneratedAt: time.Now(),
-		ProjectID:   project.ID,
-		Beads:       []model.Bead{},
+	// Start a managed run
+	run := h.runs.Start(id, "build", "beads-generate")
+	if run == nil {
+		http.Error(w, "bead generation is already running", http.StatusConflict)
+		return
 	}
 
-	// title → bead ID map for dep resolution
-	titleToID := map[string]string{}
+	// Background goroutine does all the work
+	go func() {
+		defer run.Finish(h.runs)
 
-	for _, epic := range plan.Epics {
-		if ctx.Err() != nil {
+		ctx := run.Context()
+
+		// Step 1: Parse build.md with Claude
+		run.Emit(agent.StreamEvent{Type: "log", Content: "Parsing build plan..."})
+
+		events, err := agent.ParseBuildPlan(ctx, buildContent)
+		if err != nil {
+			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to start parser: " + err.Error()})
 			return
 		}
 
-		epicID, err := bdCreate(ctx, project.HostDir, epic.Title, epic.Description, "epic", 2)
-		if err != nil {
-			sseWrite(w, flusher, agent.StreamEvent{Type: "error", Content: fmt.Sprintf("Failed to create epic %q: %v", epic.Title, err)})
-			continue
+		var fullResponse string
+		for event := range events {
+			if event.Type == "done" {
+				fullResponse = event.Content
+			} else if event.Type == "chunk" {
+				run.Emit(event)
+			}
 		}
 
-		epicBead := model.Bead{
-			ID:          epicID,
-			Title:       epic.Title,
-			Description: epic.Description,
-			Type:        model.BeadTypeEpic,
-			Status:      model.BeadStatusOpen,
-			Priority:    2,
-			Deps:        []string{},
+		jsonBytes, ok2 := agent.ExtractBeadJSON(fullResponse)
+		if !ok2 {
+			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to extract JSON from parser response"})
+			return
 		}
-		titleToID[epic.Title] = epicID
-		graph.Beads = append(graph.Beads, epicBead)
 
-		beadJSON, _ := json.Marshal(epicBead)
-		sseWrite(w, flusher, agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
+		var plan model.ParsedBuildPlan
+		if err := json.Unmarshal(jsonBytes, &plan); err != nil {
+			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to parse JSON: " + err.Error()})
+			return
+		}
 
-		fsrepo.WriteBeadGraph(project.HostDir, graph)
+		// Step 2: Ensure bd is initialized
+		run.Emit(agent.StreamEvent{Type: "log", Content: "Checking bd status..."})
+		if err := ensureBdInitRun(ctx, project.HostDir, run); err != nil {
+			run.Emit(agent.StreamEvent{Type: "error", Content: "bd init failed: " + err.Error()})
+			return
+		}
 
-		for _, task := range epic.Tasks {
+		// Step 3: Create epics and tasks
+		graph := &model.BeadGraph{
+			GeneratedAt: time.Now(),
+			ProjectID:   project.ID,
+			Beads:       []model.Bead{},
+		}
+
+		// title -> bead ID map for dep resolution
+		titleToID := map[string]string{}
+
+		for _, epic := range plan.Epics {
 			if ctx.Err() != nil {
 				return
 			}
 
-			taskID, err := bdCreate(ctx, project.HostDir, task.Title, task.Description, "task", task.Priority)
+			epicID, err := bdCreate(ctx, project.HostDir, epic.Title, epic.Description, "epic", 2)
 			if err != nil {
-				sseWrite(w, flusher, agent.StreamEvent{Type: "error", Content: fmt.Sprintf("Failed to create task %q: %v", task.Title, err)})
+				run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("Failed to create epic %q: %v", epic.Title, err)})
 				continue
 			}
 
-			taskBead := model.Bead{
-				ID:          taskID,
-				Title:       task.Title,
-				Description: task.Description,
-				Type:        model.BeadTypeTask,
+			epicBead := model.Bead{
+				ID:          epicID,
+				Title:       epic.Title,
+				Description: epic.Description,
+				Type:        model.BeadTypeEpic,
 				Status:      model.BeadStatusOpen,
-				Priority:    task.Priority,
+				Priority:    2,
 				Deps:        []string{},
 			}
-			titleToID[task.Title] = taskID
-			graph.Beads = append(graph.Beads, taskBead)
+			titleToID[epic.Title] = epicID
+			graph.Beads = append(graph.Beads, epicBead)
 
-			beadJSON, _ := json.Marshal(taskBead)
-			sseWrite(w, flusher, agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
+			beadJSON, _ := json.Marshal(epicBead)
+			run.Emit(agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
 
 			fsrepo.WriteBeadGraph(project.HostDir, graph)
-		}
-	}
 
-	// Step 4: Set up dependencies
-	sseWrite(w, flusher, agent.StreamEvent{Type: "log", Content: "Setting up dependencies..."})
+			for _, task := range epic.Tasks {
+				if ctx.Err() != nil {
+					return
+				}
 
-	for ei, epic := range plan.Epics {
-		for ti, task := range epic.Tasks {
-			taskID, ok := titleToID[task.Title]
-			if !ok {
-				continue
+				taskID, err := bdCreate(ctx, project.HostDir, task.Title, task.Description, "task", task.Priority)
+				if err != nil {
+					run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("Failed to create task %q: %v", task.Title, err)})
+					continue
+				}
+
+				taskBead := model.Bead{
+					ID:          taskID,
+					Title:       task.Title,
+					Description: task.Description,
+					Type:        model.BeadTypeTask,
+					Status:      model.BeadStatusOpen,
+					Priority:    task.Priority,
+					EpicID:      epicID,
+					Deps:        []string{},
+				}
+				titleToID[task.Title] = taskID
+				graph.Beads = append(graph.Beads, taskBead)
+
+				beadJSON, _ := json.Marshal(taskBead)
+				run.Emit(agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
+
+				fsrepo.WriteBeadGraph(project.HostDir, graph)
 			}
-			for _, depTitle := range task.DepsOn {
-				depID, ok := titleToID[depTitle]
+		}
+
+		// Step 4: Set up dependencies
+		run.Emit(agent.StreamEvent{Type: "log", Content: "Setting up dependencies..."})
+
+		for _, epic := range plan.Epics {
+			for _, task := range epic.Tasks {
+				taskID, ok := titleToID[task.Title]
 				if !ok {
 					continue
 				}
-				bdDepAdd(ctx, project.HostDir, taskID, depID)
+				for _, depTitle := range task.DepsOn {
+					depID, ok := titleToID[depTitle]
+					if !ok {
+						continue
+					}
+					bdDepAdd(ctx, project.HostDir, taskID, depID)
 
-				// Update in-memory graph
-				for i := range graph.Beads {
-					if graph.Beads[i].ID == taskID {
-						graph.Beads[i].Deps = append(graph.Beads[i].Deps, depID)
-						break
+					// Update in-memory graph
+					for i := range graph.Beads {
+						if graph.Beads[i].ID == taskID {
+							graph.Beads[i].Deps = append(graph.Beads[i].Deps, depID)
+							break
+						}
 					}
 				}
-				_ = ei
-				_ = ti
 			}
 		}
-	}
 
-	fsrepo.WriteBeadGraph(project.HostDir, graph)
+		fsrepo.WriteBeadGraph(project.HostDir, graph)
 
-	summary := fmt.Sprintf("Generated %d beads (%d epics)", len(graph.Beads), len(plan.Epics))
-	sseWrite(w, flusher, agent.StreamEvent{Type: "done", Content: summary})
-	fmt.Fprintf(w, "\n")
+		// Emit bead_update for every bead that received deps, so the frontend graph is current
+		for _, bead := range graph.Beads {
+			if len(bead.Deps) > 0 || bead.EpicID != "" {
+				beadJSON, _ := json.Marshal(bead)
+				run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
+			}
+		}
+
+		summary := fmt.Sprintf("Generated %d beads (%d epics)", len(graph.Beads), len(plan.Epics))
+		run.Emit(agent.StreamEvent{Type: "done", Content: summary})
+	}()
+
+	run.StreamTo(w, r, 0)
 }
 
 type executeBeadsRequest struct {
@@ -236,6 +395,12 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for existing active run — reconnect to it
+	if existing := h.runs.Active(id, "build", "beads-execute"); existing != nil {
+		existing.StreamTo(w, r, 0)
+		return
+	}
+
 	var req executeBeadsRequest
 	req.MaxParallel = 2
 	json.NewDecoder(r.Body).Decode(&req)
@@ -246,41 +411,36 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 		req.MaxParallel = 10
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+	// Start a managed run
+	run := h.runs.Start(id, "build", "beads-execute")
+	if run == nil {
+		http.Error(w, "bead execution is already running", http.StatusConflict)
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	ctx := r.Context()
-
-	// Load all artifacts for context injection
-	artifacts := map[model.StageName]string{}
-	for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
-		content, _ := h.artifactRepo.Read(project.HostDir, stage)
-		if content != "" {
-			artifacts[stage] = content
-		}
-	}
-
-	events := make(chan agent.StreamEvent, 128)
-
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, req.MaxParallel)
-	var once sync.Once
-
-	closeEvents := func() {
-		once.Do(func() { close(events) })
-	}
-
-	mu := beadGraphLock(project.HostDir)
-
+	// Background goroutine does all the work
 	go func() {
-		defer closeEvents()
+		defer run.Finish(h.runs)
+
+		ctx := run.Context()
+
+		// Reset any stale in_progress beads from a previous interrupted run.
+		if err := bdResetStale(ctx, project.HostDir); err != nil {
+			run.Emit(agent.StreamEvent{Type: "log", Content: "warn: reset stale: " + err.Error()})
+		}
+
+		// Load all artifacts for context injection
+		artifacts := map[model.StageName]string{}
+		for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
+			content, _ := h.artifactRepo.Read(project.HostDir, stage)
+			if content != "" {
+				artifacts[stage] = content
+			}
+		}
+
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, req.MaxParallel)
+		mu := beadGraphLock(project.HostDir)
 
 		for {
 			if ctx.Err() != nil {
@@ -289,83 +449,158 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 
 			bead, err := bdReady(ctx, project.HostDir)
 			if err != nil || bead == nil {
-				// No more ready beads — wait for in-flight to finish then exit
 				break
 			}
 
 			sem <- struct{}{}
+
+			if err := bdClaim(ctx, project.HostDir, bead.ID); err != nil {
+				<-sem
+				run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] claim failed: %v", bead.ID, err)})
+				continue
+			}
 			wg.Add(1)
+			b := *bead
+			b.Status = model.BeadStatusInProgress
+			updateGraphStatus(mu, project.HostDir, b.ID, model.BeadStatusInProgress)
+			beadJSON, _ := json.Marshal(b)
+			run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
+			run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Starting: %s", b.ID, b.Title)})
 
 			go func(b model.Bead) {
 				defer wg.Done()
 				defer func() { <-sem }()
 
-				// Claim
-				if err := bdClaim(ctx, project.HostDir, b.ID); err != nil {
-					events <- agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] claim failed: %v", b.ID, err)}
-					return
-				}
+				const maxReviewIterations = 3
+				currentBead := b
 
-				b.Status = model.BeadStatusInProgress
-				updateGraphStatus(mu, project.HostDir, b.ID, model.BeadStatusInProgress)
-				beadJSON, _ := json.Marshal(b)
-				events <- agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)}
-				events <- agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Starting: %s", b.ID, b.Title)}
-
-				// Execute
-				agentEvents, err := agent.ExecuteBead(ctx, project.HostDir, b, artifacts)
+				// Execute initial bead
+				agentEvents, err := agent.ExecuteBead(ctx, project.HostDir, currentBead, artifacts)
 				if err != nil {
-					events <- agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] execute failed: %v", b.ID, err)}
+					run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] execute failed: %v", currentBead.ID, err)})
 					return
 				}
-
 				for ev := range agentEvents {
 					if ev.Type == "chunk" {
-						events <- agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] %s", b.ID, ev.Content)}
+						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] %s", currentBead.ID, ev.Content)})
 					}
 				}
 
-				// Close
-				if err := bdClose(ctx, project.HostDir, b.ID); err != nil {
-					events <- agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] close failed: %v", b.ID, err)}
-					return
-				}
+				// Ralph loop: devil's advocate reviews, up to maxReviewIterations times
+				for iteration := 0; iteration < maxReviewIterations; iteration++ {
+					// Signal: devil is reviewing
+					currentBead.Status = model.BeadStatusReviewing
+					updateGraphStatus(mu, project.HostDir, currentBead.ID, model.BeadStatusReviewing)
+					beadJSON, _ := json.Marshal(currentBead)
+					run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
+					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 😈 Devil's advocate reviewing (attempt %d/%d)...", currentBead.ID, iteration+1, maxReviewIterations)})
 
-				b.Status = model.BeadStatusClosed
-				updateGraphStatus(mu, project.HostDir, b.ID, model.BeadStatusClosed)
-				beadJSON, _ = json.Marshal(b)
-				events <- agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)}
-				events <- agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Done: %s", b.ID, b.Title)}
-			}(bead)
+					findings, reviewErr := agent.ReviewBead(ctx, project.HostDir, currentBead, artifacts)
+					if reviewErr != nil {
+						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] review error: %v (closing anyway)", currentBead.ID, reviewErr)})
+						findings = ""
+					}
+
+					isApproved := findings == ""
+
+					if isApproved || iteration == maxReviewIterations-1 {
+						if !isApproved {
+							run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ⚠️ Max review iterations reached, closing anyway", currentBead.ID)})
+						}
+						if err := bdClose(ctx, project.HostDir, currentBead.ID); err != nil {
+							run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] close failed: %v", currentBead.ID, err)})
+							return
+						}
+						currentBead.Status = model.BeadStatusClosed
+						updateGraphStatus(mu, project.HostDir, currentBead.ID, model.BeadStatusClosed)
+						beadJSON, _ = json.Marshal(currentBead)
+						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
+						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", currentBead.ID, currentBead.Title)})
+						return
+					}
+
+					// Issues found — close current bead, create and execute a correction bead
+					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 🔧 Issues found, creating correction bead...", currentBead.ID)})
+					if err := bdClose(ctx, project.HostDir, currentBead.ID); err != nil {
+						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] close failed: %v", currentBead.ID, err)})
+						return
+					}
+					currentBead.Status = model.BeadStatusClosed
+					updateGraphStatus(mu, project.HostDir, currentBead.ID, model.BeadStatusClosed)
+					beadJSON, _ = json.Marshal(currentBead)
+					run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
+
+					shortFindings := strings.TrimSpace(findings)
+					if len(shortFindings) > 80 {
+						shortFindings = shortFindings[:77] + "..."
+					}
+					corrTitle := fmt.Sprintf("Fix review findings: %s", shortFindings)
+					corrDesc := fmt.Sprintf("Devil's advocate found issues with '%s':\n\n%s", currentBead.Title, findings)
+					corrID, err := bdCreate(ctx, project.HostDir, corrTitle, corrDesc, string(model.BeadTypeTask), currentBead.Priority)
+					if err != nil {
+						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] correction bead create failed: %v", currentBead.ID, err)})
+						return
+					}
+					if err := bdClaim(ctx, project.HostDir, corrID); err != nil {
+						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] correction claim failed: %v", corrID, err)})
+						return
+					}
+
+					corrBead := model.Bead{
+						ID:          corrID,
+						Title:       corrTitle,
+						Description: corrDesc,
+						Type:        model.BeadTypeTask,
+						Status:      model.BeadStatusInProgress,
+						Priority:    currentBead.Priority,
+						Deps:        []string{},
+					}
+					updateGraphStatus(mu, project.HostDir, corrID, model.BeadStatusInProgress)
+					beadJSON, _ = json.Marshal(corrBead)
+					run.Emit(agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
+					run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
+					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Starting correction: %s", corrID, corrTitle)})
+
+					corrEvents, err := agent.ExecuteBead(ctx, project.HostDir, corrBead, artifacts)
+					if err != nil {
+						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] correction execute failed: %v", corrID, err)})
+						return
+					}
+					for ev := range corrEvents {
+						if ev.Type == "chunk" {
+							run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] %s", corrID, ev.Content)})
+						}
+					}
+					currentBead = corrBead
+				}
+			}(b)
 		}
 
 		wg.Wait()
-		closeEvents()
+		run.Emit(agent.StreamEvent{Type: "done", Content: "Execution complete"})
 	}()
 
-	for event := range events {
-		sseWrite(w, flusher, event)
-	}
-
-	sseWrite(w, flusher, agent.StreamEvent{Type: "done", Content: "Execution complete"})
-	fmt.Fprintf(w, "\n")
+	run.StreamTo(w, r, 0)
 }
 
 // --- bd CLI helpers ---
 
-func ensureBdInit(ctx context.Context, hostDir string, w http.ResponseWriter, flusher http.Flusher) error {
-	out, err := runBd(ctx, hostDir, "status")
-	if err != nil {
-		// Not initialized — run init
-		sseWrite(w, flusher, agent.StreamEvent{Type: "log", Content: "Initializing bd..."})
+func ensureBdInitRun(ctx context.Context, hostDir string, run *stream.Run) error {
+	beadsDir := filepath.Join(hostDir, ".beads")
+	if _, err := os.Stat(beadsDir); os.IsNotExist(err) {
+		run.Emit(agent.StreamEvent{Type: "log", Content: "Initializing bd in " + hostDir + "..."})
 		out2, err2 := runBd(ctx, hostDir, "init")
 		if err2 != nil {
 			return fmt.Errorf("bd init: %w\n%s", err2, out2)
 		}
-		sseWrite(w, flusher, agent.StreamEvent{Type: "log", Content: "bd initialized: " + strings.TrimSpace(out2)})
+		run.Emit(agent.StreamEvent{Type: "log", Content: "bd initialized: " + strings.TrimSpace(out2)})
 		return nil
 	}
-	sseWrite(w, flusher, agent.StreamEvent{Type: "log", Content: "bd ready: " + strings.TrimSpace(out)})
+	out, err := runBd(ctx, hostDir, "status")
+	if err != nil {
+		return fmt.Errorf("bd status: %w\n%s", err, out)
+	}
+	run.Emit(agent.StreamEvent{Type: "log", Content: "bd ready: " + strings.TrimSpace(out)})
 	return nil
 }
 
@@ -384,16 +619,17 @@ func bdCreate(ctx context.Context, hostDir, title, description, beadType string,
 		return "", fmt.Errorf("bd create: %w\n%s", err, out)
 	}
 
-	// bd create outputs the issue ID on the last line (e.g. "Created issue ai-app-001")
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		idx := strings.Index(line, "Created issue:")
+		if idx < 0 {
 			continue
 		}
-		// Extract ID: "Created issue <ID>" or just "<ID>"
-		parts := strings.Fields(line)
-		return parts[len(parts)-1], nil
+		after := strings.TrimSpace(line[idx+len("Created issue:"):])
+		parts := strings.Fields(after)
+		if len(parts) > 0 {
+			return parts[0], nil
+		}
 	}
 	return "", fmt.Errorf("could not parse bd create output: %q", out)
 }
@@ -403,17 +639,16 @@ func bdDepAdd(ctx context.Context, hostDir, issueID, dependsOnID string) {
 }
 
 func bdReady(ctx context.Context, hostDir string) (*model.Bead, error) {
-	out, err := runBd(ctx, hostDir, "ready", "--output=json")
+	out, err := runBd(ctx, hostDir, "ready", "--json", "-n", "1")
 	if err != nil || strings.TrimSpace(out) == "" || strings.TrimSpace(out) == "[]" {
 		return nil, nil
 	}
 
-	// Parse the first ready bead
 	var beads []struct {
 		ID          string `json:"id"`
 		Title       string `json:"title"`
 		Description string `json:"description"`
-		Type        string `json:"type"`
+		Type        string `json:"issue_type"`
 		Priority    int    `json:"priority"`
 	}
 	if err := json.Unmarshal([]byte(out), &beads); err != nil || len(beads) == 0 {
@@ -432,9 +667,29 @@ func bdReady(ctx context.Context, hostDir string) (*model.Bead, error) {
 	}, nil
 }
 
+func bdResetStale(ctx context.Context, hostDir string) error {
+	out, err := runBd(ctx, hostDir, "list", "--status=in_progress", "--json")
+	if err != nil || strings.TrimSpace(out) == "" || strings.TrimSpace(out) == "[]" {
+		return err
+	}
+	var beads []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(out), &beads); err != nil {
+		return err
+	}
+	for _, b := range beads {
+		runBd(ctx, hostDir, "update", b.ID, "--status=open", "--assignee=")
+	}
+	return nil
+}
+
 func bdClaim(ctx context.Context, hostDir, id string) error {
-	_, err := runBd(ctx, hostDir, "update", id, "--claim")
-	return err
+	out, err := runBd(ctx, hostDir, "update", id, "--claim")
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
+	}
+	return nil
 }
 
 func bdClose(ctx context.Context, hostDir, id string) error {

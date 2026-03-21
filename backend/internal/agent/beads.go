@@ -43,6 +43,23 @@ Rules:
 - priority: 0=critical, 1=high, 2=medium (default), 3=low, 4=backlog
 - Do not include any text, explanation, or markdown outside the delimiters`
 
+const devilAdvocateSystemPrompt = `You are the Devil's Advocate Agent for an AI App Factory. Your role is to critically review code just written by another agent and challenge its quality, completeness, and correctness.
+
+You have read-only access to the project files via Bash. Review what was implemented for the given task.
+
+Challenge:
+- Is the implementation complete or are there stubs/placeholders?
+- Does it match the task description and architecture requirements?
+- Are there obvious bugs, missing error handling, or edge cases?
+- Does it integrate correctly with the rest of the codebase?
+- Is there anything the code writer clearly missed?
+
+Be a tough reviewer, but pragmatic. Focus on real issues, not style preferences.
+
+Respond with EXACTLY one of:
+1. "LGTM" (optionally followed by a brief reason) if the implementation is satisfactory
+2. A concise bullet list of specific, actionable issues — no preamble, no "LGTM"`
+
 const codeWriterSystemPrompt = `You are a Code Writer Agent for an AI App Factory. You implement individual tasks from an approved build plan by writing real, working code.
 
 %s
@@ -208,6 +225,83 @@ func ExecuteBead(ctx context.Context, projectDir string, bead model.Bead, artifa
 	}()
 
 	return ch, nil
+}
+
+// ReviewBead runs the devil's advocate agent to review a completed bead's implementation.
+// Returns empty string if approved (LGTM), or a findings string describing issues.
+func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifacts map[model.StageName]string) (string, error) {
+	var artifactContext strings.Builder
+	for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
+		if content, ok := artifacts[stage]; ok && content != "" {
+			artifactContext.WriteString(strings.ToUpper(string(stage)))
+			artifactContext.WriteString(":\n---\n")
+			artifactContext.WriteString(content)
+			artifactContext.WriteString("\n---\n\n")
+		}
+	}
+
+	var userMsg strings.Builder
+	userMsg.WriteString(fmt.Sprintf("Review the implementation of this task:\n\nTask: %s\n", bead.Title))
+	if bead.Description != "" {
+		userMsg.WriteString(fmt.Sprintf("Description: %s\n", bead.Description))
+	}
+	userMsg.WriteString("\nProject context:\n")
+	userMsg.WriteString(artifactContext.String())
+	userMsg.WriteString("\nUse Bash to inspect the project files, then assess whether this task was implemented correctly and completely.")
+
+	cmd := exec.CommandContext(ctx, "claude",
+		"--print",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--allowedTools", "Bash",
+		"--system-prompt", devilAdvocateSystemPrompt,
+	)
+	cmd.Stdin = strings.NewReader(userMsg.String())
+	cmd.Dir = projectDir
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start claude: %w", err)
+	}
+
+	var fullResponse strings.Builder
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		var event claudeEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		switch event.Type {
+		case "assistant":
+			if event.Message != nil {
+				for _, c := range event.Message.Content {
+					if c.Type == "text" && c.Text != "" {
+						fullResponse.WriteString(c.Text)
+					}
+				}
+			}
+		case "result":
+			if fullResponse.Len() == 0 && event.Result != "" {
+				fullResponse.WriteString(event.Result)
+			}
+		}
+	}
+	cmd.Wait()
+
+	response := strings.TrimSpace(fullResponse.String())
+	if strings.HasPrefix(response, "LGTM") {
+		return "", nil
+	}
+	return response, nil
 }
 
 // ExtractBeadJSON extracts the JSON block from Claude's response.

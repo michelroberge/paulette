@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/michelroberge/ai-app-factory/backend/internal/model"
 )
@@ -58,6 +59,8 @@ Your approach:
 2. Propose screen layouts and navigation flows
 3. Describe interactions and state transitions
 4. Iterate based on user feedback
+
+%s
 
 When ready, produce a UX document wrapped in these exact delimiters:
 
@@ -221,33 +224,109 @@ Ready to build / Needs revision
 Always wrap the document in exactly those delimiters. Update the artifact each time you have new information from the user. Always include the full artifact with all sections, even if some haven't changed.`,
 }
 
-// GetSystemPrompt returns the system prompt for a given stage, injecting previous artifacts.
-func GetSystemPrompt(stage model.StageName, previousArtifacts map[model.StageName]string) string {
+// buildFrameworkPromptNote returns the framework instruction snippet for injection into the UX system prompt.
+func buildFrameworkPromptNote(cfg *model.FrameworkConfig) string {
+	if cfg == nil {
+		return `Based on the product vision, recommend an appropriate UI framework (Tailwind CSS, Bootstrap 5, Material UI, Shadcn/UI, or Vanilla CSS) for this product. State your recommendation clearly at the start of the conversation with a brief justification. The user can confirm or change this in the Framework Selector in the UI.`
+	}
+
+	name := frameworkDisplayName(cfg)
+	return fmt.Sprintf(`The user has selected **%s** as the UI framework for this product. Design all screen descriptions, component names, and interaction patterns with %s conventions in mind.`, name, name)
+}
+
+// frameworkDisplayName returns a human-readable name for the framework.
+func frameworkDisplayName(cfg *model.FrameworkConfig) string {
+	switch cfg.Framework {
+	case model.FrameworkTailwind:
+		return "Tailwind CSS"
+	case model.FrameworkBootstrap:
+		return "Bootstrap 5"
+	case model.FrameworkMUI:
+		return "Material UI (MUI)"
+	case model.FrameworkShadcn:
+		return "Shadcn/UI"
+	case model.FrameworkVanilla:
+		return "Vanilla CSS"
+	case model.FrameworkOther:
+		if cfg.CustomName != "" {
+			return cfg.CustomName
+		}
+		return "custom framework"
+	default:
+		return string(cfg.Framework)
+	}
+}
+
+// EnhancementContext holds context from a prior iteration for enhancement-aware prompts.
+type EnhancementContext struct {
+	Vision        string // the user's enhancement request
+	Summary       string // summary.md from the prior iteration
+	PriorArtifact string // the prior iteration's artifact for this stage
+}
+
+// GetSystemPrompt returns the system prompt for a given stage, injecting previous artifacts and framework config.
+func GetSystemPrompt(stage model.StageName, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig, enhancement ...*EnhancementContext) string {
 	template, ok := systemPrompts[stage]
 	if !ok {
 		return fmt.Sprintf("You are an AI assistant helping with the %s stage of product development.", stage)
 	}
 
+	var prompt string
 	switch stage {
 	case model.StageUX:
 		visionArtifact := previousArtifacts[model.StageVision]
-		return fmt.Sprintf(template, visionArtifact)
+		prompt = fmt.Sprintf(template, visionArtifact, buildFrameworkPromptNote(frameworkCfg))
 	case model.StageArchitecture:
 		visionArtifact := previousArtifacts[model.StageVision]
 		uxArtifact := previousArtifacts[model.StageUX]
-		return fmt.Sprintf(template, visionArtifact, uxArtifact)
+		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact)
 	case model.StageBuild:
 		visionArtifact := previousArtifacts[model.StageVision]
 		uxArtifact := previousArtifacts[model.StageUX]
 		archArtifact := previousArtifacts[model.StageArchitecture]
-		return fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact)
+		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact)
 	case model.StageReview:
 		visionArtifact := previousArtifacts[model.StageVision]
 		uxArtifact := previousArtifacts[model.StageUX]
 		archArtifact := previousArtifacts[model.StageArchitecture]
 		buildArtifact := previousArtifacts[model.StageBuild]
-		return fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact, buildArtifact)
+		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact, buildArtifact)
 	default:
-		return template
+		prompt = template
 	}
+
+	return applyEnhancementContext(prompt, enhancement)
+}
+
+func applyEnhancementContext(basePrompt string, enhancement []*EnhancementContext) string {
+	if len(enhancement) == 0 || enhancement[0] == nil {
+		return basePrompt
+	}
+	ctx := enhancement[0]
+
+	var sb strings.Builder
+	sb.WriteString(basePrompt)
+	sb.WriteString("\n\n--- ENHANCEMENT CONTEXT ---\n")
+	sb.WriteString("This is an enhancement iteration building on an existing product. Do NOT start from scratch — evolve and refine the existing work based on the enhancement request.\n\n")
+
+	if ctx.Summary != "" {
+		sb.WriteString("Previous iteration summary:\n---\n")
+		sb.WriteString(ctx.Summary)
+		sb.WriteString("\n---\n\n")
+	}
+
+	sb.WriteString("Enhancement request from user:\n---\n")
+	sb.WriteString(ctx.Vision)
+	sb.WriteString("\n---\n\n")
+
+	if ctx.PriorArtifact != "" {
+		sb.WriteString("Previous version of this stage's artifact:\n---\n")
+		sb.WriteString(ctx.PriorArtifact)
+		sb.WriteString("\n---\n\n")
+	}
+
+	sb.WriteString("Evolve and refine this artifact based on the enhancement request. Focus on what's changing while preserving what still applies.\n")
+	sb.WriteString("--- END ENHANCEMENT CONTEXT ---")
+
+	return sb.String()
 }

@@ -3,14 +3,17 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useMock } from '../../hooks/useMock';
 import { getArtifact } from '../../api/artifacts';
+import { FrameworkSelector } from './FrameworkSelector';
 
 interface Props {
   projectId: string;
   refreshTrigger: number;
+  mode: 'artifact' | 'mock';
+  onRequestMockTab?: () => void;
+  hidden?: boolean;
 }
 
-export function UxPanel({ projectId, refreshTrigger }: Props) {
-  const [tab, setTab] = useState<'artifact' | 'mock'>('artifact');
+export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hidden }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [refinement, setRefinement] = useState('');
@@ -41,38 +44,24 @@ export function UxPanel({ projectId, refreshTrigger }: Props) {
   };
 
   const handleGenerate = () => {
-    setTab('mock');
+    onRequestMockTab?.();
     generate(refinement);
     setRefinement('');
   };
 
   return (
-    <div className="ux-panel">
-      <div className="ux-panel-tabs">
-        <button
-          className={`ux-tab${tab === 'artifact' ? ' active' : ''}`}
-          onClick={() => setTab('artifact')}
-        >
-          UX Design Artifact
-        </button>
-        <button
-          className={`ux-tab${tab === 'mock' ? ' active' : ''}`}
-          onClick={() => setTab('mock')}
-        >
-          Mock Preview {html ? '●' : ''}
-        </button>
-
-        <div className="ux-tab-actions">
-          {tab === 'mock' && (
-            <input
-              className="refinement-input"
-              placeholder="Refinement instruction (optional)..."
-              value={refinement}
-              onChange={e => setRefinement(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleGenerate(); }}
-              disabled={generating || !artifactExists}
-            />
-          )}
+    <div className="ux-panel" style={{ display: hidden ? 'none' : 'flex' }}>
+      {mode === 'mock' && (
+        <div className="ux-tab-actions" style={{ padding: '0.4rem 1rem', borderBottom: '1px solid #334155', background: '#1e293b' }}>
+          <FrameworkSelector projectId={projectId} />
+          <input
+            className="refinement-input"
+            placeholder="Refinement instruction (optional)..."
+            value={refinement}
+            onChange={e => setRefinement(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleGenerate(); }}
+            disabled={generating || !artifactExists}
+          />
           {generating ? (
             <button className="stop-button" onClick={stop}>
               Stop
@@ -87,10 +76,29 @@ export function UxPanel({ projectId, refreshTrigger }: Props) {
             </button>
           )}
         </div>
-      </div>
+      )}
+
+      {mode === 'artifact' && (
+        <div className="ux-tab-actions" style={{ padding: '0.4rem 1rem', borderBottom: '1px solid #334155', background: '#1e293b', justifyContent: 'flex-end' }}>
+          <FrameworkSelector projectId={projectId} />
+          {generating ? (
+            <button className="stop-button" onClick={stop}>
+              Stop
+            </button>
+          ) : (
+            <button
+              className="generate-mock-button"
+              onClick={handleGenerate}
+              disabled={!artifactExists}
+            >
+              {html ? 'Regenerate Mock' : 'Generate Mock Preview'}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="ux-panel-content">
-        {tab === 'artifact' && (
+        {mode === 'artifact' && (
           artifactExists ? (
             <div className="artifact-content">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactContent}</ReactMarkdown>
@@ -102,7 +110,7 @@ export function UxPanel({ projectId, refreshTrigger }: Props) {
           )
         )}
 
-        {tab === 'mock' && (
+        {mode === 'mock' && (
           <>
             {generating && (
               <div className="mock-generating">

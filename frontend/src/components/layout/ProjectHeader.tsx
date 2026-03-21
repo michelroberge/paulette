@@ -10,7 +10,9 @@ export function ProjectHeader({ project, onBack }: Props) {
     <header className="project-header">
       <button className="back-button" onClick={onBack}>&larr;</button>
       <h2>{project.name}</h2>
-      <span className="version">v{project.version}</span>
+      <span className="version">
+        v{project.version}{project.iteration > 1 && ` (iter ${project.iteration})`}
+      </span>
       <span className="author">{project.author}</span>
     </header>
   );

@@ -41,6 +41,10 @@ func (r *ProjectRepo) Load(hostDir string) (*model.Project, error) {
 	if err := json.Unmarshal(b, &project); err != nil {
 		return nil, fmt.Errorf("parse project.json: %w", err)
 	}
+	// Backward compatibility: default iteration to 1 for pre-enhancement projects
+	if project.Iteration == 0 {
+		project.Iteration = 1
+	}
 	return &project, nil
 }
 

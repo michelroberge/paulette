@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { getMock, generateMock } from '../api/mock';
+import { getActiveRuns, reconnectToRun } from '../api/activity';
 import type { StreamEvent } from '../types';
 
 export function useMock(projectId: string | null) {
@@ -15,6 +16,57 @@ export function useMock(projectId: string | null) {
     if (res.exists) setHtml(res.html);
     setLoaded(true);
   }, [projectId]);
+
+  // Check for active mock generation and reconnect on mount
+  useEffect(() => {
+    if (!projectId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const runs = await getActiveRuns(projectId);
+        if (cancelled) return;
+
+        const activeRun = runs.find(r => r.operation === 'mock');
+        if (!activeRun) return;
+
+        setGenerating(true);
+        setTokenCount(0);
+
+        const controller = new AbortController();
+        abortRef.current = controller;
+        let charCount = 0;
+
+        await reconnectToRun(
+          projectId,
+          activeRun.id,
+          (event) => {
+            const ev = event as StreamEvent;
+            switch (ev.type) {
+              case 'chunk':
+                charCount += ev.content.length;
+                setTokenCount(Math.round(charCount / 4));
+                break;
+              case 'tokens':
+                setTokenCount(parseInt(ev.content, 10));
+                break;
+              case 'done':
+                setHtml(ev.content);
+                break;
+            }
+          },
+          controller.signal,
+        );
+      } catch {
+        // not critical
+      } finally {
+        if (!cancelled) setGenerating(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stop = useCallback(() => {
     abortRef.current?.abort();

@@ -8,9 +8,13 @@ export interface Project {
   version: string;
   hostDir: string;
   currentStage: StageName;
+  iteration: number;
+  enhancementVision?: string;
   createdAt: string;
   updatedAt: string;
 }
+
+export type VersionBump = 'major' | 'minor' | 'patch';
 
 export interface StageInfo {
   name: StageName;
@@ -36,5 +40,37 @@ export interface ChatHistory {
 
 export interface StreamEvent {
   type: 'chunk' | 'artifact' | 'done' | 'error' | 'tokens';
+  content: string;
+}
+
+export type FrameworkId = 'tailwind' | 'bootstrap' | 'mui' | 'shadcn' | 'vanilla' | 'other';
+
+export interface FrameworkConfig {
+  framework: FrameworkId;
+  customName?: string;
+}
+
+export type BeadStatus = 'open' | 'in_progress' | 'reviewing' | 'closed' | 'blocked';
+export type BeadType = 'epic' | 'task' | 'feature';
+
+export interface Bead {
+  id: string;
+  title: string;
+  description?: string;
+  type: BeadType;
+  status: BeadStatus;
+  priority: number;
+  epicId?: string;
+  deps: string[];
+}
+
+export interface BeadGraph {
+  generatedAt: string;
+  projectId: string;
+  beads: Bead[];
+}
+
+export interface BuildStreamEvent {
+  type: 'chunk' | 'bead_created' | 'bead_update' | 'log' | 'done' | 'error';
   content: string;
 }

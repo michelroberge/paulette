@@ -61,6 +61,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Version:      version,
 		HostDir:      req.HostDir,
 		CurrentStage: model.StageVision,
+		Iteration:    1,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

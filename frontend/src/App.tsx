@@ -2,14 +2,17 @@ import { useState, useEffect, useCallback } from 'react';
 import { ProjectList } from './components/project/ProjectList';
 import { ProjectHeader } from './components/layout/ProjectHeader';
 import { StagesSidebar } from './components/layout/StagesSidebar';
+import { StageView } from './components/layout/StageView';
 import { ChatPanel } from './components/chat/ChatPanel';
 import { ArtifactPreview } from './components/artifact/ArtifactPreview';
 import { UxPanel } from './components/ux/UxPanel';
+import { BuildPanel } from './components/build/BuildPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { getPipeline, resetStage } from './api/pipeline';
+import { startEnhancement } from './api/enhance';
 import { useChat } from './hooks/useChat';
-import type { Project, PipelineState, StageName } from './types';
+import type { Project, PipelineState, StageName, VersionBump } from './types';
 import './App.css';
 
 const KICKOFF_MESSAGES: Partial<Record<StageName, string>> = {
@@ -20,11 +23,35 @@ const KICKOFF_MESSAGES: Partial<Record<StageName, string>> = {
   review: "I've reviewed all approved artifacts. Let me perform a structured validation and give you my assessment.",
 };
 
+interface StageTab {
+  id: string;
+  label: string;
+}
+
+function getTabsForStage(stage: StageName | null): StageTab[] {
+  if (!stage || stage === 'complete') return [];
+  if (stage === 'ux') return [
+    { id: 'chat', label: 'Chat' },
+    { id: 'artifact', label: 'UX Design' },
+    { id: 'mock', label: 'Mock Preview' },
+  ];
+  if (stage === 'build') return [
+    { id: 'chat', label: 'Chat' },
+    { id: 'artifact', label: 'Build Plan' },
+    { id: 'execute', label: 'Execute' },
+  ];
+  return [
+    { id: 'chat', label: 'Chat' },
+    { id: 'artifact', label: 'Artifact' },
+  ];
+}
+
 function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
   const [selectedStage, setSelectedStage] = useState<StageName | null>(null);
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0);
+  const [activeTab, setActiveTab] = useState<string>('chat');
 
   const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send, stop } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger);
@@ -48,12 +75,20 @@ function App() {
     loadHistory();
   }, [loadHistory]);
 
+  // Reset tab on stage change
+  useEffect(() => {
+    setActiveTab('chat');
+  }, [selectedStage]);
+
   // Auto-kickoff: when entering a stage with no history, send the opening message
   useEffect(() => {
     if (!historyLoaded || messages.length > 0 || streaming) return;
     const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
     if (currentStageInfo?.status !== 'active') return;
-    const kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
+    let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
+    if (project?.enhancementVision && selectedStage === 'vision') {
+      kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
+    }
     if (kickoff) send(kickoff);
   }, [historyLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -69,12 +104,22 @@ function App() {
     if (state) setSelectedStage(state.currentStage);
   };
 
+  const handleEnhance = async (vision: string, bump: VersionBump) => {
+    if (!project) return;
+    const result = await startEnhancement(project.id, vision, bump);
+    setProject(result.project);
+    setPipeline(result.pipeline);
+    setSelectedStage('vision');
+    setChatReloadTrigger(t => t + 1);
+  };
+
   if (!project) {
     return <ProjectList onSelect={setProject} />;
   }
 
   const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
   const isActiveStage = currentStageInfo?.status === 'active';
+  const tabs = getTabsForStage(selectedStage);
 
   return (
     <div className="app-shell">
@@ -94,31 +139,49 @@ function App() {
               project={project}
               onNewProject={() => { setProject(null); setPipeline(null); }}
               onViewStage={stage => setSelectedStage(stage)}
+              onEnhance={handleEnhance}
             />
           ) : (
             <>
-              <ChatPanel
-                messages={messages}
-                streaming={streaming}
-                streamingContent={streamingContent}
-                onSend={send}
-                onStop={stop}
-              />
-
-              {selectedStage && selectedStage !== 'complete' && (
-                selectedStage === 'ux' ? (
-                  <UxPanel
-                    projectId={project.id}
-                    refreshTrigger={artifactUpdated}
+              <StageView tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab}>
+                {activeTab === 'chat' && (
+                  <ChatPanel
+                    messages={messages}
+                    streaming={streaming}
+                    streamingContent={streamingContent}
+                    onSend={send}
+                    onStop={stop}
                   />
-                ) : (
+                )}
+
+                {activeTab === 'artifact' && selectedStage && !['ux', 'build', 'complete'].includes(selectedStage) && (
                   <ArtifactPreview
                     projectId={project.id}
                     stage={selectedStage}
                     refreshTrigger={artifactUpdated}
                   />
-                )
-              )}
+                )}
+
+                {selectedStage === 'ux' && (
+                  <UxPanel
+                    projectId={project.id}
+                    refreshTrigger={artifactUpdated}
+                    mode={activeTab === 'mock' ? 'mock' : 'artifact'}
+                    onRequestMockTab={() => setActiveTab('mock')}
+                    hidden={activeTab === 'chat'}
+                  />
+                )}
+
+                {selectedStage === 'build' && (
+                  <BuildPanel
+                    projectId={project.id}
+                    refreshTrigger={artifactUpdated}
+                    mode={activeTab === 'execute' ? 'execute' : 'artifact'}
+                    onRequestExecuteTab={() => setActiveTab('execute')}
+                    hidden={activeTab === 'chat'}
+                  />
+                )}
+              </StageView>
 
               {isActiveStage && (
                 <div className="approve-bar">

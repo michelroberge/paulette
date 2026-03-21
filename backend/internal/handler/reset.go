@@ -61,10 +61,16 @@ func (h *ResetHandler) Reset(w http.ResponseWriter, r *http.Request) {
 		artifactFile := filepath.Join(project.HostDir, ".ai-factory", string(s), string(s)+".md")
 		os.Remove(artifactFile)
 
-		// Remove UX mock if applicable
+		// Remove UX mock and framework config if applicable
 		if s == model.StageUX {
-			mockFile := filepath.Join(project.HostDir, ".ai-factory", "ux", "mock.html")
-			os.Remove(mockFile)
+			os.Remove(filepath.Join(project.HostDir, ".ai-factory", "ux", "mock.html"))
+			os.Remove(filepath.Join(project.HostDir, ".ai-factory", "ux", "framework.json"))
+		}
+
+		// Remove bead graph if applicable
+		if s == model.StageBuild {
+			beadsFile := filepath.Join(project.HostDir, ".ai-factory", "build", "beads-graph.json")
+			os.Remove(beadsFile)
 		}
 	}
 
