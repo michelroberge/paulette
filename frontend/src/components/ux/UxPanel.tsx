@@ -75,8 +75,7 @@ export function UxPanel({ projectId, refreshTrigger }: Props) {
           <button
             className="generate-mock-button"
             onClick={handleGenerate}
-            disabled={generating || !artifactExists}
-            title={!artifactExists ? 'Complete the UX artifact first' : ''}
+            disabled={generating}
           >
             {generating ? 'Generating...' : html ? 'Regenerate Mock' : 'Generate Mock Preview'}
           </button>

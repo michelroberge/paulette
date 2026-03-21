@@ -70,10 +70,13 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	var req generateMockRequest
 	json.NewDecoder(r.Body).Decode(&req) // optional body — ignore decode errors
 
-	// Load the UX artifact for context
-	uxContent, err := h.artifactRepo.Read(project.HostDir, model.StageUX)
-	if err != nil || uxContent == "" {
-		http.Error(w, "no UX artifact found — complete the UX stage first", http.StatusBadRequest)
+	// Use UX artifact if available, fall back to vision artifact
+	uxContent, _ := h.artifactRepo.Read(project.HostDir, model.StageUX)
+	if uxContent == "" {
+		uxContent, _ = h.artifactRepo.Read(project.HostDir, model.StageVision)
+	}
+	if uxContent == "" {
+		http.Error(w, "no artifact available — chat with the agent to generate content first", http.StatusBadRequest)
 		return
 	}
 
