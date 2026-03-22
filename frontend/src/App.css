@@ -441,6 +441,8 @@ body {
   flex-direction: column;
   background: #1a2332;
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .ux-panel-tabs {
@@ -588,7 +590,9 @@ body {
 .ux-panel-content {
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden;
+  flex: 1;
+  min-height: 0;
 }
 
 .ux-panel-content .artifact-content {
@@ -599,23 +603,55 @@ body {
   line-height: 1.6;
 }
 
-/* Mock streaming view */
-.mock-generating {
+/* Mock split layout */
+.mock-split-layout {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mock-main-column {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 0.75rem 1rem;
-  gap: 0.5rem;
 }
 
-.mock-stream-header {
+.mock-activity-panel {
+  width: 35%;
+  min-width: 240px;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid #334155;
+  background: #0f172a;
+}
+
+.mock-activity-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
   font-size: 0.8rem;
   color: #7c3aed;
   font-weight: 600;
+  border-bottom: 1px solid #1e293b;
+  background: #1e293b;
+}
+
+.mock-activity-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  font-size: 0.72rem;
+  color: #64748b;
+  font-family: 'Menlo', 'Monaco', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 0.75rem;
+  margin: 0;
 }
 
 .mock-stream-tokens {
@@ -634,24 +670,10 @@ body {
   animation: typing-bounce 1s ease-in-out infinite;
 }
 
-.mock-stream-text {
-  flex: 1;
-  overflow-y: auto;
-  font-size: 0.72rem;
-  color: #64748b;
-  font-family: 'Menlo', 'Monaco', monospace;
-  white-space: pre-wrap;
-  word-break: break-all;
-  background: #0f172a;
-  border: 1px solid #1e293b;
-  border-radius: 6px;
-  padding: 0.75rem;
-  margin: 0;
-}
-
 /* Mock iframe */
 .mock-iframe {
   width: 100%;
+  flex: 1;
   border: none;
   background: #fff;
   overflow: hidden;
@@ -989,6 +1011,15 @@ body {
 .project-list > p {
   color: #94a3b8;
   margin-bottom: 2rem;
+}
+
+.copyright {
+  margin-top: 3rem;
+  padding: 1.5rem 0 0.5rem;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.8rem;
+  border-top: 1px solid #1e293b;
 }
 
 /* Sidebar Branding */

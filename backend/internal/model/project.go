@@ -36,6 +36,7 @@ type Project struct {
 	CurrentStage      StageName           `json:"currentStage"`
 	Iteration         int                 `json:"iteration"`
 	EnhancementVision string              `json:"enhancementVision,omitempty"`
+	Imported          bool                `json:"imported,omitempty"`
 	SummaryReady      bool                `json:"summaryReady"`
 	SummaryTokens     int                 `json:"summaryTokens,omitempty"`
 	StageTokens       map[StageName]int   `json:"stageTokens,omitempty"`

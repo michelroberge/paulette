@@ -19,7 +19,6 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
   const [artifactExists, setArtifactExists] = useState(false);
   const [refinement, setRefinement] = useState('');
 
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
   const { html, generating, tokenCount, streamingText, loaded, load, generate, stop } = useMock(projectId);
 
@@ -54,12 +53,6 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
     }
   }, [streamingText]);
 
-  const handleIframeLoad = () => {
-    const iframe = iframeRef.current;
-    if (!iframe) return;
-    const height = iframe.contentDocument?.body?.scrollHeight;
-    if (height) iframe.style.height = `${height}px`;
-  };
 
   const handleGenerate = () => {
     onRequestMockTab?.();
@@ -129,42 +122,44 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
         )}
 
         {mode === 'mock' && (
-          <>
-            {generating && (
-              <div className="mock-generating">
-                <div className="mock-stream-header">
-                  <span className="mock-stream-dot" />
-                  Generating wireframes...
-                  {tokenCount > 0 && (
-                    <span className="mock-stream-tokens">{tokenCount.toLocaleString()} tokens</span>
-                  )}
+          <div className="mock-split-layout">
+            <div className="mock-main-column">
+              {!html && !generating && loaded && (
+                <div className="artifact-preview empty">
+                  <p>No mock preview yet.</p>
+                  <p>Click <strong>Generate Mock Preview</strong> to create wireframes from the UX artifact.</p>
                 </div>
-                {streamingText && (
-                  <div className="mock-stream-text" ref={streamRef}>
-                    {streamingText}
-                  </div>
+              )}
+
+              {html && (
+                <iframe
+                  srcDoc={html}
+                  className="mock-iframe"
+                  sandbox="allow-scripts allow-same-origin"
+                  title="UI Mock Preview"
+                />
+              )}
+
+              {generating && !html && (
+                <div className="artifact-preview empty">
+                  <p>Generating wireframes...</p>
+                </div>
+              )}
+            </div>
+
+            <div className="mock-activity-panel">
+              <div className="mock-activity-header">
+                {generating && <span className="mock-stream-dot" />}
+                <span>Activity Stream</span>
+                {generating && tokenCount > 0 && (
+                  <span className="mock-stream-tokens">{tokenCount.toLocaleString()} tokens</span>
                 )}
               </div>
-            )}
-
-            {!generating && !html && loaded && (
-              <div className="artifact-preview empty">
-                <p>No mock preview yet.</p>
-                <p>Click <strong>Generate Mock Preview</strong> to create wireframes from the UX artifact.</p>
+              <div className="mock-activity-content" ref={streamRef}>
+                {streamingText || html || ''}
               </div>
-            )}
-
-            {!generating && html && (
-              <iframe
-                ref={iframeRef}
-                srcDoc={html}
-                className="mock-iframe"
-                sandbox="allow-scripts allow-same-origin"
-                title="UI Mock Preview"
-                onLoad={handleIframeLoad}
-              />
-            )}
-          </>
+            </div>
+          </div>
         )}
       </div>
     </div>

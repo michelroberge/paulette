@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ProjectList } from './components/project/ProjectList';
+import { ImportProgressView } from './components/import/ImportProgressView';
 import { ProjectHeader } from './components/layout/ProjectHeader';
 import { StagesSidebar } from './components/layout/StagesSidebar';
 import { StageView } from './components/layout/StageView';
@@ -56,6 +57,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<string>('chat');
   const [stageTokens, setStageTokens] = useState<Partial<Record<StageName, number>>>({});
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [showImportProgress, setShowImportProgress] = useState(false);
 
   const addTokens = useCallback((stage: StageName, n: number) => {
     if (n <= 0) return;
@@ -81,6 +83,12 @@ function App() {
   useEffect(() => {
     if (project) {
       setStageTokens(project.stageTokens ?? {});
+      // Show import progress for newly imported projects
+      if (project.imported && project.currentStage === 'vision') {
+        setShowImportProgress(true);
+      } else {
+        setShowImportProgress(false);
+      }
     }
   }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -116,8 +124,10 @@ function App() {
   }, [project?.id, project?.currentStage, project?.summaryReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-kickoff: when entering a stage with no history, send the opening message
+  // Skip for imported projects — artifacts are pre-populated, user reviews manually
   useEffect(() => {
     if (!historyLoaded || messages.length > 0 || streaming) return;
+    if (project?.imported) return;
     const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
     if (currentStageInfo?.status !== 'active') return;
     let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
@@ -183,7 +193,16 @@ function App() {
         />
 
         <main className="main-content">
-          {pipeline?.currentStage === 'complete' && selectedStage === 'complete' ? (
+          {showImportProgress ? (
+            <ImportProgressView
+              project={project}
+              onComplete={() => {
+                setShowImportProgress(false);
+                loadPipeline();
+                setChatReloadTrigger(t => t + 1);
+              }}
+            />
+          ) : pipeline?.currentStage === 'complete' && selectedStage === 'complete' ? (
             <CompletionView
               project={project}
               onNewProject={() => { setProject(null); setPipeline(null); }}
@@ -192,6 +211,17 @@ function App() {
             />
           ) : (
             <>
+              {project.imported && isActiveStage && (
+                <div style={{
+                  padding: '0.5rem 1rem',
+                  background: '#1e293b',
+                  borderBottom: '1px solid #334155',
+                  color: '#94a3b8',
+                  fontSize: '0.8rem',
+                }}>
+                  This artifact was auto-generated from your codebase. Review and refine via chat, then approve.
+                </div>
+              )}
               <StageView tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab}>
                 {activeTab === 'chat' && (
                   <ChatPanel

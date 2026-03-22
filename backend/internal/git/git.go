@@ -57,6 +57,16 @@ func run(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// Clone clones a remote repository into dir.
+// dir must not already exist (or be empty).
+func (s *Service) Clone(url, dir string) error {
+	out, err := exec.Command("git", "clone", url, dir).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git clone: %w: %s", err, out)
+	}
+	return nil
+}
+
 // Init initializes a git repository if one doesn't exist.
 func (s *Service) Init(dir string) error {
 	mu := s.lock(dir)

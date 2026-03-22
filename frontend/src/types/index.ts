@@ -10,6 +10,7 @@ export interface Project {
   currentStage: StageName;
   iteration: number;
   enhancementVision?: string;
+  imported?: boolean;
   summaryReady: boolean;
   summaryTokens?: number;
   stageTokens?: Partial<Record<StageName, number>>;

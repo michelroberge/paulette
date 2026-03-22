@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { listProjects, createProject, deleteProject } from '../../api/projects';
+import { importProject } from '../../api/import';
 import type { Project } from '../../types';
 
 const STAGE_ORDER = ['vision', 'ux', 'architecture', 'build', 'review', 'complete'];
@@ -30,11 +31,18 @@ interface Props {
 export function ProjectList({ onSelect }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [showForm, setShowForm] = useState(false);
+  const [showImportForm, setShowImportForm] = useState(false);
   const [name, setName] = useState('');
   const [author, setAuthor] = useState('');
   const [version, setVersion] = useState('0.1.0');
   const [hostDir, setHostDir] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [importRepoUrl, setImportRepoUrl] = useState('');
+  const [importHostDir, setImportHostDir] = useState('');
+  const [importName, setImportName] = useState('');
+  const [importAuthor, setImportAuthor] = useState('');
+  const [importVersion, setImportVersion] = useState('1.0.0');
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     listProjects().then(setProjects).catch(console.error);
@@ -50,6 +58,30 @@ export function ProjectList({ onSelect }: Props) {
     setVersion('0.1.0');
     setHostDir('');
     onSelect(project);
+  };
+
+  const handleImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setImporting(true);
+    try {
+      const project = await importProject({
+        repoUrl: importRepoUrl || undefined,
+        hostDir: importHostDir,
+        name: importName || undefined,
+        author: importAuthor || undefined,
+        version: importVersion || undefined,
+      });
+      setProjects(prev => [...prev, project]);
+      setShowImportForm(false);
+      setImportRepoUrl('');
+      setImportHostDir('');
+      setImportName('');
+      setImportAuthor('');
+      setImportVersion('1.0.0');
+      onSelect(project);
+    } finally {
+      setImporting(false);
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -120,6 +152,11 @@ export function ProjectList({ onSelect }: Props) {
           <span className="plus">+</span>
           <span>New Project</span>
         </div>
+
+        <div className="project-card new-project" onClick={() => setShowImportForm(true)}>
+          <span className="plus" style={{ fontSize: '1.5rem' }}>&#8615;</span>
+          <span>Import Repo</span>
+        </div>
       </div>
 
       {confirmDelete && (
@@ -165,6 +202,49 @@ export function ProjectList({ onSelect }: Props) {
           </form>
         </div>
       )}
+
+      {showImportForm && (
+        <div className="modal-overlay" onClick={() => setShowImportForm(false)}>
+          <form className="modal" onClick={e => e.stopPropagation()} onSubmit={handleImport}>
+            <h2>Import Existing Repo</h2>
+            <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem' }}>
+              Clone a remote repo or point to a local directory. Artifacts will be auto-generated from the codebase.
+            </p>
+            <label>
+              Git Repo URL <span style={{ color: '#64748b', fontSize: '0.8rem' }}>(optional — leave blank for local)</span>
+              <input value={importRepoUrl} onChange={e => setImportRepoUrl(e.target.value)}
+                placeholder="https://github.com/user/repo.git" />
+            </label>
+            <label>
+              Host Directory
+              <input value={importHostDir} onChange={e => setImportHostDir(e.target.value)} required
+                placeholder="/path/to/clone/target" />
+            </label>
+            <label>
+              Project Name <span style={{ color: '#64748b', fontSize: '0.8rem' }}>(optional — defaults to directory name)</span>
+              <input value={importName} onChange={e => setImportName(e.target.value)} />
+            </label>
+            <label>
+              Author
+              <input value={importAuthor} onChange={e => setImportAuthor(e.target.value)} />
+            </label>
+            <label>
+              Version
+              <input value={importVersion} onChange={e => setImportVersion(e.target.value)} placeholder="1.0.0" />
+            </label>
+            <div className="form-actions">
+              <button type="button" onClick={() => setShowImportForm(false)}>Cancel</button>
+              <button type="submit" className="primary" disabled={importing}>
+                {importing ? 'Importing...' : 'Import'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <footer className="copyright">
+        &copy; {new Date().getFullYear()} Michel Roberge. All rights reserved.
+      </footer>
     </div>
   );
 }

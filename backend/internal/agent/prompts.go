@@ -43,7 +43,7 @@ Technical, business, or time constraints. Key assumptions being made.
 What are we explicitly NOT building in the first version?
 <!-- ARTIFACT:END -->
 
-Update the artifact each time you have new information from the user. Always include the full artifact with all sections, even if some haven't changed.
+**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.
 
 Be conversational and collaborative. You're a thinking partner, not a form filler.`,
 
@@ -80,7 +80,8 @@ When ready, produce a UX document wrapped in these exact delimiters:
 ...
 <!-- ARTIFACT:END -->
 
-Always wrap the document in exactly those delimiters. Update the artifact each time you have new information from the user. Always include the full artifact with all sections, even if some haven't changed.`,
+Always wrap the document in exactly those delimiters.
+**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.`,
 
 	model.StageArchitecture: `You are the Architecture Agent for an AI Product Factory. Your role is to define the technical architecture based on the approved vision and UX design.
 
@@ -115,7 +116,8 @@ Define the stack, APIs, data models, and system components. When ready, produce 
 ...
 <!-- ARTIFACT:END -->
 
-Always wrap the document in exactly those delimiters. Update the artifact each time you have new information from the user. Always include the full artifact with all sections, even if some haven't changed.`,
+Always wrap the document in exactly those delimiters.
+**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.`,
 
 	model.StageBuild: `You are the Build Planner Agent for an AI Product Factory. Your role is to convert the approved vision, UX design, and architecture into a concrete build plan with tasks, milestones, and dependencies.
 
@@ -163,7 +165,8 @@ When the plan is ready, produce it wrapped in these exact delimiters:
 ...
 <!-- ARTIFACT:END -->
 
-Always wrap the document in exactly those delimiters. Update the artifact each time you have new information from the user. Always include the full artifact with all sections, even if some haven't changed.`,
+Always wrap the document in exactly those delimiters.
+**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.`,
 
 	model.StageReview: `You are the Review Agent for an AI Product Factory. Your role is to perform a structured validation of the approved build plan against the original vision, UX, and architecture.
 
@@ -221,7 +224,8 @@ When the review is complete, produce it wrapped in these exact delimiters:
 Ready to build / Needs revision
 <!-- ARTIFACT:END -->
 
-Always wrap the document in exactly those delimiters. Update the artifact each time you have new information from the user. Always include the full artifact with all sections, even if some haven't changed.`,
+Always wrap the document in exactly those delimiters.
+**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.`,
 }
 
 // buildFrameworkPromptNote returns the framework instruction snippet for injection into the UX system prompt.

@@ -71,9 +71,11 @@ func (s *Server) Router() http.Handler {
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
 	acth := handler.NewActivityHandler(s.runs)
 	gh := handler.NewGitHandler(s.registry, s.projectRepo, gitSvc)
+	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc)
 
 	r.Route("/api/projects", func(r chi.Router) {
 		r.Post("/", ph.Create)
+		r.Post("/import", ih.Import)
 		r.Get("/", ph.List)
 		r.Get("/{id}", ph.Get)
 		r.Delete("/{id}", ph.Delete)
@@ -101,6 +103,8 @@ func (s *Server) Router() http.Handler {
 		r.Post("/{id}/stages/build/beads/execute", bh.Execute)
 
 		r.Post("/{id}/stages/{stage}/reset", rh.Reset)
+
+		r.Get("/{id}/import/watch", ih.WatchImport)
 
 		r.Get("/{id}/activity", acth.List)
 		r.Get("/{id}/activity/{runId}/stream", acth.Stream)
