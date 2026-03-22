@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ProjectList } from './components/project/ProjectList';
 import { ProjectHeader } from './components/layout/ProjectHeader';
 import { StagesSidebar } from './components/layout/StagesSidebar';
@@ -9,8 +9,10 @@ import { UxPanel } from './components/ux/UxPanel';
 import { BuildPanel } from './components/build/BuildPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
+import { VersionHistoryModal } from './components/git/VersionHistoryModal';
 import { getPipeline, resetStage } from './api/pipeline';
 import { startEnhancement } from './api/enhance';
+import { getProject } from './api/projects';
 import { useChat } from './hooks/useChat';
 import type { Project, PipelineState, StageName, VersionBump } from './types';
 import './App.css';
@@ -52,9 +54,21 @@ function App() {
   const [selectedStage, setSelectedStage] = useState<StageName | null>(null);
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0);
   const [activeTab, setActiveTab] = useState<string>('chat');
+  const [stageTokens, setStageTokens] = useState<Partial<Record<StageName, number>>>({});
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+
+  const addTokens = useCallback((stage: StageName, n: number) => {
+    if (n <= 0) return;
+    setStageTokens(prev => ({ ...prev, [stage]: (prev[stage] ?? 0) + n }));
+  }, []);
+
+  const grandTotal = useMemo(
+    () => Object.values(stageTokens).reduce((s, n) => s + (n ?? 0), 0),
+    [stageTokens],
+  );
 
   const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send, stop } =
-    useChat(project?.id ?? null, selectedStage, chatReloadTrigger);
+    useChat(project?.id ?? null, selectedStage, chatReloadTrigger, selectedStage ? (n) => addTokens(selectedStage, n) : undefined);
 
   const loadPipeline = useCallback(async () => {
     if (!project) return;
@@ -62,6 +76,13 @@ function App() {
     setPipeline(state);
     return state;
   }, [project]);
+
+  // Restore persisted stage tokens when selecting a project
+  useEffect(() => {
+    if (project) {
+      setStageTokens(project.stageTokens ?? {});
+    }
+  }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (project) {
@@ -79,6 +100,20 @@ function App() {
   useEffect(() => {
     setActiveTab('chat');
   }, [selectedStage]);
+
+  // Poll for summaryReady when at Complete stage
+  useEffect(() => {
+    if (!project || project.currentStage !== 'complete' || project.summaryReady) return;
+    const id = setInterval(async () => {
+      const updated = await getProject(project.id);
+      if (updated.summaryReady) {
+        setProject(updated);
+        if (updated.summaryTokens) addTokens('complete', updated.summaryTokens);
+        clearInterval(id);
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [project?.id, project?.currentStage, project?.summaryReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-kickoff: when entering a stage with no history, send the opening message
   useEffect(() => {
@@ -113,6 +148,14 @@ function App() {
     setChatReloadTrigger(t => t + 1);
   };
 
+  const handleGitReset = (resetProject: Project, resetPipeline: PipelineState) => {
+    setProject(resetProject);
+    setPipeline(resetPipeline);
+    setSelectedStage(resetPipeline.currentStage);
+    setChatReloadTrigger(t => t + 1);
+    setShowVersionHistory(false);
+  };
+
   if (!project) {
     return <ProjectList onSelect={setProject} />;
   }
@@ -123,7 +166,12 @@ function App() {
 
   return (
     <div className="app-shell">
-      <ProjectHeader project={project} onBack={() => { setProject(null); setPipeline(null); }} />
+      <ProjectHeader
+        project={project}
+        onBack={() => { setProject(null); setPipeline(null); }}
+        totalTokens={grandTotal}
+        onShowHistory={() => setShowVersionHistory(true)}
+      />
 
       <div className="app-body">
         <StagesSidebar
@@ -131,6 +179,7 @@ function App() {
           selectedStage={selectedStage}
           onSelectStage={setSelectedStage}
           onReset={handleReset}
+          stageTokens={stageTokens}
         />
 
         <main className="main-content">
@@ -169,6 +218,7 @@ function App() {
                     mode={activeTab === 'mock' ? 'mock' : 'artifact'}
                     onRequestMockTab={() => setActiveTab('mock')}
                     hidden={activeTab === 'chat'}
+                    onMockTokens={(n) => addTokens('ux', n)}
                   />
                 )}
 
@@ -179,6 +229,7 @@ function App() {
                     mode={activeTab === 'execute' ? 'execute' : 'artifact'}
                     onRequestExecuteTab={() => setActiveTab('execute')}
                     hidden={activeTab === 'chat'}
+                    onBeadTokens={(n) => addTokens('build', n)}
                   />
                 )}
               </StageView>
@@ -196,6 +247,14 @@ function App() {
           )}
         </main>
       </div>
+
+      {showVersionHistory && (
+        <VersionHistoryModal
+          projectId={project.id}
+          onClose={() => setShowVersionHistory(false)}
+          onReset={handleGitReset}
+        />
+      )}
     </div>
   );
 }

@@ -9,6 +9,8 @@ export function useBeads(projectId: string | null) {
   const [graph, setGraph] = useState<BeadGraph>({ generatedAt: '', projectId: '', beads: [] });
   const [phase, setPhase] = useState<BuildPhase>('plan');
   const [executionLog, setExecutionLog] = useState<string[]>([]);
+  const [streamingText, setStreamingText] = useState('');
+  const [planLimitReached, setPlanLimitReached] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const loadGraph = useCallback(async () => {
@@ -57,8 +59,10 @@ export function useBeads(projectId: string | null) {
         } catch { /* ignore */ }
         break;
       }
-      case 'log':
       case 'chunk':
+        setStreamingText(t => t + event.content);
+        break;
+      case 'log':
         setExecutionLog(l => [...l, event.content]);
         break;
       case 'done':
@@ -67,6 +71,10 @@ export function useBeads(projectId: string | null) {
         } else {
           setPhase('done');
         }
+        break;
+      case 'plan_limit':
+        setPlanLimitReached(true);
+        setPhase(prev => prev === 'generating' || prev === 'executing' ? 'graph' : prev);
         break;
       case 'error':
         setExecutionLog(l => [...l, `ERROR: ${event.content}`]);
@@ -168,6 +176,8 @@ export function useBeads(projectId: string | null) {
     setPhase('generating');
     setGraph({ generatedAt: '', projectId, beads: [] });
     setExecutionLog([]);
+    setStreamingText('');
+    setPlanLimitReached(false);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -194,6 +204,8 @@ export function useBeads(projectId: string | null) {
     if (!projectId || phase === 'executing') return;
     setPhase('executing');
     setExecutionLog([]);
+    setStreamingText('');
+    setPlanLimitReached(false);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -216,6 +228,7 @@ export function useBeads(projectId: string | null) {
   }, [projectId, phase, handleEvent]);
 
   const clearLog = useCallback(() => setExecutionLog([]), []);
+  const clearPlanLimit = useCallback(() => setPlanLimitReached(false), []);
 
-  return { graph, phase, executionLog, loadGraph, generate, execute, stop, clearLog };
+  return { graph, phase, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit };
 }

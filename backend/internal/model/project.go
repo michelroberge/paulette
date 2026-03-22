@@ -28,16 +28,31 @@ type StageInfo struct {
 }
 
 type Project struct {
-	ID                string    `json:"id"`
-	Name              string    `json:"name"`
-	Author            string    `json:"author"`
-	Version           string    `json:"version"`
-	HostDir           string    `json:"hostDir"`
-	CurrentStage      StageName `json:"currentStage"`
-	Iteration         int       `json:"iteration"`
-	EnhancementVision string    `json:"enhancementVision,omitempty"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	ID                string              `json:"id"`
+	Name              string              `json:"name"`
+	Author            string              `json:"author"`
+	Version           string              `json:"version"`
+	HostDir           string              `json:"hostDir"`
+	CurrentStage      StageName           `json:"currentStage"`
+	Iteration         int                 `json:"iteration"`
+	EnhancementVision string              `json:"enhancementVision,omitempty"`
+	SummaryReady      bool                `json:"summaryReady"`
+	SummaryTokens     int                 `json:"summaryTokens,omitempty"`
+	StageTokens       map[StageName]int   `json:"stageTokens,omitempty"`
+	CreatedAt         time.Time           `json:"createdAt"`
+	UpdatedAt         time.Time           `json:"updatedAt"`
+}
+
+// AddStageTokens atomically adds tokens to a stage counter.
+// It initialises the map if nil.
+func (p *Project) AddStageTokens(stage StageName, n int) {
+	if n <= 0 {
+		return
+	}
+	if p.StageTokens == nil {
+		p.StageTokens = make(map[StageName]int)
+	}
+	p.StageTokens[stage] += n
 }
 
 type PipelineState struct {

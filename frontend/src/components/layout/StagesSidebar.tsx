@@ -1,11 +1,18 @@
 import { useState } from 'react';
 import type { PipelineState, StageName } from '../../types';
 
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 interface Props {
   pipeline: PipelineState | null;
   onSelectStage: (stage: StageName) => void;
   selectedStage: StageName | null;
   onReset: (stage: StageName) => void;
+  stageTokens?: Partial<Record<StageName, number>>;
 }
 
 const stageLabels: Record<StageName, string> = {
@@ -23,7 +30,7 @@ const statusIcons: Record<string, string> = {
   approved: '\u2705',
 };
 
-export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset }: Props) {
+export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset, stageTokens }: Props) {
   const [confirmStage, setConfirmStage] = useState<StageName | null>(null);
 
   if (!pipeline) return null;
@@ -58,6 +65,9 @@ export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset 
             >
               <span className="stage-icon">{statusIcons[stage.status]}</span>
               <span className="stage-name">{stageLabels[stage.name]}</span>
+              {(stageTokens?.[stage.name] ?? 0) > 0 && (
+                <span className="stage-token-count">{formatTokens(stageTokens![stage.name]!)}</span>
+              )}
               {stage.status !== 'locked' && stage.name !== 'complete' && (
                 <button
                   className="stage-reset-btn"

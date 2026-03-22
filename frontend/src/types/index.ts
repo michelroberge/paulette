@@ -10,6 +10,9 @@ export interface Project {
   currentStage: StageName;
   iteration: number;
   enhancementVision?: string;
+  summaryReady: boolean;
+  summaryTokens?: number;
+  stageTokens?: Partial<Record<StageName, number>>;
   createdAt: string;
   updatedAt: string;
 }
@@ -39,7 +42,7 @@ export interface ChatHistory {
 }
 
 export interface StreamEvent {
-  type: 'chunk' | 'artifact' | 'done' | 'error' | 'tokens';
+  type: 'chunk' | 'artifact' | 'done' | 'error' | 'tokens' | 'plan_limit';
   content: string;
 }
 
@@ -62,6 +65,11 @@ export interface Bead {
   priority: number;
   epicId?: string;
   deps: string[];
+  tags?: string[];
+  targetFiles?: string[];
+  journeyRefs?: string[];
+  archRefs?: string[];
+  tokens?: number;
 }
 
 export interface BeadGraph {
@@ -71,6 +79,22 @@ export interface BeadGraph {
 }
 
 export interface BuildStreamEvent {
-  type: 'chunk' | 'bead_created' | 'bead_update' | 'log' | 'done' | 'error';
+  type: 'chunk' | 'bead_created' | 'bead_update' | 'log' | 'done' | 'error' | 'plan_limit';
   content: string;
+}
+
+export interface CommitEntry {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  date: string;
+  tags: string[];
+}
+
+export interface GitStatus {
+  clean: boolean;
+  dirty: number;
+  hasRemote: boolean;
+  remoteUrl: string;
 }

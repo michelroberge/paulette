@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -39,8 +41,9 @@ Items explicitly deferred or flagged for future iterations.
 
 Be concise — aim for a document that can be quickly scanned. Avoid repeating full artifact contents; summarize the decisions and rationale.`
 
-// GenerateSummary calls Claude to produce a concise summary of all approved artifacts.
-func GenerateSummary(ctx context.Context, artifacts map[model.StageName]string, projectName string, version string) (string, error) {
+// StreamSummary calls Claude to produce a concise summary of all approved artifacts,
+// streaming chunks as StreamEvents. The channel is closed when generation finishes.
+func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, projectName string, version string) (<-chan StreamEvent, error) {
 	var prompt strings.Builder
 	prompt.WriteString(fmt.Sprintf("Project: %s, Version: %s\n\n", projectName, version))
 
@@ -65,14 +68,64 @@ func GenerateSummary(ctx context.Context, artifacts map[model.StageName]string, 
 
 	cmd := exec.CommandContext(ctx, "claude",
 		"--print",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--model", "claude-sonnet-4-6",
 		"--system-prompt", summarySystemPrompt,
 	)
 	cmd.Stdin = strings.NewReader(prompt.String())
 
-	out, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("generate summary: %w", err)
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start claude: %w", err)
 	}
 
-	return strings.TrimSpace(string(out)), nil
+	ch := make(chan StreamEvent, 64)
+
+	go func() {
+		defer close(ch)
+		defer cmd.Wait()
+
+		var fullText strings.Builder
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			var event claudeEvent
+			if err := json.Unmarshal([]byte(line), &event); err != nil {
+				continue
+			}
+			switch event.Type {
+			case "assistant":
+				if event.Message != nil {
+					for _, c := range event.Message.Content {
+						if c.Type == "text" && c.Text != "" {
+							fullText.WriteString(c.Text)
+							ch <- StreamEvent{Type: "chunk", Content: c.Text}
+						}
+					}
+				}
+			case "result":
+				if event.Usage != nil {
+					total := event.Usage.InputTokens + event.Usage.OutputTokens
+					ch <- StreamEvent{Type: "tokens", Content: fmt.Sprintf("%d", total)}
+				}
+				if fullText.Len() == 0 && event.Result != "" {
+					fullText.WriteString(event.Result)
+					ch <- StreamEvent{Type: "chunk", Content: event.Result}
+				}
+			}
+		}
+
+		ch <- StreamEvent{Type: "done", Content: fullText.String()}
+	}()
+
+	return ch, nil
 }

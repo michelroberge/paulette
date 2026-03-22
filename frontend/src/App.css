@@ -45,6 +45,15 @@ body {
   font-size: 0.85rem;
 }
 
+.header-token-total {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
 .back-button {
   background: none;
   border: 1px solid #475569;
@@ -113,6 +122,13 @@ body {
 
 .stage-name {
   flex: 1;
+}
+
+.stage-token-count {
+  font-size: 0.65rem;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .stage-reset-btn {
@@ -644,12 +660,65 @@ body {
 .completion-view {
   flex: 1;
   display: flex;
+  overflow: hidden;
+}
+
+.completion-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.completion-left {
+  display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 2rem;
   padding: 3rem;
   text-align: center;
+  overflow-y: auto;
+  min-width: 320px;
+  max-width: 420px;
+  border-right: 1px solid #334155;
+  flex-shrink: 0;
+}
+
+.completion-summary-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.completion-summary-header {
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid #334155;
+  background: #1e293b;
+  flex-shrink: 0;
+}
+
+.completion-summary-header h3 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+}
+
+.completion-summary-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+.summary-generating-panel {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #64748b;
+  font-size: 0.9rem;
+  padding: 2rem;
+  justify-content: center;
 }
 
 .completion-header {
@@ -740,6 +809,56 @@ body {
 
 .approve-button.secondary:hover {
   background: #475569;
+}
+
+/* Summary generating indicator */
+.summary-generating {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.6rem 1rem;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #94a3b8;
+  font-size: 0.875rem;
+}
+
+.summary-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #475569;
+  border-top-color: #38bdf8;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.summary-retry-btn {
+  margin-left: auto;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.8rem;
+  background: transparent;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.summary-retry-btn:hover:not(:disabled) {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.summary-retry-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Enhance Form */
@@ -1130,6 +1249,15 @@ body {
   display: block;
 }
 
+.bead-token-total {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  align-self: center;
+}
+
 .bead-graph-empty {
   padding: 2rem;
   text-align: center;
@@ -1256,6 +1384,44 @@ body {
   color: #ef4444;
 }
 
+/* Plan limit banner */
+.plan-limit-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: #451a03;
+  border: 1px solid #92400e;
+  border-radius: 6px;
+  margin: 0.75rem;
+  color: #fde68a;
+  font-size: 0.85rem;
+}
+
+.plan-limit-icon {
+  flex-shrink: 0;
+}
+
+.plan-limit-message {
+  flex: 1;
+}
+
+.plan-limit-dismiss {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: #fbbf24;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 2px 4px;
+  border-radius: 3px;
+  line-height: 1;
+}
+
+.plan-limit-dismiss:hover {
+  background: #78350f;
+}
+
 /* Execute status bar (top action bar + sidebar) */
 .execute-status-dot {
   width: 8px;
@@ -1325,4 +1491,300 @@ body {
   color: #64748b;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* History button in project header */
+.history-button {
+  margin-left: auto;
+  padding: 0.3rem 0.75rem;
+  background: transparent;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.history-button:hover {
+  color: #e2e8f0;
+  border-color: #64748b;
+}
+
+/* Version History Modal */
+.version-history-modal {
+  width: 640px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.version-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.version-history-header h2 {
+  margin: 0;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+
+.close-btn:hover {
+  color: #e2e8f0;
+}
+
+.version-history-error {
+  background: #451a1a;
+  border: 1px solid #7f1d1d;
+  border-radius: 6px;
+  color: #fca5a5;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.version-history-dirty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #451a03;
+  border: 1px solid #92400e;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  color: #fde68a;
+  font-size: 0.85rem;
+}
+
+.version-history-dirty button {
+  padding: 0.25rem 0.6rem;
+  background: #92400e;
+  border: none;
+  border-radius: 4px;
+  color: #fde68a;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.version-history-dirty button:hover {
+  background: #78350f;
+}
+
+.version-history-commits {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  margin-bottom: 1rem;
+}
+
+.version-history-loading,
+.version-history-empty {
+  text-align: center;
+  color: #64748b;
+  padding: 2rem 0;
+}
+
+.commit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #1e293b;
+}
+
+.commit-row:last-child {
+  border-bottom: none;
+}
+
+.commit-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.commit-message {
+  font-size: 0.85rem;
+  color: #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.commit-tag {
+  display: inline-block;
+  background: #1e3a5f;
+  border: 1px solid #3b82f6;
+  border-radius: 10px;
+  padding: 0 0.5rem;
+  font-size: 0.72rem;
+  color: #93c5fd;
+  font-weight: 600;
+}
+
+.commit-meta {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.commit-hash {
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+}
+
+.commit-actions {
+  flex-shrink: 0;
+}
+
+.btn-reset-to {
+  padding: 0.25rem 0.6rem;
+  background: transparent;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.btn-reset-to:hover {
+  border-color: #64748b;
+  color: #e2e8f0;
+}
+
+.btn-reset-to:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.commit-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: #fde68a;
+}
+
+.commit-confirm button {
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.btn-danger {
+  background: #991b1b;
+  color: #fecaca;
+}
+
+.btn-danger:hover {
+  background: #7f1d1d;
+}
+
+.btn-danger:disabled {
+  opacity: 0.5;
+}
+
+.commit-confirm button:not(.btn-danger) {
+  background: transparent;
+  border: 1px solid #475569;
+  color: #94a3b8;
+}
+
+/* Remote settings section */
+.version-history-remote {
+  border-top: 1px solid #334155;
+  padding-top: 0.75rem;
+}
+
+.remote-toggle {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.remote-toggle:hover {
+  color: #e2e8f0;
+}
+
+.remote-indicator {
+  font-size: 0.72rem;
+  color: #22c55e;
+  background: #052e16;
+  border: 1px solid #166534;
+  border-radius: 10px;
+  padding: 0 0.4rem;
+}
+
+.remote-panel {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.remote-url-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.remote-url-row input {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  background: #0f172a;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.remote-url-row input:focus {
+  border-color: #3b82f6;
+}
+
+.remote-url-row button,
+.remote-actions button {
+  padding: 0.4rem 0.75rem;
+  background: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  color: #e2e8f0;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.remote-url-row button:hover,
+.remote-actions button:hover {
+  background: #334155;
+}
+
+.remote-url-row button:disabled,
+.remote-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.remote-actions {
+  display: flex;
+  gap: 0.5rem;
 }

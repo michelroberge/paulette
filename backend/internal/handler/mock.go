@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -108,7 +109,20 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer run.Finish(h.runs)
 
+		var stageTokensAccum int
+		defer func() {
+			if stageTokensAccum > 0 {
+				project.AddStageTokens(model.StageUX, stageTokensAccum)
+				h.registry.Update(project)
+			}
+		}()
+
 		for event := range events {
+			if event.Type == "tokens" {
+				var n int
+				fmt.Sscanf(event.Content, "%d", &n)
+				stageTokensAccum += n
+			}
 			if event.Type == "done" {
 				html := agent.ExtractHTML(event.Content)
 				// Save to disk

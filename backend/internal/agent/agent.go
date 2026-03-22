@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -12,19 +13,24 @@ import (
 	"github.com/michelroberge/ai-app-factory/backend/internal/model"
 )
 
+// ErrPlanLimit is returned when Claude hits its plan/turn limit.
+var ErrPlanLimit = errors.New("claude plan limit reached")
+
 // StreamEvent represents an event sent to the client via SSE.
 type StreamEvent struct {
-	Type    string `json:"type"`    // "chunk", "artifact", "done", "error"
-	Content string `json:"content"` // text content for chunk, path for artifact, message for error
+	Type    string `json:"type"`             // "chunk", "artifact", "done", "error", "tokens"
+	Content string `json:"content"`          // text content for chunk, path for artifact, message for error
+	Tokens  int    `json:"tokens,omitempty"` // token count for "tokens" events
 }
 
 // claudeEvent represents a line from claude --output-format stream-json --verbose
 type claudeEvent struct {
-	Type    string          `json:"type"`
-	Message *claudeMessage  `json:"message,omitempty"`
-	Result  string          `json:"result,omitempty"`
-	IsError bool            `json:"is_error,omitempty"`
-	Usage   *claudeUsage    `json:"usage,omitempty"`
+	Type    string         `json:"type"`
+	Subtype string         `json:"subtype,omitempty"`
+	Message *claudeMessage `json:"message,omitempty"`
+	Result  string         `json:"result,omitempty"`
+	IsError bool           `json:"is_error,omitempty"`
+	Usage   *claudeUsage   `json:"usage,omitempty"`
 }
 
 type claudeUsage struct {
@@ -44,15 +50,20 @@ type claudeContent struct {
 var artifactRegex = regexp.MustCompile(`(?s)<!-- ARTIFACT:START -->\s*(.*?)\s*<!-- ARTIFACT:END -->`)
 
 // Chat spawns a Claude CLI subprocess and streams the response.
-func Chat(ctx context.Context, systemPrompt string, history []model.Message, userMessage string) (<-chan StreamEvent, error) {
+// modelID selects the Claude model (e.g. "claude-sonnet-4-6"); empty string uses the CLI default.
+func Chat(ctx context.Context, modelID string, systemPrompt string, history []model.Message, userMessage string) (<-chan StreamEvent, error) {
 	prompt := formatConversation(history, userMessage)
 
-	cmd := exec.CommandContext(ctx, "claude",
+	args := []string{
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--system-prompt", systemPrompt,
-	)
+	}
+	if modelID != "" {
+		args = append(args, "--model", modelID)
+	}
+	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Stdin = strings.NewReader(prompt)
 
 	stdout, err := cmd.StdoutPipe()
@@ -96,6 +107,14 @@ func Chat(ctx context.Context, systemPrompt string, history []model.Message, use
 					}
 				}
 			case "result":
+				if event.IsError {
+					ch <- StreamEvent{Type: "plan_limit", Content: "Claude plan limit reached"}
+					return
+				}
+				if event.Usage != nil {
+					total := event.Usage.InputTokens + event.Usage.OutputTokens
+					ch <- StreamEvent{Type: "tokens", Content: fmt.Sprintf("%d", total)}
+				}
 				// result is the final event; use it if assistant produced nothing
 				if fullResponse.Len() == 0 && event.Result != "" {
 					fullResponse.WriteString(event.Result)

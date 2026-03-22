@@ -11,16 +11,18 @@ interface Props {
   mode: 'artifact' | 'execute';
   onRequestExecuteTab?: () => void;
   hidden?: boolean;
+  onBeadTokens?: (n: number) => void;
 }
 
-export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden }: Props) {
+export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [maxParallel, setMaxParallel] = useState(2);
 
-  const { graph, phase, executionLog, loadGraph, generate, execute, stop, clearLog } = useBeads(projectId);
+  const { graph, phase, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
 
   const logRef = useRef<HTMLDivElement>(null);
+  const streamRef = useRef<HTMLDivElement>(null);
 
   // Load artifact
   useEffect(() => {
@@ -44,6 +46,13 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
     }
   }, [executionLog]);
 
+  // Auto-scroll streaming text
+  useEffect(() => {
+    if (streamRef.current) {
+      streamRef.current.scrollTop = streamRef.current.scrollHeight;
+    }
+  }, [streamingText]);
+
   const handleGenerate = () => {
     onRequestExecuteTab?.();
     generate();
@@ -62,6 +71,17 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
   const activeCount = graph.beads.filter(b => b.status === 'in_progress').length;
   const completedCount = taskBeads.filter(b => b.status === 'closed').length;
   const totalCount = taskBeads.length;
+
+  // Report bead token deltas to parent as they accumulate
+  const totalBeadTokens = graph.beads.reduce((s, b) => s + (b.tokens ?? 0), 0);
+  const prevBeadTokensRef = useRef(0);
+  useEffect(() => {
+    const delta = totalBeadTokens - prevBeadTokensRef.current;
+    if (delta > 0) {
+      onBeadTokens?.(delta);
+      prevBeadTokensRef.current = totalBeadTokens;
+    }
+  }, [totalBeadTokens]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="build-panel" style={{ display: hidden ? 'none' : 'flex' }}>
@@ -105,6 +125,16 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
 
         {mode === 'execute' && (
           <div className="execute-view">
+            {planLimitReached && (
+              <div className="plan-limit-banner">
+                <span className="plan-limit-icon">⚠️</span>
+                <span className="plan-limit-message">
+                  Claude plan limit reached — execution stopped. Resume by clicking Build again.
+                </span>
+                <button className="plan-limit-dismiss" onClick={clearPlanLimit} title="Dismiss">✕</button>
+              </div>
+            )}
+
             {!hasBeads && !isGenerating && (
               <div className="artifact-preview empty">
                 <p>No beads generated yet.</p>
@@ -118,6 +148,11 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
                   <span className="mock-stream-dot" />
                   Generating beads... ({graph.beads.length} created)
                 </div>
+                {streamingText && (
+                  <div className="mock-stream-text" ref={streamRef}>
+                    {streamingText}
+                  </div>
+                )}
               </div>
             )}
 
@@ -146,6 +181,11 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
                             />
                           </div>
                           <span className="execute-progress-label">{completedCount} / {totalCount}</span>
+                        </div>
+                      )}
+                      {streamingText && (
+                        <div className="mock-stream-text" ref={streamRef} style={{ flex: 'none', maxHeight: '200px' }}>
+                          {streamingText}
                         </div>
                       )}
                     </div>

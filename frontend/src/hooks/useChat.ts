@@ -3,13 +3,15 @@ import { getChatHistory, sendMessage } from '../api/chat';
 import { getActiveRuns, reconnectToRun } from '../api/activity';
 import type { Message, StageName, StreamEvent } from '../types';
 
-export function useChat(projectId: string | null, stage: StageName | null, reloadTrigger?: number) {
+export function useChat(projectId: string | null, stage: StageName | null, reloadTrigger?: number, onTokens?: (n: number) => void) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [artifactUpdated, setArtifactUpdated] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const onTokensRef = useRef(onTokens);
+  onTokensRef.current = onTokens;
 
   const handleEvent = useCallback((event: StreamEvent, fullContentRef: { current: string }) => {
     switch (event.type) {
@@ -20,6 +22,11 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
       case 'artifact':
         setArtifactUpdated(prev => prev + 1);
         break;
+      case 'tokens': {
+        const n = parseInt(event.content, 10);
+        if (n > 0) onTokensRef.current?.(n);
+        break;
+      }
       case 'done':
         setMessages(prev => [
           ...prev,

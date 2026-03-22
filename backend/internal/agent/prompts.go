@@ -264,8 +264,57 @@ type EnhancementContext struct {
 	PriorArtifact string // the prior iteration's artifact for this stage
 }
 
+// buildJourneyIDNote returns the journey ID assignment instructions injected into the UX prompt.
+func buildJourneyIDNote(version string) string {
+	return fmt.Sprintf(`**Journey ID Requirements:**
+Every user journey MUST be assigned a unique ID in the format JRN-v%s-NNN (e.g., JRN-v%s-001, JRN-v%s-002).
+
+Format EVERY journey section heading exactly as:
+## JRN-v%s-001: Journey Name
+
+- IDs must be sequential starting at 001 with no gaps.
+- The version segment is always exactly "%s".
+- Reference these IDs wherever journeys are mentioned throughout the document.
+- If evolving an existing document, preserve existing IDs and add new ones continuing the sequence.`, version, version, version, version, version)
+}
+
+// buildArchIDNote returns the architecture element ID assignment instructions injected into the Architecture prompt.
+func buildArchIDNote(version string) string {
+	return fmt.Sprintf(`**Architectural Element ID Requirements:**
+EVERY architectural element (each component, API endpoint, data model, service, infrastructure item) MUST be assigned a unique ID in the format ARCH-v%s-NNN (e.g., ARCH-v%s-001).
+
+Format EVERY element heading exactly as:
+### [ARCH-v%s-001] Element Name
+
+Immediately below each heading, add a blockquote referencing the journey IDs from the UX document that this element serves:
+> Journeys: JRN-v%s-001, JRN-v%s-002
+
+Rules:
+- IDs must be sequential starting at 001 with no gaps across the entire document.
+- Every element MUST reference at least one journey ID. Cross-cutting elements (auth, logging, error handling) typically reference multiple journeys.
+- The version segment is always exactly "%s".
+- Use the exact JRN-* IDs from the approved UX document — do not invent new ones.
+- If evolving an existing document, preserve existing IDs and add new ones continuing the sequence.`, version, version, version, version, version, version)
+}
+
+// buildPlanIDNote returns the traceability reference instructions injected into the Build prompt.
+func buildPlanIDNote() string {
+	return `**Build Plan Traceability Requirements:**
+The UX document contains journey IDs (JRN-v*-NNN) and the architecture document contains element IDs (ARCH-v*-NNN).
+
+When writing each task in the build plan:
+- Reference the journey(s) the task serves using their JRN-* IDs
+- Reference the architectural element(s) the task implements using their ARCH-* IDs
+- Include these references in the task description or acceptance criteria
+
+Example task format:
+- [ ] Implement user login endpoint
+  - Serves journeys: JRN-v1.0-001, JRN-v1.0-002
+  - Implements: ARCH-v1.0-003 (Auth Service), ARCH-v1.0-007 (JWT tokens)`
+}
+
 // GetSystemPrompt returns the system prompt for a given stage, injecting previous artifacts and framework config.
-func GetSystemPrompt(stage model.StageName, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig, enhancement ...*EnhancementContext) string {
+func GetSystemPrompt(stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig, enhancement ...*EnhancementContext) string {
 	template, ok := systemPrompts[stage]
 	if !ok {
 		return fmt.Sprintf("You are an AI assistant helping with the %s stage of product development.", stage)
@@ -275,15 +324,16 @@ func GetSystemPrompt(stage model.StageName, previousArtifacts map[model.StageNam
 	switch stage {
 	case model.StageUX:
 		visionArtifact := previousArtifacts[model.StageVision]
-		prompt = fmt.Sprintf(template, visionArtifact, buildFrameworkPromptNote(frameworkCfg))
+		frameworkNote := buildFrameworkPromptNote(frameworkCfg) + "\n\n" + buildJourneyIDNote(version)
+		prompt = fmt.Sprintf(template, visionArtifact, frameworkNote)
 	case model.StageArchitecture:
 		visionArtifact := previousArtifacts[model.StageVision]
-		uxArtifact := previousArtifacts[model.StageUX]
+		uxArtifact := previousArtifacts[model.StageUX] + "\n\n" + buildArchIDNote(version)
 		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact)
 	case model.StageBuild:
 		visionArtifact := previousArtifacts[model.StageVision]
 		uxArtifact := previousArtifacts[model.StageUX]
-		archArtifact := previousArtifacts[model.StageArchitecture]
+		archArtifact := previousArtifacts[model.StageArchitecture] + "\n\n" + buildPlanIDNote()
 		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact)
 	case model.StageReview:
 		visionArtifact := previousArtifacts[model.StageVision]
@@ -295,19 +345,73 @@ func GetSystemPrompt(stage model.StageName, previousArtifacts map[model.StageNam
 		prompt = template
 	}
 
-	return applyEnhancementContext(prompt, enhancement)
+	return applyEnhancementContext(stage, prompt, enhancement)
 }
 
-func applyEnhancementContext(basePrompt string, enhancement []*EnhancementContext) string {
+var enhancementGuidance = map[model.StageName]string{
+	model.StageVision: `ENHANCEMENT INSTRUCTIONS (Vision Stage — Gap Analysis):
+You are refining an EXISTING product vision, not writing a new one.
+Your job is to perform a GAP ANALYSIS:
+1. Start from the previous vision artifact provided below.
+2. Identify what the enhancement request adds, changes, or removes relative to that vision.
+3. Produce an UPDATED vision document that integrates the enhancement into the existing vision.
+4. Clearly mark which sections changed and why (use inline notes like "[ENHANCED]" or "[NEW]").
+5. Preserve all sections that are unaffected — do NOT rewrite content that hasn't changed.
+The output should read as the definitive vision for the new iteration, not a diff.`,
+
+	model.StageUX: `ENHANCEMENT INSTRUCTIONS (UX Stage — Targeted Improvement):
+You are improving an EXISTING UX design, not starting from scratch.
+1. Start from the previous UX artifact provided below.
+2. The updated vision document (provided as your stage input) describes what changed — focus your UX work on those gap areas.
+3. Add new screens/flows only where the enhancement requires them.
+4. Modify existing screens/flows only where the enhancement changes them.
+5. Preserve all unaffected user journeys, screen descriptions, and interaction patterns exactly as they were.
+6. Clearly indicate which parts are "[NEW]" or "[MODIFIED]" vs unchanged.`,
+
+	model.StageArchitecture: `ENHANCEMENT INSTRUCTIONS (Architecture Stage — Additive Changes):
+You are evolving an EXISTING architecture, not designing from zero.
+1. Start from the previous architecture artifact provided below.
+2. Only add or modify components, APIs, data models, and infrastructure that the enhancement requires.
+3. Do NOT redesign parts of the system that are unaffected by the enhancement.
+4. If new components need to interact with existing ones, describe the integration points clearly.
+5. Preserve existing tech stack decisions unless the enhancement explicitly requires a change.
+6. Clearly mark "[NEW]" components/endpoints and "[MODIFIED]" ones.`,
+
+	model.StageBuild: `ENHANCEMENT INSTRUCTIONS (Build Stage — Incremental Build Plan):
+You are creating a build plan for CHANGES ONLY, not a full rebuild.
+1. Review the previous iteration summary to understand what code already exists and works.
+2. The build plan should ONLY cover tasks for what is NEW or CHANGED in this enhancement iteration.
+3. Do NOT include tasks for features that already exist and are unchanged.
+4. Reference existing code/files that the new tasks will modify or extend.
+5. Each task should clearly state whether it is creating a new file/component or modifying an existing one.
+6. Include a "Pre-existing Code Context" section at the top listing what the previous iteration already built.`,
+
+	model.StageReview: `ENHANCEMENT INSTRUCTIONS (Review Stage — Incremental Validation):
+You are validating that changes are INCREMENTAL and SAFE, not reviewing a full build.
+1. Verify the build plan only covers what actually changed in this enhancement iteration.
+2. Check that unchanged features from the previous iteration are preserved (not duplicated or overwritten).
+3. Confirm that new/modified tasks reference existing code appropriately.
+4. Flag any tasks that appear to rebuild something that already exists.
+5. Validate that the enhancement changes are consistent with the existing architecture.
+6. Pay special attention to integration points between new and existing code.`,
+}
+
+func applyEnhancementContext(stage model.StageName, basePrompt string, enhancement []*EnhancementContext) string {
 	if len(enhancement) == 0 || enhancement[0] == nil {
 		return basePrompt
 	}
 	ctx := enhancement[0]
 
+	guidance, ok := enhancementGuidance[stage]
+	if !ok {
+		guidance = "Evolve and refine this artifact based on the enhancement request. Focus on what's changing while preserving what still applies."
+	}
+
 	var sb strings.Builder
 	sb.WriteString(basePrompt)
 	sb.WriteString("\n\n--- ENHANCEMENT CONTEXT ---\n")
-	sb.WriteString("This is an enhancement iteration building on an existing product. Do NOT start from scratch — evolve and refine the existing work based on the enhancement request.\n\n")
+	sb.WriteString(guidance)
+	sb.WriteString("\n\n")
 
 	if ctx.Summary != "" {
 		sb.WriteString("Previous iteration summary:\n---\n")
@@ -320,12 +424,11 @@ func applyEnhancementContext(basePrompt string, enhancement []*EnhancementContex
 	sb.WriteString("\n---\n\n")
 
 	if ctx.PriorArtifact != "" {
-		sb.WriteString("Previous version of this stage's artifact:\n---\n")
+		sb.WriteString("Previous version of this stage's artifact (your starting point — evolve this, do not discard it):\n---\n")
 		sb.WriteString(ctx.PriorArtifact)
 		sb.WriteString("\n---\n\n")
 	}
 
-	sb.WriteString("Evolve and refine this artifact based on the enhancement request. Focus on what's changing while preserving what still applies.\n")
 	sb.WriteString("--- END ENHANCEMENT CONTEXT ---")
 
 	return sb.String()

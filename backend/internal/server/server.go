@@ -8,6 +8,7 @@ import (
 	"github.com/rs/cors"
 
 	"github.com/michelroberge/ai-app-factory/backend/internal/config"
+	"github.com/michelroberge/ai-app-factory/backend/internal/git"
 	"github.com/michelroberge/ai-app-factory/backend/internal/handler"
 	"github.com/michelroberge/ai-app-factory/backend/internal/repository"
 	"github.com/michelroberge/ai-app-factory/backend/internal/stream"
@@ -58,15 +59,18 @@ func (s *Server) Router() http.Handler {
 	})
 	r.Use(c.Handler)
 
-	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo)
-	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo)
+	gitSvc := git.NewService()
+
+	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
+	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.runs)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.runs)
 	bh := handler.NewBeadHandler(s.registry, s.artifactRepo, s.runs)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
-	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo)
+	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
 	acth := handler.NewActivityHandler(s.runs)
+	gh := handler.NewGitHandler(s.registry, s.projectRepo, gitSvc)
 
 	r.Route("/api/projects", func(r chi.Router) {
 		r.Post("/", ph.Create)
@@ -76,6 +80,9 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/{id}/pipeline", plh.GetPipeline)
 		r.Post("/{id}/pipeline/approve", plh.Approve)
+		r.Get("/{id}/pipeline/summary", plh.GetSummary)
+		r.Get("/{id}/pipeline/summary/watch", plh.WatchSummary)
+		r.Post("/{id}/pipeline/summary", plh.RegenerateSummary)
 		r.Post("/{id}/pipeline/enhance", eh.Enhance)
 
 		r.Get("/{id}/stages/{stage}/artifact", ah.Get)
@@ -97,6 +104,15 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/{id}/activity", acth.List)
 		r.Get("/{id}/activity/{runId}/stream", acth.Stream)
+
+		r.Get("/{id}/git/log", gh.Log)
+		r.Get("/{id}/git/status", gh.Status)
+		r.Post("/{id}/git/reset", gh.Reset)
+		r.Post("/{id}/git/discard", gh.Discard)
+		r.Put("/{id}/git/remote", gh.SetRemote)
+		r.Delete("/{id}/git/remote", gh.RemoveRemote)
+		r.Post("/{id}/git/push", gh.Push)
+		r.Post("/{id}/git/pull", gh.Pull)
 	})
 
 	return r

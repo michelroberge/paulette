@@ -7,6 +7,7 @@ export function useMock(projectId: string | null) {
   const [html, setHtml] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [tokenCount, setTokenCount] = useState(0);
+  const [streamingText, setStreamingText] = useState('');
   const [loaded, setLoaded] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -33,6 +34,7 @@ export function useMock(projectId: string | null) {
 
         setGenerating(true);
         setTokenCount(0);
+        setStreamingText('');
 
         const controller = new AbortController();
         abortRef.current = controller;
@@ -47,6 +49,7 @@ export function useMock(projectId: string | null) {
               case 'chunk':
                 charCount += ev.content.length;
                 setTokenCount(Math.round(charCount / 4));
+                setStreamingText(t => t + ev.content);
                 break;
               case 'tokens':
                 setTokenCount(parseInt(ev.content, 10));
@@ -78,6 +81,7 @@ export function useMock(projectId: string | null) {
     if (!projectId || generating) return;
     setGenerating(true);
     setTokenCount(0);
+    setStreamingText('');
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -89,6 +93,7 @@ export function useMock(projectId: string | null) {
           case 'chunk':
             charCount += event.content.length;
             setTokenCount(Math.round(charCount / 4));
+            setStreamingText(t => t + event.content);
             break;
           case 'tokens':
             setTokenCount(parseInt(event.content, 10));
@@ -103,5 +108,5 @@ export function useMock(projectId: string | null) {
     }
   }, [projectId, generating]);
 
-  return { html, generating, tokenCount, loaded, load, generate, stop };
+  return { html, generating, tokenCount, streamingText, loaded, load, generate, stop };
 }

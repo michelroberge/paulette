@@ -12,6 +12,12 @@ import dagre from '@dagrejs/dagre';
 import '@xyflow/react/dist/style.css';
 import type { Bead, BeadGraph } from '../../types';
 
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
 const NODE_WIDTH_EPIC = 240;
 const NODE_HEIGHT_EPIC = 70;
 const NODE_WIDTH_TASK = 200;
@@ -139,6 +145,7 @@ function layoutGraph(beads: Bead[]): { nodes: Node[]; edges: Edge[] } {
           <div style={{ lineHeight: 1.3 }}>
             <div style={{ fontSize: '10px', opacity: 0.6, marginBottom: 2 }}>
               {bead.type.toUpperCase()} · {isReady ? 'ready' : bead.status.replace('_', ' ')}
+              {(bead.tokens ?? 0) > 0 && ` · ${formatTokens(bead.tokens!)} tok`}
             </div>
             <div>{bead.title}</div>
           </div>
@@ -203,13 +210,14 @@ interface Props {
 export function BeadGraph({ graph }: Props) {
   const activeCount = graph.beads.filter(b => b.status === 'in_progress').length;
   const reviewingCount = graph.beads.filter(b => b.status === 'reviewing').length;
+  const totalTokens = graph.beads.reduce((sum, b) => sum + (b.tokens ?? 0), 0);
 
   const { nodes: layoutNodes, edges: layoutEdges } = useMemo(
     () => layoutGraph(graph.beads),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       graph.beads.length,
-      graph.beads.map(b => `${b.status}:${b.epicId ?? ''}:${(b.deps ?? []).join('|')}`).join(','),
+      graph.beads.map(b => `${b.status}:${b.epicId ?? ''}:${(b.deps ?? []).join('|')}:${b.tokens ?? 0}`).join(','),
     ],
   );
 
@@ -252,6 +260,9 @@ export function BeadGraph({ graph }: Props) {
               <DevilIcon key={i} delay={i * 0.15} />
             ))}
           </span>
+        )}
+        {totalTokens > 0 && (
+          <span className="bead-token-total">{formatTokens(totalTokens)} tok</span>
         )}
       </div>
       <ReactFlow

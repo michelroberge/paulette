@@ -45,3 +45,21 @@ func (r *ArtifactRepo) Exists(hostDir string, stage model.StageName) (bool, erro
 	}
 	return strings.TrimSpace(content) != "", nil
 }
+
+// WriteStageDoc mirrors a stage artifact to docs/{version}/{stage}/{stage}.md in the target repo.
+func WriteStageDoc(hostDir, version string, stage model.StageName, content string) error {
+	p := filepath.Join(hostDir, "docs", version, string(stage), string(stage)+".md")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("create docs stage dir: %w", err)
+	}
+	return os.WriteFile(p, []byte(content), 0644)
+}
+
+// WriteBeadDoc mirrors a bead execution's full response to docs/{version}/build/execution/{beadID}/execution.md.
+func WriteBeadDoc(hostDir, version, beadID, content string) error {
+	p := filepath.Join(hostDir, "docs", version, "build", "execution", beadID, "execution.md")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("create docs bead dir: %w", err)
+	}
+	return os.WriteFile(p, []byte(content), 0644)
+}

@@ -20,6 +20,15 @@ import (
 	"github.com/michelroberge/ai-app-factory/backend/internal/stream"
 )
 
+// stageModels maps each pipeline stage to the Claude model to use for chat.
+var stageModels = map[model.StageName]string{
+	model.StageVision:       "claude-sonnet-4-6",
+	model.StageUX:           "claude-sonnet-4-6",
+	model.StageArchitecture: "claude-opus-4-6",
+	model.StageBuild:        "claude-opus-4-6",
+	model.StageReview:       "claude-sonnet-4-6",
+}
+
 type ChatHandler struct {
 	registry     repository.RegistryRepo
 	chatRepo     repository.ChatRepo
@@ -130,7 +139,7 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	systemPrompt := agent.GetSystemPrompt(stage, previousArtifacts, frameworkCfg, enhCtx)
+	systemPrompt := agent.GetSystemPrompt(stage, project.Version, previousArtifacts, frameworkCfg, enhCtx)
 
 	// Get chat history for context
 	history, err := h.chatRepo.GetHistory(project.HostDir, stage)
@@ -151,7 +160,7 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Start Claude CLI subprocess using the run's context (survives client disconnect)
-	events, err := agent.Chat(run.Context(), systemPrompt, history, req.Message)
+	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, req.Message)
 	if err != nil {
 		run.Finish(h.runs)
 		http.Error(w, "failed to start agent: "+err.Error(), http.StatusInternalServerError)
@@ -162,7 +171,20 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer run.Finish(h.runs)
 
+		var stageTokensAccum int
+		defer func() {
+			if stageTokensAccum > 0 {
+				project.AddStageTokens(stage, stageTokensAccum)
+				h.registry.Update(project)
+			}
+		}()
+
 		for event := range events {
+			if event.Type == "tokens" {
+				var n int
+				fmt.Sscanf(event.Content, "%d", &n)
+				stageTokensAccum += n
+			}
 			if event.Type == "done" {
 				// Extract and save artifact if present
 				if artifact, found := agent.ExtractArtifact(event.Content); found {
@@ -170,6 +192,9 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
 						run.Emit(agent.StreamEvent{Type: "artifact", Content: string(stage) + "/" + string(stage) + ".md"})
+						if docErr := fsrepo.WriteStageDoc(project.HostDir, project.Version, stage, artifact); docErr != nil {
+							run.Emit(agent.StreamEvent{Type: "log", Content: "warn: docs mirror failed: " + docErr.Error()})
+						}
 					}
 				}
 

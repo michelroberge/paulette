@@ -4,30 +4,33 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/michelroberge/ai-app-factory/backend/internal/git"
 	"github.com/michelroberge/ai-app-factory/backend/internal/model"
 	"github.com/michelroberge/ai-app-factory/backend/internal/pipeline"
 	"github.com/michelroberge/ai-app-factory/backend/internal/repository"
 )
 
 type EnhanceHandler struct {
-	registry    repository.RegistryRepo
-	projectRepo repository.ProjectRepo
+	registry     repository.RegistryRepo
+	projectRepo  repository.ProjectRepo
 	artifactRepo repository.ArtifactRepo
+	git          *git.Service
 }
 
-func NewEnhanceHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo) *EnhanceHandler {
+func NewEnhanceHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service) *EnhanceHandler {
 	return &EnhanceHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
 		artifactRepo: artifactRepo,
+		git:          gitSvc,
 	}
 }
 
@@ -124,14 +127,16 @@ func (h *EnhanceHandler) Enhance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Git commit
-	gitAdd := exec.Command("git", "add", "-A")
-	gitAdd.Dir = project.HostDir
-	if err := gitAdd.Run(); err == nil {
-		commitMsg := fmt.Sprintf("enhance: start iteration %d (v%s)", project.Iteration, newVersion)
-		gitCommit := exec.Command("git", "commit", "-m", commitMsg)
-		gitCommit.Dir = project.HostDir
-		gitCommit.Run()
+	// Tag the completed version before starting the new iteration
+	tagName := "v" + project.Version
+	if err := h.git.CreateTag(project.HostDir, tagName, fmt.Sprintf("Iteration %d complete", project.Iteration-1)); err != nil {
+		log.Printf("git tag %s failed (may already exist): %v", tagName, err)
+	}
+
+	// Git commit the enhancement start
+	commitMsg := fmt.Sprintf("enhance: start iteration %d (v%s)", project.Iteration, newVersion)
+	if err := h.git.AddAllAndCommit(project.HostDir, commitMsg); err != nil {
+		log.Printf("git commit enhance failed: %v", err)
 	}
 
 	state := pipeline.BuildPipelineState(project.CurrentStage)

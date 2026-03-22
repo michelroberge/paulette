@@ -5,13 +5,13 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/michelroberge/ai-app-factory/backend/internal/git"
 	"github.com/michelroberge/ai-app-factory/backend/internal/model"
 	"github.com/michelroberge/ai-app-factory/backend/internal/repository"
 )
@@ -20,13 +20,15 @@ type ProjectHandler struct {
 	registry     repository.RegistryRepo
 	projectRepo  repository.ProjectRepo
 	artifactRepo repository.ArtifactRepo
+	git          *git.Service
 }
 
-func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo) *ProjectHandler {
+func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service) *ProjectHandler {
 	return &ProjectHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
 		artifactRepo: artifactRepo,
+		git:          gitSvc,
 	}
 }
 
@@ -68,10 +70,8 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Git init the host directory if not already a git repo
 	if _, err := os.Stat(filepath.Join(req.HostDir, ".git")); os.IsNotExist(err) {
-		gitInit := exec.Command("git", "init")
-		gitInit.Dir = req.HostDir
-		if out, err := gitInit.CombinedOutput(); err != nil {
-			log.Printf("git init failed in %s: %v: %s", req.HostDir, err, out)
+		if err := h.git.Init(req.HostDir); err != nil {
+			log.Printf("git init failed in %s: %v", req.HostDir, err)
 		}
 	}
 

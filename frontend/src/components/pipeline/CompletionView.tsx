@@ -1,5 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { Project, StageName, VersionBump } from '../../types';
+import { regenerateSummary, getSummary, watchSummary } from '../../api/pipeline';
 
 const ARTIFACT_STAGES: { name: StageName; label: string }[] = [
   { name: 'vision', label: 'Vision' },
@@ -21,6 +24,46 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
   const [enhanceVision, setEnhanceVision] = useState('');
   const [versionBump, setVersionBump] = useState<VersionBump>('minor');
   const [submitting, setSubmitting] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [summaryContent, setSummaryContent] = useState('');
+  const summaryAbortRef = useRef<AbortController | null>(null);
+
+  // If summary already ready, fetch it; otherwise stream live chunks
+  useEffect(() => {
+    if (project.summaryReady) {
+      getSummary(project.id).then(res => {
+        if (res.exists) setSummaryContent(res.content);
+      }).catch(console.error);
+      return;
+    }
+
+    // Connect to live stream
+    setSummaryContent('');
+    const controller = new AbortController();
+    summaryAbortRef.current = controller;
+
+    watchSummary(project.id, (event) => {
+      if (event.type === 'chunk') {
+        setSummaryContent(prev => prev + event.content);
+      } else if (event.type === 'done' && event.content) {
+        setSummaryContent(event.content);
+      }
+    }, controller.signal).catch(() => { /* stream ended or aborted */ });
+
+    return () => {
+      controller.abort();
+      summaryAbortRef.current = null;
+    };
+  }, [project.id, project.summaryReady]);
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    try {
+      await regenerateSummary(project.id);
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const handleEnhance = async () => {
     if (!enhanceVision.trim()) return;
@@ -34,86 +77,127 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
 
   return (
     <div className="completion-view">
-      <div className="completion-header">
-        <div className="completion-icon">✓</div>
-        <h2>Pipeline Complete</h2>
-        <p className="completion-subtitle">
-          All stages have been approved for <strong>{project.name}</strong> v{project.version}
-          {project.iteration > 1 && <span> (iteration {project.iteration})</span>}.
-        </p>
-      </div>
+      <div className="completion-layout">
+        <div className="completion-left">
+          <div className="completion-header">
+            <div className="completion-icon">✓</div>
+            <h2>Pipeline Complete</h2>
+            <p className="completion-subtitle">
+              All stages have been approved for <strong>{project.name}</strong> v{project.version}
+              {project.iteration > 1 && <span> (iteration {project.iteration})</span>}.
+            </p>
+          </div>
 
-      <div className="completion-artifacts">
-        <h3>Approved Artifacts</h3>
-        <ul>
-          {ARTIFACT_STAGES.map(({ name, label }) => (
-            <li key={name} className="completion-artifact-item">
-              <span className="artifact-check">✓</span>
-              <button className="artifact-link" onClick={() => onViewStage(name)}>
-                {label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {!showEnhanceForm ? (
-        <div className="completion-actions">
-          <button className="approve-button" onClick={() => setShowEnhanceForm(true)}>
-            Enhance
-          </button>
-          <button className="approve-button secondary" onClick={onNewProject}>
-            Start New Project
-          </button>
-        </div>
-      ) : (
-        <div className="enhance-form">
-          <h3>Enhance {project.name}</h3>
-          <p className="enhance-description">
-            Describe how you want to improve your app. The previous iteration's artifacts
-            will be used as a starting point for each stage.
-          </p>
-          <textarea
-            className="enhance-vision-input"
-            placeholder="I want to improve my app like this: ..."
-            value={enhanceVision}
-            onChange={e => setEnhanceVision(e.target.value)}
-            rows={4}
-          />
-          <div className="version-bump-selector">
-            <label>Version bump (current: v{project.version}):</label>
-            <div className="version-bump-options">
-              {(['patch', 'minor', 'major'] as VersionBump[]).map(bump => (
-                <label key={bump} className="version-bump-option">
-                  <input
-                    type="radio"
-                    name="versionBump"
-                    value={bump}
-                    checked={versionBump === bump}
-                    onChange={() => setVersionBump(bump)}
-                  />
-                  {bump.charAt(0).toUpperCase() + bump.slice(1)}
-                </label>
+          <div className="completion-artifacts">
+            <h3>Approved Artifacts</h3>
+            <ul>
+              {ARTIFACT_STAGES.map(({ name, label }) => (
+                <li key={name} className="completion-artifact-item">
+                  <span className="artifact-check">✓</span>
+                  <button className="artifact-link" onClick={() => onViewStage(name)}>
+                    {label}
+                  </button>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
-          <div className="enhance-form-actions">
-            <button
-              className="approve-button"
-              onClick={handleEnhance}
-              disabled={!enhanceVision.trim() || submitting}
-            >
-              {submitting ? 'Starting...' : 'Start Enhancement'}
-            </button>
-            <button
-              className="approve-button secondary"
-              onClick={() => { setShowEnhanceForm(false); setEnhanceVision(''); }}
-            >
-              Cancel
-            </button>
+
+          {!project.summaryReady && (
+            <div className="summary-generating">
+              <span className="summary-spinner" />
+              Generating iteration summary…
+              <button
+                className="summary-retry-btn"
+                onClick={handleRetry}
+                disabled={retrying}
+              >
+                {retrying ? 'Retrying…' : 'Retry'}
+              </button>
+            </div>
+          )}
+
+          {!showEnhanceForm ? (
+            <div className="completion-actions">
+              <button
+                className="approve-button"
+                onClick={() => setShowEnhanceForm(true)}
+                disabled={!project.summaryReady}
+                title={!project.summaryReady ? 'Waiting for summary to finish generating…' : undefined}
+              >
+                Enhance
+              </button>
+              <button className="approve-button secondary" onClick={onNewProject}>
+                Start New Project
+              </button>
+            </div>
+          ) : (
+            <div className="enhance-form">
+              <h3>Enhance {project.name}</h3>
+              <p className="enhance-description">
+                Describe how you want to improve your app. The previous iteration's artifacts
+                will be used as a starting point for each stage.
+              </p>
+              <textarea
+                className="enhance-vision-input"
+                placeholder="I want to improve my app like this: ..."
+                value={enhanceVision}
+                onChange={e => setEnhanceVision(e.target.value)}
+                rows={4}
+              />
+              <div className="version-bump-selector">
+                <label>Version bump (current: v{project.version}):</label>
+                <div className="version-bump-options">
+                  {(['patch', 'minor', 'major'] as VersionBump[]).map(bump => (
+                    <label key={bump} className="version-bump-option">
+                      <input
+                        type="radio"
+                        name="versionBump"
+                        value={bump}
+                        checked={versionBump === bump}
+                        onChange={() => setVersionBump(bump)}
+                      />
+                      {bump.charAt(0).toUpperCase() + bump.slice(1)}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="enhance-form-actions">
+                <button
+                  className="approve-button"
+                  onClick={handleEnhance}
+                  disabled={!enhanceVision.trim() || submitting}
+                >
+                  {submitting ? 'Starting...' : 'Start Enhancement'}
+                </button>
+                <button
+                  className="approve-button secondary"
+                  onClick={() => { setShowEnhanceForm(false); setEnhanceVision(''); }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="completion-summary-panel">
+          <div className="completion-summary-header">
+            <h3>Iteration Summary</h3>
+          </div>
+          <div className="completion-summary-body">
+            {project.summaryReady && summaryContent ? (
+              <div className="artifact-content">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryContent}</ReactMarkdown>
+              </div>
+            ) : (
+              <div className="summary-generating-panel">
+                <span className="summary-spinner" />
+                <span>Generating summary…</span>
+              </div>
+            )}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
