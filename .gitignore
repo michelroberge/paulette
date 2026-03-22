@@ -9,3 +9,5 @@ frontend/dist/
 
 # Backend
 backend/backend
+backend/ai-app-factory
+backend/static/

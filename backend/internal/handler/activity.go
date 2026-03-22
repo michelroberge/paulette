@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/ai-app-factory/backend/internal/stream"
+	"github.com/michelroberge/claudette/backend/internal/stream"
 )
 
 type ActivityHandler struct {

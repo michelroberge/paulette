@@ -9,11 +9,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/ai-app-factory/backend/internal/agent"
-	"github.com/michelroberge/ai-app-factory/backend/internal/model"
-	fsrepo "github.com/michelroberge/ai-app-factory/backend/internal/repository/fs"
-	"github.com/michelroberge/ai-app-factory/backend/internal/repository"
-	"github.com/michelroberge/ai-app-factory/backend/internal/stream"
+	"github.com/michelroberge/claudette/backend/internal/agent"
+	"github.com/michelroberge/claudette/backend/internal/model"
+	fsrepo "github.com/michelroberge/claudette/backend/internal/repository/fs"
+	"github.com/michelroberge/claudette/backend/internal/repository"
+	"github.com/michelroberge/claudette/backend/internal/stream"
 )
 
 const mockRelPath = ".ai-factory/ux/mock.html"

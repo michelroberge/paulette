@@ -8,6 +8,7 @@ export type BuildPhase = 'plan' | 'generating' | 'graph' | 'executing' | 'done';
 export function useBeads(projectId: string | null) {
   const [graph, setGraph] = useState<BeadGraph>({ generatedAt: '', projectId: '', beads: [] });
   const [phase, setPhase] = useState<BuildPhase>('plan');
+  const [loading, setLoading] = useState(false);
   const [executionLog, setExecutionLog] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState('');
   const [planLimitReached, setPlanLimitReached] = useState(false);
@@ -15,6 +16,7 @@ export function useBeads(projectId: string | null) {
 
   const loadGraph = useCallback(async () => {
     if (!projectId) return;
+    setLoading(true);
     try {
       const g = await getBeadGraph(projectId);
       setGraph(g);
@@ -24,6 +26,8 @@ export function useBeads(projectId: string | null) {
       }
     } catch {
       // graph doesn't exist yet
+    } finally {
+      setLoading(false);
     }
   }, [projectId]);
 
@@ -230,5 +234,5 @@ export function useBeads(projectId: string | null) {
   const clearLog = useCallback(() => setExecutionLog([]), []);
   const clearPlanLimit = useCallback(() => setPlanLimitReached(false), []);
 
-  return { graph, phase, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit };
+  return { graph, phase, loading, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit };
 }

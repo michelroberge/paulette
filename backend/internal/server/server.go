@@ -7,11 +7,11 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/cors"
 
-	"github.com/michelroberge/ai-app-factory/backend/internal/config"
-	"github.com/michelroberge/ai-app-factory/backend/internal/git"
-	"github.com/michelroberge/ai-app-factory/backend/internal/handler"
-	"github.com/michelroberge/ai-app-factory/backend/internal/repository"
-	"github.com/michelroberge/ai-app-factory/backend/internal/stream"
+	"github.com/michelroberge/claudette/backend/internal/config"
+	"github.com/michelroberge/claudette/backend/internal/git"
+	"github.com/michelroberge/claudette/backend/internal/handler"
+	"github.com/michelroberge/claudette/backend/internal/repository"
+	"github.com/michelroberge/claudette/backend/internal/stream"
 )
 
 type Server struct {

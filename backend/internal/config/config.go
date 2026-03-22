@@ -20,7 +20,7 @@ func Load() *Config {
 	registryPath := os.Getenv("REGISTRY_PATH")
 	if registryPath == "" {
 		home, _ := os.UserHomeDir()
-		registryPath = filepath.Join(home, ".ai-app-factory")
+		registryPath = filepath.Join(home, ".claudette")
 	}
 
 	return &Config{

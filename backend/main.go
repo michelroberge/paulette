@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/michelroberge/ai-app-factory/backend/internal/config"
-	"github.com/michelroberge/ai-app-factory/backend/internal/repository/fs"
-	"github.com/michelroberge/ai-app-factory/backend/internal/server"
+	"github.com/michelroberge/claudette/backend/internal/config"
+	"github.com/michelroberge/claudette/backend/internal/repository/fs"
+	"github.com/michelroberge/claudette/backend/internal/server"
 )
 
 func main() {

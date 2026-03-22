@@ -22,7 +22,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
   const [artifactExists, setArtifactExists] = useState(false);
   const [maxParallel, setMaxParallel] = useState(2);
 
-  const { graph, phase, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
+  const { graph, phase, loading, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
 
   const logRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
@@ -124,7 +124,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
               </button>
             </>
           )}
-          {!hasBeads && !isGenerating && (
+          {!hasBeads && !isGenerating && !loading && (
             <button
               className="generate-mock-button"
               onClick={handleGenerate}
@@ -132,6 +132,12 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
             >
               Generate Beads
             </button>
+          )}
+          {!hasBeads && !isGenerating && loading && (
+            <>
+              <span className="execute-status-dot" />
+              <span className="execute-status-label">Loading beads...</span>
+            </>
           )}
         </div>
       )}
@@ -161,7 +167,14 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
               </div>
             )}
 
-            {!hasBeads && !isGenerating && (
+            {!hasBeads && !isGenerating && loading && (
+              <div className="artifact-preview empty">
+                <span className="execute-status-dot" />
+                <p>Loading beads...</p>
+              </div>
+            )}
+
+            {!hasBeads && !isGenerating && !loading && (
               <div className="artifact-preview empty">
                 <p>No beads generated yet.</p>
                 <p>Click <strong>Generate Beads</strong> to parse the build plan into trackable tasks.</p>

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/michelroberge/ai-app-factory/backend/internal/model"
+	"github.com/michelroberge/claudette/backend/internal/model"
 )
 
 type ArtifactRepo struct{}

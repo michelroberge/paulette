@@ -3,7 +3,7 @@ package pipeline
 import (
 	"fmt"
 
-	"github.com/michelroberge/ai-app-factory/backend/internal/model"
+	"github.com/michelroberge/claudette/backend/internal/model"
 )
 
 var StageOrder = []model.StageName{

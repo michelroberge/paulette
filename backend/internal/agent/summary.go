@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/michelroberge/ai-app-factory/backend/internal/model"
+	"github.com/michelroberge/claudette/backend/internal/model"
 )
 
 const summarySystemPrompt = `You are a technical writer summarizing a completed product development iteration.

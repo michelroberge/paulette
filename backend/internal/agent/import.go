@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/michelroberge/ai-app-factory/backend/internal/model"
+	"github.com/michelroberge/claudette/backend/internal/model"
 )
 
 // importStep describes one stage of the import artifact generation.

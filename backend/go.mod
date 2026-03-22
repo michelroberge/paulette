@@ -1,4 +1,4 @@
-module github.com/michelroberge/ai-app-factory/backend
+module github.com/michelroberge/claudette/backend
 
 go 1.26.1
 

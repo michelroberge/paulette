@@ -1,6 +1,6 @@
 package repository
 
-import "github.com/michelroberge/ai-app-factory/backend/internal/model"
+import "github.com/michelroberge/claudette/backend/internal/model"
 
 // RegistryRepo manages the central project registry.
 // The registry is an index of all known projects with their metadata.
