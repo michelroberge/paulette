@@ -219,13 +219,13 @@ func (h *BeadHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	buildContent, _ := h.artifactRepo.Read(project.HostDir, model.StageBuild)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
 	if buildContent == "" {
 		http.Error(w, "no build artifact — complete the Build stage first", http.StatusBadRequest)
 		return
 	}
 
-	archContent, _ := h.artifactRepo.Read(project.HostDir, model.StageArchitecture)
+	archContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
 
 	// Start a managed run
 	run := h.runs.Start(id, "build", "beads-generate")
@@ -461,7 +461,7 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 		// Load all artifacts for context injection
 		artifacts := map[model.StageName]string{}
 		for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
-			content, _ := h.artifactRepo.Read(project.HostDir, stage)
+			content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
 			if content != "" {
 				artifacts[stage] = content
 			}

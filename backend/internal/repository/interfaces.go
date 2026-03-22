@@ -22,6 +22,7 @@ type ProjectRepo interface {
 // ArtifactRepo manages stage artifacts (markdown files) within a project.
 type ArtifactRepo interface {
 	Read(hostDir string, stage model.StageName) (string, error)
+	ReadWithFallback(hostDir, version string, stage model.StageName) (string, error)
 	Write(hostDir string, stage model.StageName, content string) error
 	Exists(hostDir string, stage model.StageName) (bool, error)
 }

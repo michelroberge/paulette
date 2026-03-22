@@ -30,6 +30,18 @@ func (r *ArtifactRepo) Read(hostDir string, stage model.StageName) (string, erro
 	return string(b), nil
 }
 
+// ReadWithFallback reads from .ai-factory first; if not found, falls back to docs/{version}/.
+func (r *ArtifactRepo) ReadWithFallback(hostDir, version string, stage model.StageName) (string, error) {
+	content, err := r.Read(hostDir, stage)
+	if err != nil {
+		return "", err
+	}
+	if content != "" {
+		return content, nil
+	}
+	return ReadStageDoc(hostDir, version, stage)
+}
+
 func (r *ArtifactRepo) Write(hostDir string, stage model.StageName, content string) error {
 	p := artifactPath(hostDir, stage)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
@@ -44,6 +56,19 @@ func (r *ArtifactRepo) Exists(hostDir string, stage model.StageName) (bool, erro
 		return false, err
 	}
 	return strings.TrimSpace(content) != "", nil
+}
+
+// ReadStageDoc reads a stage artifact from docs/{version}/{stage}/{stage}.md.
+func ReadStageDoc(hostDir, version string, stage model.StageName) (string, error) {
+	p := filepath.Join(hostDir, "docs", version, string(stage), string(stage)+".md")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read stage doc: %w", err)
+	}
+	return string(b), nil
 }
 
 // WriteStageDoc mirrors a stage artifact to docs/{version}/{stage}/{stage}.md in the target repo.

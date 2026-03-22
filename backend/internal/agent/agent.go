@@ -51,7 +51,7 @@ var artifactRegex = regexp.MustCompile(`(?s)<!-- ARTIFACT:START -->\s*(.*?)\s*<!
 
 // Chat spawns a Claude CLI subprocess and streams the response.
 // modelID selects the Claude model (e.g. "claude-sonnet-4-6"); empty string uses the CLI default.
-func Chat(ctx context.Context, modelID string, systemPrompt string, history []model.Message, userMessage string) (<-chan StreamEvent, error) {
+func Chat(ctx context.Context, modelID string, systemPrompt string, history []model.Message, userMessage string, projectDir string) (<-chan StreamEvent, error) {
 	prompt := formatConversation(history, userMessage)
 
 	args := []string{
@@ -65,6 +65,7 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 	}
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Stdin = strings.NewReader(prompt)
+	cmd.Dir = projectDir
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

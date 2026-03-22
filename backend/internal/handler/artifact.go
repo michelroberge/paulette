@@ -37,7 +37,7 @@ func (h *ArtifactHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := h.artifactRepo.Read(project.HostDir, stage)
+	content, err := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
 	if err != nil {
 		http.Error(w, "failed to read artifact: "+err.Error(), http.StatusInternalServerError)
 		return

@@ -80,9 +80,9 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req) // optional body — ignore decode errors
 
 	// Use UX artifact if available, fall back to vision artifact
-	uxContent, _ := h.artifactRepo.Read(project.HostDir, model.StageUX)
+	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
 	if uxContent == "" {
-		uxContent, _ = h.artifactRepo.Read(project.HostDir, model.StageVision)
+		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
 	}
 	if uxContent == "" {
 		http.Error(w, "no artifact available — chat with the agent to generate content first", http.StatusBadRequest)

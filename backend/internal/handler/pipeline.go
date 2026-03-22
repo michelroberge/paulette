@@ -17,6 +17,7 @@ import (
 	"github.com/michelroberge/ai-app-factory/backend/internal/model"
 	"github.com/michelroberge/ai-app-factory/backend/internal/pipeline"
 	"github.com/michelroberge/ai-app-factory/backend/internal/repository"
+	fsrepo "github.com/michelroberge/ai-app-factory/backend/internal/repository/fs"
 	"github.com/michelroberge/ai-app-factory/backend/internal/stream"
 )
 
@@ -100,12 +101,23 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Git commit the approved artifact
-	if artifactPath, ok := pipeline.ArtifactPaths[previousStage]; ok {
-		commitMsg := fmt.Sprintf("approve(%s): artifact", previousStage)
-		if err := h.git.AddAndCommit(project.HostDir, []string{artifactPath}, commitMsg); err != nil {
-			log.Printf("git commit failed for %s: %v", artifactPath, err)
+	// Promote artifact from .ai-factory to docs and remove from .ai-factory
+	if artifact, readErr := h.artifactRepo.Read(project.HostDir, previousStage); readErr == nil && artifact != "" {
+		if docErr := fsrepo.WriteStageDoc(project.HostDir, project.Version, previousStage, artifact); docErr != nil {
+			log.Printf("docs promotion failed for %s: %v", previousStage, docErr)
+		} else {
+			// Remove the artifact from .ai-factory now that it lives in docs
+			aiFactoryPath := filepath.Join(project.HostDir, ".ai-factory", string(previousStage), string(previousStage)+".md")
+			if rmErr := os.Remove(aiFactoryPath); rmErr != nil {
+				log.Printf("failed to remove .ai-factory artifact %s: %v", aiFactoryPath, rmErr)
+			}
 		}
+	}
+
+	// Git commit the promoted artifact and the removal from .ai-factory
+	commitMsg := fmt.Sprintf("approve(%s): promote artifact to docs", previousStage)
+	if err := h.git.AddAllAndCommit(project.HostDir, commitMsg); err != nil {
+		log.Printf("git commit failed for %s: %v", previousStage, err)
 	}
 
 	// Generate summary when transitioning to complete
@@ -135,7 +147,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 			if s == model.StageComplete {
 				break
 			}
-			content, _ := h.artifactRepo.Read(project.HostDir, s)
+			content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, s)
 			if content != "" {
 				artifacts[s] = content
 			}

@@ -42,7 +42,7 @@ func StreamImport(ctx context.Context, hostDir, version, projectName string, emi
 	// Step 1: Architecture
 	emit(StreamEvent{Type: "log", Content: importSteps[0].label})
 	archPrompt := buildImportArchitecturePrompt(version, digest)
-	archContent, err := runImportAgent(ctx, archPrompt, projectName)
+	archContent, err := runImportAgent(ctx, archPrompt, projectName, hostDir)
 	if err != nil {
 		return nil, fmt.Errorf("architecture agent: %w", err)
 	}
@@ -55,7 +55,7 @@ func StreamImport(ctx context.Context, hostDir, version, projectName string, emi
 	// Step 2: UX
 	emit(StreamEvent{Type: "log", Content: importSteps[1].label})
 	uxPrompt := buildImportUXPrompt(version, digest, archContent)
-	uxContent, err := runImportAgent(ctx, uxPrompt, projectName)
+	uxContent, err := runImportAgent(ctx, uxPrompt, projectName, hostDir)
 	if err != nil {
 		return nil, fmt.Errorf("ux agent: %w", err)
 	}
@@ -68,7 +68,7 @@ func StreamImport(ctx context.Context, hostDir, version, projectName string, emi
 	// Step 3: Update architecture with JRN cross-references
 	emit(StreamEvent{Type: "log", Content: importSteps[2].label})
 	archUpdatePrompt := buildImportArchCrossRefPrompt(version, archContent, uxContent)
-	updatedArch, err := runImportAgent(ctx, archUpdatePrompt, projectName)
+	updatedArch, err := runImportAgent(ctx, archUpdatePrompt, projectName, hostDir)
 	if err != nil {
 		return nil, fmt.Errorf("architecture cross-ref agent: %w", err)
 	}
@@ -81,7 +81,7 @@ func StreamImport(ctx context.Context, hostDir, version, projectName string, emi
 	// Step 4: Vision
 	emit(StreamEvent{Type: "log", Content: importSteps[3].label})
 	visionPrompt := buildImportVisionPrompt(projectName, updatedArch, uxContent)
-	visionContent, err := runImportAgent(ctx, visionPrompt, projectName)
+	visionContent, err := runImportAgent(ctx, visionPrompt, projectName, hostDir)
 	if err != nil {
 		return nil, fmt.Errorf("vision agent: %w", err)
 	}
@@ -105,10 +105,10 @@ func StreamImport(ctx context.Context, hostDir, version, projectName string, emi
 }
 
 // runImportAgent calls Claude with a system prompt and collects the full response.
-func runImportAgent(ctx context.Context, systemPrompt, projectName string) (string, error) {
+func runImportAgent(ctx context.Context, systemPrompt, projectName, projectDir string) (string, error) {
 	userMessage := fmt.Sprintf("Analyze this codebase for project '%s' and produce the requested artifact.", projectName)
 
-	events, err := Chat(ctx, "claude-sonnet-4-6", systemPrompt, nil, userMessage)
+	events, err := Chat(ctx, "claude-sonnet-4-6", systemPrompt, nil, userMessage, projectDir)
 	if err != nil {
 		return "", err
 	}

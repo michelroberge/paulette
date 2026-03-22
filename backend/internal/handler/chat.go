@@ -109,7 +109,7 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 		if s == stage {
 			break
 		}
-		content, _ := h.artifactRepo.Read(project.HostDir, s)
+		content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, s)
 		if content != "" {
 			previousArtifacts[s] = content
 		}
@@ -160,7 +160,7 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Start Claude CLI subprocess using the run's context (survives client disconnect)
-	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, req.Message)
+	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, req.Message, project.HostDir)
 	if err != nil {
 		run.Finish(h.runs)
 		http.Error(w, "failed to start agent: "+err.Error(), http.StatusInternalServerError)
@@ -192,9 +192,6 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
 						run.Emit(agent.StreamEvent{Type: "artifact", Content: string(stage) + "/" + string(stage) + ".md"})
-						if docErr := fsrepo.WriteStageDoc(project.HostDir, project.Version, stage, artifact); docErr != nil {
-							run.Emit(agent.StreamEvent{Type: "log", Content: "warn: docs mirror failed: " + docErr.Error()})
-						}
 					}
 				}
 
