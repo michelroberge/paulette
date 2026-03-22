@@ -13,7 +13,7 @@ import (
 
 const summarySystemPrompt = `You are a technical writer summarizing a completed product development iteration.
 
-You will receive the approved artifacts from all pipeline stages (Vision, UX, Architecture, Build Plan, Review).
+You will receive the approved artifacts from all pipeline stages (Vision, UX, Architecture, Build Plan).
 
 Produce a concise summary document that captures the essential decisions and outcomes. This summary will be used as context for future enhancement iterations, so focus on what a future AI agent would need to understand to build upon this work.
 
@@ -33,11 +33,14 @@ Tech stack, major components, API surface, data model highlights.
 ## Build Strategy
 How the work was organized (milestones, key dependencies, risks addressed).
 
-## Review Outcome
-Final verdict and any important caveats or recommendations.
+## Suggested Enhancements
+Concrete, actionable improvements ordered by impact. For each:
+- A one-line title
+- Brief description of what it adds or improves
+Aim for 3-5 suggestions. Think about: missing features from the vision, UX gaps, architectural improvements, performance optimizations, security hardening, and developer experience improvements.
 
-## Known Limitations & Future Work
-Items explicitly deferred or flagged for future iterations.
+## Known Limitations
+Items explicitly deferred or flagged as current limitations.
 
 Be concise — aim for a document that can be quickly scanned. Avoid repeating full artifact contents; summarize the decisions and rationale.`
 
@@ -55,7 +58,6 @@ func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, pr
 		{model.StageUX, "UX Design"},
 		{model.StageArchitecture, "Architecture"},
 		{model.StageBuild, "Build Plan"},
-		{model.StageReview, "Review"},
 	}
 
 	for _, s := range stages {

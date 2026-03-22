@@ -22,7 +22,7 @@ func projectFilePath(hostDir string) string {
 }
 
 func (r *ProjectRepo) Init(hostDir string) error {
-	stages := []string{"vision", "ux", "architecture", "build", "review"}
+	stages := []string{"vision", "ux", "architecture", "build"}
 	for _, stage := range stages {
 		dir := filepath.Join(hostDir, factoryDir, stage)
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -44,6 +44,10 @@ func (r *ProjectRepo) Load(hostDir string) (*model.Project, error) {
 	// Backward compatibility: default iteration to 1 for pre-enhancement projects
 	if project.Iteration == 0 {
 		project.Iteration = 1
+	}
+	// Migration: review stage was removed — advance to complete
+	if project.CurrentStage == "review" {
+		project.CurrentStage = model.StageComplete
 	}
 	return &project, nil
 }

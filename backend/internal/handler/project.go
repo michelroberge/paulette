@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -68,10 +69,26 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:    now,
 	}
 
+	// Ensure host directory exists before git init
+	if err := os.MkdirAll(req.HostDir, 0755); err != nil {
+		http.Error(w, "failed to create host directory: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	// Git init the host directory if not already a git repo
 	if _, err := os.Stat(filepath.Join(req.HostDir, ".git")); os.IsNotExist(err) {
 		if err := h.git.Init(req.HostDir); err != nil {
-			log.Printf("git init failed in %s: %v", req.HostDir, err)
+			http.Error(w, "git init failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Initialize beads issue tracking
+	if _, err := os.Stat(filepath.Join(req.HostDir, ".beads")); os.IsNotExist(err) {
+		cmd := exec.Command("bd", "init")
+		cmd.Dir = req.HostDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("bd init failed in %s: %v: %s", req.HostDir, err, out)
 		}
 	}
 

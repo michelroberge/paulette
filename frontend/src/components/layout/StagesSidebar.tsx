@@ -20,7 +20,6 @@ const stageLabels: Record<StageName, string> = {
   ux: 'UX Design',
   architecture: 'Architecture',
   build: 'Build',
-  review: 'Review',
   complete: 'Complete',
 };
 

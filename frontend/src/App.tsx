@@ -23,7 +23,6 @@ const KICKOFF_MESSAGES: Partial<Record<StageName, string>> = {
   ux: "I've reviewed the approved vision. Let me propose the initial user flows and screen descriptions for this product.",
   architecture: "I've reviewed the vision and UX design. Let me propose the technical architecture — stack, components, APIs, and data models.",
   build: "I've reviewed all approved artifacts. Let me create a concrete build plan with milestones and tasks.",
-  review: "I've reviewed all approved artifacts. Let me perform a structured validation and give you my assessment.",
 };
 
 interface StageTab {

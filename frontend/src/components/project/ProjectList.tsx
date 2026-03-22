@@ -3,9 +3,9 @@ import { listProjects, createProject, deleteProject } from '../../api/projects';
 import { importProject } from '../../api/import';
 import type { Project } from '../../types';
 
-const STAGE_ORDER = ['vision', 'ux', 'architecture', 'build', 'review', 'complete'];
+const STAGE_ORDER = ['vision', 'ux', 'architecture', 'build', 'complete'];
 const STAGE_LABELS: Record<string, string> = {
-  vision: 'Vision', ux: 'UX', architecture: 'Arch', build: 'Build', review: 'Review', complete: 'Done',
+  vision: 'Vision', ux: 'UX', architecture: 'Arch', build: 'Build', complete: 'Done',
 };
 
 function StageProgress({ currentStage }: { currentStage: string }) {

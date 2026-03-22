@@ -26,7 +26,6 @@ var stageModels = map[model.StageName]string{
 	model.StageUX:           "claude-sonnet-4-6",
 	model.StageArchitecture: "claude-opus-4-6",
 	model.StageBuild:        "claude-opus-4-6",
-	model.StageReview:       "claude-sonnet-4-6",
 }
 
 type ChatHandler struct {

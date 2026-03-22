@@ -9,7 +9,6 @@ const STAGE_LABELS: Record<string, string> = {
   ux: 'UX Design',
   architecture: 'Architecture',
   build: 'Build Plan',
-  review: 'Review',
 };
 
 interface Props {

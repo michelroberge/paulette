@@ -13,7 +13,6 @@ const STEPS = [
   { key: 'crossref', label: 'Cross-references' },
   { key: 'vision', label: 'Vision' },
   { key: 'build', label: 'Build Plan' },
-  { key: 'review', label: 'Review' },
 ];
 
 interface Props {

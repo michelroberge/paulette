@@ -11,7 +11,6 @@ var StageOrder = []model.StageName{
 	model.StageUX,
 	model.StageArchitecture,
 	model.StageBuild,
-	model.StageReview,
 	model.StageComplete,
 }
 
@@ -20,7 +19,6 @@ var ArtifactPaths = map[model.StageName]string{
 	model.StageUX:           "ux/ux.md",
 	model.StageArchitecture: "architecture/architecture.md",
 	model.StageBuild:        "build/build.md",
-	model.StageReview:       "review/review.md",
 }
 
 func stageIndex(stage model.StageName) int {

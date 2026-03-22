@@ -9,7 +9,6 @@ const ARTIFACT_STAGES: { name: StageName; label: string }[] = [
   { name: 'ux', label: 'UX Design' },
   { name: 'architecture', label: 'Architecture' },
   { name: 'build', label: 'Build Plan' },
-  { name: 'review', label: 'Review Report' },
 ];
 
 interface Props {
@@ -126,6 +125,19 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
               >
                 Enhance
               </button>
+              {(() => {
+                const match = summaryContent.match(/## Suggested Enhancements\n([\s\S]*?)(?=\n## |$)/);
+                const suggestions = match?.[1]?.trim() ?? '';
+                return suggestions ? (
+                  <button
+                    className="approve-button"
+                    onClick={() => { setShowEnhanceForm(true); setEnhanceVision(suggestions); }}
+                    disabled={!project.summaryReady}
+                  >
+                    Quick Enhance
+                  </button>
+                ) : null;
+              })()}
               <button className="approve-button secondary" onClick={onNewProject}>
                 Start New Project
               </button>

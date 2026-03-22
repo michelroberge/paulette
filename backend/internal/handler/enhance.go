@@ -162,7 +162,7 @@ func archiveIteration(hostDir, archiveDir string) error {
 	}
 
 	// Copy stage artifacts
-	stages := []string{"vision", "ux", "architecture", "build", "review"}
+	stages := []string{"vision", "ux", "architecture", "build"}
 	for _, stage := range stages {
 		srcDir := filepath.Join(factoryBase, stage)
 		dstDir := filepath.Join(archiveDir, stage)

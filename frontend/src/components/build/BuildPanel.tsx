@@ -142,11 +142,11 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
               </div>
             )}
 
-            {isGenerating && (
+            {isGenerating && !hasBeads && (
               <div className="mock-generating">
                 <div className="mock-stream-header">
                   <span className="mock-stream-dot" />
-                  Generating beads... ({graph.beads.length} created)
+                  Generating beads...
                 </div>
                 {streamingText && (
                   <div className="mock-stream-text" ref={streamRef}>
@@ -163,6 +163,20 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
                 </div>
 
                 <div className="execute-details">
+                  {isGenerating && (
+                    <div className="execute-status-sidebar">
+                      <div className="execute-status-row">
+                        <span className="execute-status-dot" />
+                        <span className="execute-status-label">Generating… {graph.beads.length} beads</span>
+                      </div>
+                      {streamingText && (
+                        <div className="mock-stream-text" ref={streamRef} style={{ flex: 'none', maxHeight: '200px' }}>
+                          {streamingText}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {isExecuting && (
                     <div className="execute-status-sidebar">
                       <div className="execute-status-row">
@@ -191,7 +205,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
                     </div>
                   )}
 
-                  {!isExecuting && !isDone && (
+                  {!isGenerating && !isExecuting && !isDone && (
                     <div className="bead-config-bar">
                       <label className="bead-config-label">
                         Max parallel agents:

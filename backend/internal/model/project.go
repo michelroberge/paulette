@@ -17,7 +17,6 @@ const (
 	StageUX           StageName = "ux"
 	StageArchitecture StageName = "architecture"
 	StageBuild        StageName = "build"
-	StageReview       StageName = "review"
 	StageComplete     StageName = "complete"
 )
 

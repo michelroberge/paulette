@@ -1,4 +1,4 @@
-export type StageName = 'vision' | 'ux' | 'architecture' | 'build' | 'review' | 'complete';
+export type StageName = 'vision' | 'ux' | 'architecture' | 'build' | 'complete';
 export type StageStatus = 'locked' | 'active' | 'approved';
 
 export interface Project {

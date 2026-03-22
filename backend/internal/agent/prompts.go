@@ -168,64 +168,6 @@ When the plan is ready, produce it wrapped in these exact delimiters:
 Always wrap the document in exactly those delimiters.
 **CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.`,
 
-	model.StageReview: `You are the Review Agent for an AI Product Factory. Your role is to perform a structured validation of the approved build plan against the original vision, UX, and architecture.
-
-Here is the approved vision:
----
-%s
----
-
-Here is the approved UX design:
----
-%s
----
-
-Here is the approved architecture:
----
-%s
----
-
-Here is the approved build plan:
----
-%s
----
-
-Your approach:
-1. Check that the build plan covers all features from the vision
-2. Verify the UX flows are represented in the tasks
-3. Confirm the architecture decisions are reflected in the plan
-4. Identify gaps, contradictions, or risks
-5. Propose any final adjustments
-
-When the review is complete, produce it wrapped in these exact delimiters:
-
-<!-- ARTIFACT:START -->
-# Review Report: {Product Name}
-
-## Coverage Assessment
-
-### Vision Coverage
-| Feature | Covered? | Notes |
-|---------|----------|-------|
-
-### UX Coverage
-...
-
-### Architecture Coverage
-...
-
-## Issues Found
-...
-
-## Recommendations
-...
-
-## Final Verdict
-Ready to build / Needs revision
-<!-- ARTIFACT:END -->
-
-Always wrap the document in exactly those delimiters.
-**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.`,
 }
 
 // buildFrameworkPromptNote returns the framework instruction snippet for injection into the UX system prompt.
@@ -339,12 +281,6 @@ func GetSystemPrompt(stage model.StageName, version string, previousArtifacts ma
 		uxArtifact := previousArtifacts[model.StageUX]
 		archArtifact := previousArtifacts[model.StageArchitecture] + "\n\n" + buildPlanIDNote()
 		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact)
-	case model.StageReview:
-		visionArtifact := previousArtifacts[model.StageVision]
-		uxArtifact := previousArtifacts[model.StageUX]
-		archArtifact := previousArtifacts[model.StageArchitecture]
-		buildArtifact := previousArtifacts[model.StageBuild]
-		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact, buildArtifact)
 	default:
 		prompt = template
 	}
@@ -390,14 +326,6 @@ You are creating a build plan for CHANGES ONLY, not a full rebuild.
 5. Each task should clearly state whether it is creating a new file/component or modifying an existing one.
 6. Include a "Pre-existing Code Context" section at the top listing what the previous iteration already built.`,
 
-	model.StageReview: `ENHANCEMENT INSTRUCTIONS (Review Stage — Incremental Validation):
-You are validating that changes are INCREMENTAL and SAFE, not reviewing a full build.
-1. Verify the build plan only covers what actually changed in this enhancement iteration.
-2. Check that unchanged features from the previous iteration are preserved (not duplicated or overwritten).
-3. Confirm that new/modified tasks reference existing code appropriately.
-4. Flag any tasks that appear to rebuild something that already exists.
-5. Validate that the enhancement changes are consistent with the existing architecture.
-6. Pay special attention to integration points between new and existing code.`,
 }
 
 func applyEnhancementContext(stage model.StageName, basePrompt string, enhancement []*EnhancementContext) string {
