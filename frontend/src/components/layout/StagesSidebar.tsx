@@ -80,6 +80,24 @@ export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset,
             </li>
           ))}
         </ul>
+        <div className="sidebar-branding">
+          <pre className="sidebar-ascii">
+{"   ♥\n"}
+{"  ╱│╲\n"}
+{"┌──────┐\n"}
+{"│ ◠  ◠ │\n"}
+{"│ ╰──╯ │\n"}
+{"└──┬───┘\n"}
+{" "}
+<span className="bead bead-pink">●</span>
+<span className="bead bead-cyan">◉</span>
+<span className="bead bead-amber">●</span>
+<span className="bead bead-purple">◉</span>
+<span className="bead bead-green">●</span>
+          </pre>
+          <div className="sidebar-brand-name">Claudette <span>v1.0</span></div>
+          <div className="sidebar-copyright">&copy; 2025 Michel Roberge</div>
+        </div>
       </nav>
 
       {confirmStage && (

@@ -60,7 +60,39 @@ export function ProjectList({ onSelect }: Props) {
 
   return (
     <div className="project-list">
-      <h1>AI App Factory</h1>
+      <div className="claudette-banner">
+        <pre className="claudette-ascii">
+{"        ♥\n"}
+{"       ╱│╲\n"}
+{"    ┌──────────┐\n"}
+{"    │  ◠    ◠  │\n"}
+{"    │    ▽     │\n"}
+{"    │  ╰────╯  │\n"}
+{"    └─────┬────┘\n"}
+{"     "}
+<span className="bead bead-pink">●</span>
+<span className="bead bead-cyan">◉</span>
+<span className="bead bead-amber">●</span>
+<span className="bead bead-purple">◉</span>
+<span className="bead bead-green">●</span>
+<span className="bead bead-pink">◉</span>
+<span className="bead bead-cyan">●</span>
+<span className="bead bead-amber">◉</span>
+<span className="bead bead-purple">●</span>
+{"\n"}
+{"    ┌─────┴────┐\n"}
+{"    │  ░▓░▓░▓  │\n"}
+{"    │  ▓░▓░▓░  │\n"}
+{"    └──┬────┬──┘\n"}
+{"       │    │\n"}
+{"      ═╧═  ═╧═"}
+        </pre>
+        <div className="claudette-title-block">
+          <h1>Claudette</h1>
+          <span className="claudette-subtitle">AI App Factory</span>
+          <span className="claudette-version">v1.0</span>
+        </div>
+      </div>
       <p>Select a project or create a new one.</p>
 
       <div className="project-grid">

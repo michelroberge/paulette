@@ -75,6 +75,8 @@ body {
   border-right: 1px solid #334155;
   padding: 1rem;
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .stages-sidebar h3 {
@@ -933,15 +935,110 @@ body {
   padding: 3rem 1.5rem;
 }
 
-.project-list h1 {
-  font-size: 2rem;
-  margin-bottom: 0.5rem;
+/* Claudette Banner */
+.claudette-banner {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+  padding: 1.5rem 2rem;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border: 1px solid #334155;
+  border-radius: 12px;
+}
+
+.claudette-ascii {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  color: #7dd3fc;
+  margin: 0;
+  text-shadow: 0 0 8px rgba(125, 211, 252, 0.3);
+  flex-shrink: 0;
+}
+
+.claudette-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.claudette-title-block h1 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin: 0;
+  background: linear-gradient(135deg, #7dd3fc, #a78bfa);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: 0.02em;
+}
+
+.claudette-subtitle {
+  font-size: 0.95rem;
+  color: #94a3b8;
+  letter-spacing: 0.05em;
+}
+
+.claudette-version {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
 }
 
 .project-list > p {
   color: #94a3b8;
   margin-bottom: 2rem;
 }
+
+/* Sidebar Branding */
+.sidebar-branding {
+  margin-top: auto;
+  padding-top: 1rem;
+  border-top: 1px solid #334155;
+  text-align: center;
+}
+
+.sidebar-ascii {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.5rem;
+  line-height: 1.15;
+  color: #7dd3fc;
+  margin: 0 0 0.4rem;
+  text-shadow: 0 0 6px rgba(125, 211, 252, 0.25);
+  opacity: 0.7;
+}
+
+.sidebar-brand-name {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #94a3b8;
+  letter-spacing: 0.03em;
+}
+
+.sidebar-brand-name span {
+  font-weight: 400;
+  color: #64748b;
+  font-size: 0.65rem;
+}
+
+.sidebar-copyright {
+  font-size: 0.55rem;
+  color: #475569;
+  margin-top: 0.2rem;
+}
+
+/* Bead Necklace Colors */
+.bead {
+  font-style: normal;
+  text-shadow: 0 0 6px currentColor;
+}
+
+.bead-pink   { color: #f472b6; }
+.bead-cyan   { color: #22d3ee; }
+.bead-amber  { color: #fbbf24; }
+.bead-purple { color: #a78bfa; }
+.bead-green  { color: #4ade80; }
 
 .project-grid {
   display: grid;
