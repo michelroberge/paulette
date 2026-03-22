@@ -47,6 +47,15 @@ func (r *RegistryRepo) load() (*registryData, error) {
 	if err := json.Unmarshal(b, &data); err != nil {
 		return nil, fmt.Errorf("parse registry: %w", err)
 	}
+	// Migrate legacy stage names
+	for i := range data.Projects {
+		if data.Projects[i].CurrentStage == "review" {
+			data.Projects[i].CurrentStage = model.StageComplete
+		}
+		if data.Projects[i].Iteration == 0 {
+			data.Projects[i].Iteration = 1
+		}
+	}
 	return &data, nil
 }
 

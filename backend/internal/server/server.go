@@ -53,7 +53,7 @@ func (s *Server) Router() http.Handler {
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type"},
 		AllowCredentials: true,
 	})
@@ -78,6 +78,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/import", ih.Import)
 		r.Get("/", ph.List)
 		r.Get("/{id}", ph.Get)
+		r.Patch("/{id}", ph.Patch)
 		r.Delete("/{id}", ph.Delete)
 
 		r.Get("/{id}/pipeline", plh.GetPipeline)

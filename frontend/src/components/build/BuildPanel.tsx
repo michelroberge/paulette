@@ -12,9 +12,12 @@ interface Props {
   onRequestExecuteTab?: () => void;
   hidden?: boolean;
   onBeadTokens?: (n: number) => void;
+  autoGenerate?: boolean;
+  autoExecute?: boolean;
+  onExecutionComplete?: () => void;
 }
 
-export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens }: Props) {
+export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, autoGenerate, autoExecute, onExecutionComplete }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [maxParallel, setMaxParallel] = useState(2);
@@ -53,15 +56,6 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
     }
   }, [streamingText]);
 
-  const handleGenerate = () => {
-    onRequestExecuteTab?.();
-    generate();
-  };
-
-  const handleBuild = () => {
-    execute(maxParallel);
-  };
-
   const hasBeads = graph.beads.length > 0;
   const isGenerating = phase === 'generating';
   const isExecuting = phase === 'executing';
@@ -71,6 +65,38 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
   const activeCount = graph.beads.filter(b => b.status === 'in_progress').length;
   const completedCount = taskBeads.filter(b => b.status === 'closed').length;
   const totalCount = taskBeads.length;
+
+  // Auto-generate beads in autonomous mode
+  useEffect(() => {
+    if (!autoGenerate || !artifactExists || hasBeads || isGenerating) return;
+    if (phase !== 'plan') return;
+    generate();
+  }, [autoGenerate, artifactExists, phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-execute beads in autonomous mode
+  useEffect(() => {
+    if (!autoExecute || !hasBeads || isGenerating || isExecuting || isDone) return;
+    if (phase !== 'graph') return;
+    execute(maxParallel);
+  }, [autoExecute, phase, hasBeads]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Notify parent when execution completes
+  const prevPhaseRef = useRef(phase);
+  useEffect(() => {
+    if (prevPhaseRef.current !== 'done' && phase === 'done') {
+      onExecutionComplete?.();
+    }
+    prevPhaseRef.current = phase;
+  }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleGenerate = () => {
+    onRequestExecuteTab?.();
+    generate();
+  };
+
+  const handleBuild = () => {
+    execute(maxParallel);
+  };
 
   // Report bead token deltas to parent as they accumulate
   const totalBeadTokens = graph.beads.reduce((s, b) => s + (b.tokens ?? 0), 0);

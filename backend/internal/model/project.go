@@ -37,6 +37,7 @@ type Project struct {
 	EnhancementVision string              `json:"enhancementVision,omitempty"`
 	Imported          bool                `json:"imported,omitempty"`
 	SummaryReady      bool                `json:"summaryReady"`
+	Autonomous        bool                `json:"autonomous"`
 	SummaryTokens     int                 `json:"summaryTokens,omitempty"`
 	StageTokens       map[StageName]int   `json:"stageTokens,omitempty"`
 	CreatedAt         time.Time           `json:"createdAt"`

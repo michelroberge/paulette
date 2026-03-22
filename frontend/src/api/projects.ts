@@ -19,3 +19,10 @@ export function createProject(data: { name: string; author: string; hostDir: str
 export function deleteProject(id: string): Promise<void> {
   return apiFetch<void>(`/projects/${id}`, { method: 'DELETE' });
 }
+
+export function patchProject(id: string, data: { autonomous?: boolean }): Promise<Project> {
+  return apiFetch<Project>(`/projects/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}

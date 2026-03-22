@@ -12,6 +12,7 @@ export interface Project {
   enhancementVision?: string;
   imported?: boolean;
   summaryReady: boolean;
+  autonomous?: boolean;
   summaryTokens?: number;
   stageTokens?: Partial<Record<StageName, number>>;
   createdAt: string;

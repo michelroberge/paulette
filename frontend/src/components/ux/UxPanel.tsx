@@ -12,9 +12,11 @@ interface Props {
   onRequestMockTab?: () => void;
   hidden?: boolean;
   onMockTokens?: (n: number) => void;
+  autoGenerate?: boolean;
+  onMockComplete?: () => void;
 }
 
-export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hidden, onMockTokens }: Props) {
+export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hidden, onMockTokens, autoGenerate, onMockComplete }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [refinement, setRefinement] = useState('');
@@ -53,6 +55,21 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
     }
   }, [streamingText]);
 
+
+  // Auto-generate mock in autonomous mode
+  useEffect(() => {
+    if (!autoGenerate || !artifactExists || html || generating || !loaded) return;
+    generate('');
+  }, [autoGenerate, artifactExists, html, generating, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Notify parent when mock generation completes
+  const prevGeneratingForComplete = useRef(false);
+  useEffect(() => {
+    if (prevGeneratingForComplete.current && !generating && html) {
+      onMockComplete?.();
+    }
+    prevGeneratingForComplete.current = generating;
+  }, [generating, html]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGenerate = () => {
     onRequestMockTab?.();

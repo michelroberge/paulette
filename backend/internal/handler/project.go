@@ -138,6 +138,43 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(project)
 }
 
+type patchProjectRequest struct {
+	Autonomous *bool `json:"autonomous"`
+}
+
+func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	var req patchProjectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Autonomous != nil {
+		project.Autonomous = *req.Autonomous
+	}
+
+	project.UpdatedAt = time.Now()
+
+	if err := h.registry.Update(project); err != nil {
+		http.Error(w, "failed to update registry: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
+		http.Error(w, "failed to save project: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(project)
+}
+
 func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := h.registry.Delete(id); err != nil {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ProjectList } from './components/project/ProjectList';
 import { ImportProgressView } from './components/import/ImportProgressView';
 import { ProjectHeader } from './components/layout/ProjectHeader';
@@ -11,9 +11,9 @@ import { BuildPanel } from './components/build/BuildPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { VersionHistoryModal } from './components/git/VersionHistoryModal';
-import { getPipeline, resetStage } from './api/pipeline';
+import { getPipeline, approveStage, resetStage, getSummary } from './api/pipeline';
 import { startEnhancement } from './api/enhance';
-import { getProject } from './api/projects';
+import { getProject, patchProject } from './api/projects';
 import { useChat } from './hooks/useChat';
 import type { Project, PipelineState, StageName, VersionBump } from './types';
 import './App.css';
@@ -165,6 +165,89 @@ function App() {
     setShowVersionHistory(false);
   };
 
+  // ── Autonomous mode ──
+
+  const handleToggleAutonomous = async () => {
+    if (!project) return;
+    const updated = await patchProject(project.id, { autonomous: !project.autonomous });
+    setProject(updated);
+  };
+
+  const approveAndAdvance = useCallback(async () => {
+    if (!project) return;
+    try {
+      await approveStage(project.id);
+      const state = await loadPipeline();
+      if (state) setSelectedStage(state.currentStage);
+      const updated = await getProject(project.id);
+      setProject(updated);
+    } catch (err) {
+      console.error('Auto-approve failed:', err);
+    }
+  }, [project?.id, loadPipeline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-approve for vision & architecture (simple stages with no sub-steps)
+  const prevArtifactUpdated = useRef(0);
+  useEffect(() => {
+    if (!project?.autonomous || !artifactUpdated || streaming) return;
+    if (artifactUpdated === prevArtifactUpdated.current) return;
+    prevArtifactUpdated.current = artifactUpdated;
+    if (project.imported) return;
+    if (selectedStage === 'complete') return;
+    // UX and build have sub-steps; they approve via callbacks
+    if (selectedStage === 'ux' || selectedStage === 'build') {
+      // Auto-switch to the relevant tab
+      if (selectedStage === 'ux') setActiveTab('mock');
+      if (selectedStage === 'build') setActiveTab('execute');
+      return;
+    }
+    const timer = setTimeout(() => approveAndAdvance(), 2000);
+    return () => clearTimeout(timer);
+  }, [artifactUpdated, streaming]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // UX mock completion → auto-approve
+  const handleMockComplete = useCallback(() => {
+    if (!project?.autonomous) return;
+    setTimeout(() => approveAndAdvance(), 2000);
+  }, [project?.autonomous, approveAndAdvance]);
+
+  // Build execution completion → auto-approve
+  const handleExecutionComplete = useCallback(() => {
+    if (!project?.autonomous) return;
+    setTimeout(() => approveAndAdvance(), 2000);
+  }, [project?.autonomous, approveAndAdvance]);
+
+  // Auto-enhance after summary is ready
+  const autoEnhanceTriggered = useRef(false);
+  useEffect(() => {
+    if (!project?.autonomous || !project.summaryReady) {
+      autoEnhanceTriggered.current = false;
+      return;
+    }
+    if (project.currentStage !== 'complete') return;
+    if (project.iteration >= 10) return;
+    if (autoEnhanceTriggered.current) return;
+    autoEnhanceTriggered.current = true;
+
+    const doAutoEnhance = async () => {
+      try {
+        const { content, exists } = await getSummary(project.id);
+        if (!exists || !content) return;
+
+        const match = content.match(/## Suggested Enhancements\n([\s\S]*?)(?=\n## |$)/);
+        const suggestions = match?.[1]?.trim();
+        if (!suggestions) return;
+
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        await handleEnhance(suggestions, 'minor');
+      } catch (err) {
+        console.error('Auto-enhance failed:', err);
+      }
+    };
+
+    doAutoEnhance();
+  }, [project?.summaryReady, project?.autonomous, project?.currentStage]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!project) {
     return <ProjectList onSelect={setProject} />;
   }
@@ -180,6 +263,8 @@ function App() {
         onBack={() => { setProject(null); setPipeline(null); }}
         totalTokens={grandTotal}
         onShowHistory={() => setShowVersionHistory(true)}
+        autonomous={!!project.autonomous}
+        onToggleAutonomous={handleToggleAutonomous}
       />
 
       <div className="app-body">
@@ -248,6 +333,8 @@ function App() {
                     onRequestMockTab={() => setActiveTab('mock')}
                     hidden={activeTab === 'chat'}
                     onMockTokens={(n) => addTokens('ux', n)}
+                    autoGenerate={!!project.autonomous && isActiveStage}
+                    onMockComplete={handleMockComplete}
                   />
                 )}
 
@@ -259,17 +346,24 @@ function App() {
                     onRequestExecuteTab={() => setActiveTab('execute')}
                     hidden={activeTab === 'chat'}
                     onBeadTokens={(n) => addTokens('build', n)}
+                    autoGenerate={!!project.autonomous && isActiveStage}
+                    autoExecute={!!project.autonomous && isActiveStage}
+                    onExecutionComplete={handleExecutionComplete}
                   />
                 )}
               </StageView>
 
               {isActiveStage && (
                 <div className="approve-bar">
-                  <ApproveButton
-                    projectId={project.id}
-                    disabled={streaming}
-                    onApproved={handleApproved}
-                  />
+                  {project.autonomous ? (
+                    <span className="auto-approve-indicator">Auto-approve active — will advance automatically</span>
+                  ) : (
+                    <ApproveButton
+                      projectId={project.id}
+                      disabled={streaming}
+                      onApproved={handleApproved}
+                    />
+                  )}
                 </div>
               )}
             </>
