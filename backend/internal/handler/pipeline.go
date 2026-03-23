@@ -203,6 +203,9 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		if err := h.git.CreateTag(project.HostDir, tagName, fmt.Sprintf("Iteration %d complete", project.Iteration)); err != nil {
 			log.Printf("git tag %s failed: %v", tagName, err)
 		}
+
+		// Signal completion to streaming clients
+		run.Emit(agent.StreamEvent{Type: "done", Content: summary})
 	}()
 }
 

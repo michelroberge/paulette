@@ -305,6 +305,10 @@ function App() {
               onNewProject={() => { setProject(null); setPipeline(null); }}
               onViewStage={stage => setSelectedStage(stage)}
               onEnhance={handleEnhance}
+              onSummaryReady={async () => {
+                const updated = await getProject(project.id);
+                setProject(updated);
+              }}
             />
           ) : (
             <>

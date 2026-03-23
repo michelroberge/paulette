@@ -818,6 +818,12 @@ body {
   justify-content: center;
 }
 
+.summary-streaming-indicator {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0;
+}
+
 .completion-header {
   display: flex;
   flex-direction: column;

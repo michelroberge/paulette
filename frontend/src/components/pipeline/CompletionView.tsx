@@ -16,9 +16,10 @@ interface Props {
   onNewProject: () => void;
   onViewStage: (stage: StageName) => void;
   onEnhance: (vision: string, bump: VersionBump) => void;
+  onSummaryReady?: () => void;
 }
 
-export function CompletionView({ project, onNewProject, onViewStage, onEnhance }: Props) {
+export function CompletionView({ project, onNewProject, onViewStage, onEnhance, onSummaryReady }: Props) {
   const [showEnhanceForm, setShowEnhanceForm] = useState(false);
   const [enhanceVision, setEnhanceVision] = useState('');
   const [versionBump, setVersionBump] = useState<VersionBump>('minor');
@@ -46,8 +47,9 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
     watchSummary(project.id, (event) => {
       if (event.type === 'chunk') {
         setSummaryContent(prev => prev + event.content);
-      } else if (event.type === 'done' && event.content) {
-        setSummaryContent(event.content);
+      } else if (event.type === 'done') {
+        if (event.content) setSummaryContent(event.content);
+        onSummaryReady?.();
       } else if (event.type === 'error') {
         setSummaryError(event.content || 'Summary generation failed');
       }
@@ -215,9 +217,14 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
             <h3>Iteration Summary</h3>
           </div>
           <div className="completion-summary-body">
-            {project.summaryReady && summaryContent ? (
+            {summaryContent ? (
               <div className="artifact-content">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryContent}</ReactMarkdown>
+                {!project.summaryReady && (
+                  <div className="summary-streaming-indicator">
+                    <span className="summary-spinner" />
+                  </div>
+                )}
               </div>
             ) : (
               <div className="summary-generating-panel">

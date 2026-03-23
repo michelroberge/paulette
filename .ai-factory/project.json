@@ -7,11 +7,13 @@
   "currentStage": "complete",
   "iteration": 1,
   "imported": true,
-  "summaryReady": false,
+  "summaryReady": true,
   "autonomous": false,
+  "summaryTokens": 1463,
   "stageTokens": {
+    "complete": 1463,
     "ux": 62927
   },
   "createdAt": "2026-03-23T18:48:52.916017-04:00",
-  "updatedAt": "2026-03-23T19:43:47.63747-04:00"
+  "updatedAt": "2026-03-23T19:44:32.49021-04:00"
 }
