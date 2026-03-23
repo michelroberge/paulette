@@ -4,11 +4,11 @@
   "author": "Michel Roberge",
   "version": "0.1.0",
   "hostDir": "/Users/michelroberge/dev/claudette",
-  "currentStage": "build",
+  "currentStage": "complete",
   "iteration": 1,
   "imported": true,
   "summaryReady": false,
   "autonomous": false,
   "createdAt": "2026-03-23T18:48:52.916017-04:00",
-  "updatedAt": "2026-03-23T19:09:07.810073-04:00"
+  "updatedAt": "2026-03-23T19:09:33.309503-04:00"
 }
