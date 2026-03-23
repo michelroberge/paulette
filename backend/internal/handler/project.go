@@ -22,14 +22,16 @@ type ProjectHandler struct {
 	projectRepo  repository.ProjectRepo
 	artifactRepo repository.ArtifactRepo
 	git          *git.Service
+	reposPath    string
 }
 
-func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service) *ProjectHandler {
+func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service, reposPath string) *ProjectHandler {
 	return &ProjectHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
 		artifactRepo: artifactRepo,
 		git:          gitSvc,
+		reposPath:    reposPath,
 	}
 }
 
@@ -46,9 +48,12 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.Name == "" || req.HostDir == "" {
-		http.Error(w, "name and hostDir are required", http.StatusBadRequest)
+	if req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
 		return
+	}
+	if req.HostDir == "" {
+		req.HostDir = filepath.Join(h.reposPath, req.Name)
 	}
 
 	version := req.Version

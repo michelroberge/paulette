@@ -3,7 +3,7 @@ import type { Project } from '../types';
 
 export interface ImportRequest {
   repoUrl?: string;
-  hostDir: string;
+  hostDir?: string;
   name?: string;
   author?: string;
   version?: string;

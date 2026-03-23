@@ -66,7 +66,7 @@ func (s *Server) Router() http.Handler {
 
 	gitSvc := git.NewService()
 
-	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
+	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
 	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.runs)
@@ -76,7 +76,10 @@ func (s *Server) Router() http.Handler {
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
 	acth := handler.NewActivityHandler(s.runs)
 	gh := handler.NewGitHandler(s.registry, s.projectRepo, gitSvc)
-	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc)
+	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath)
+
+	cfgH := handler.NewConfigHandler(s.cfg)
+	r.Get("/api/config", cfgH.GetInfo)
 
 	r.Route("/api/projects", func(r chi.Router) {
 		r.Post("/", ph.Create)

@@ -9,7 +9,7 @@ export function getProject(id: string): Promise<Project> {
   return apiFetch<Project>(`/projects/${id}`);
 }
 
-export function createProject(data: { name: string; author: string; hostDir: string; version?: string }): Promise<Project> {
+export function createProject(data: { name: string; author: string; hostDir?: string; version?: string }): Promise<Project> {
   return apiFetch<Project>('/projects', {
     method: 'POST',
     body: JSON.stringify(data),

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -24,15 +25,17 @@ type ImportHandler struct {
 	artifactRepo repository.ArtifactRepo
 	runs         *stream.Manager
 	git          *git.Service
+	reposPath    string
 }
 
-func NewImportHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager, gitSvc *git.Service) *ImportHandler {
+func NewImportHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager, gitSvc *git.Service, reposPath string) *ImportHandler {
 	return &ImportHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
 		artifactRepo: artifactRepo,
 		runs:         runs,
 		git:          gitSvc,
+		reposPath:    reposPath,
 	}
 }
 
@@ -50,13 +53,13 @@ func (h *ImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.HostDir == "" {
-		http.Error(w, "hostDir is required", http.StatusBadRequest)
-		return
-	}
-
-	// If repoUrl is provided, clone it
 	if req.RepoURL != "" {
+		// Clone import — hostDir is optional, default to repos/<repo-basename>
+		if req.HostDir == "" {
+			base := filepath.Base(req.RepoURL)
+			base = strings.TrimSuffix(base, ".git")
+			req.HostDir = filepath.Join(h.reposPath, base)
+		}
 		// Host dir must not already exist
 		if _, err := os.Stat(req.HostDir); err == nil {
 			http.Error(w, "hostDir already exists; for local import, omit repoUrl", http.StatusBadRequest)
@@ -67,7 +70,11 @@ func (h *ImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// Local import — host dir must exist and contain a git repo
+		// Local import — hostDir is required
+		if req.HostDir == "" {
+			http.Error(w, "hostDir is required for local imports", http.StatusBadRequest)
+			return
+		}
 		if _, err := os.Stat(req.HostDir); os.IsNotExist(err) {
 			http.Error(w, "hostDir does not exist", http.StatusBadRequest)
 			return

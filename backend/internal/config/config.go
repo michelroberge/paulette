@@ -9,6 +9,7 @@ import (
 type Config struct {
 	Port         int
 	RegistryPath string
+	ReposPath    string
 }
 
 func Load() *Config {
@@ -23,8 +24,15 @@ func Load() *Config {
 		registryPath = filepath.Join(home, ".claudette")
 	}
 
+	reposPath := os.Getenv("REPOS_PATH")
+	if reposPath == "" {
+		cwd, _ := os.Getwd()
+		reposPath = filepath.Join(cwd, "repos")
+	}
+
 	return &Config{
 		Port:         port,
 		RegistryPath: registryPath,
+		ReposPath:    reposPath,
 	}
 }

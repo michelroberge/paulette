@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { listProjects, createProject, deleteProject } from '../../api/projects';
 import { importProject } from '../../api/import';
+import { getConfig } from '../../api/config';
 import type { Project } from '../../types';
 
 const STAGE_ORDER = ['vision', 'ux', 'architecture', 'build', 'complete'];
@@ -43,14 +44,16 @@ export function ProjectList({ onSelect }: Props) {
   const [importAuthor, setImportAuthor] = useState('');
   const [importVersion, setImportVersion] = useState('1.0.0');
   const [importing, setImporting] = useState(false);
+  const [reposPath, setReposPath] = useState('');
 
   useEffect(() => {
     listProjects().then(setProjects).catch(console.error);
+    getConfig().then(c => setReposPath(c.reposPath)).catch(console.error);
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    const project = await createProject({ name, author, hostDir, version });
+    const project = await createProject({ name, author, ...(hostDir ? { hostDir } : {}), version });
     setProjects(prev => [...prev, project]);
     setShowForm(false);
     setName('');
@@ -66,7 +69,7 @@ export function ProjectList({ onSelect }: Props) {
     try {
       const project = await importProject({
         repoUrl: importRepoUrl || undefined,
-        hostDir: importHostDir,
+        hostDir: importHostDir || undefined,
         name: importName || undefined,
         author: importAuthor || undefined,
         version: importVersion || undefined,
@@ -191,9 +194,9 @@ export function ProjectList({ onSelect }: Props) {
               <input value={version} onChange={e => setVersion(e.target.value)} placeholder="0.1.0" />
             </label>
             <label>
-              Host Directory
-              <input value={hostDir} onChange={e => setHostDir(e.target.value)} required
-                placeholder="/path/to/your/project" />
+              Host Directory <span style={{ color: '#64748b', fontSize: '0.8rem' }}>(optional — defaults to repos/&lt;name&gt;)</span>
+              <input value={hostDir} onChange={e => setHostDir(e.target.value)}
+                placeholder={reposPath ? `${reposPath}/${name || '<project-name>'}` : '/path/to/your/project'} />
             </label>
             <div className="form-actions">
               <button type="button" onClick={() => setShowForm(false)}>Cancel</button>
@@ -216,9 +219,13 @@ export function ProjectList({ onSelect }: Props) {
                 placeholder="https://github.com/user/repo.git" />
             </label>
             <label>
-              Host Directory
-              <input value={importHostDir} onChange={e => setImportHostDir(e.target.value)} required
-                placeholder="/path/to/clone/target" />
+              Host Directory {!importRepoUrl && <span style={{ color: '#64748b', fontSize: '0.8rem' }}>(required for local import)</span>}
+              {importRepoUrl && <span style={{ color: '#64748b', fontSize: '0.8rem' }}>(optional — defaults to repos/&lt;repo-name&gt;)</span>}
+              <input value={importHostDir} onChange={e => setImportHostDir(e.target.value)}
+                required={!importRepoUrl}
+                placeholder={importRepoUrl && reposPath
+                  ? `${reposPath}/${importRepoUrl.split('/').pop()?.replace('.git', '') || ''}`
+                  : '/path/to/local/repo'} />
             </label>
             <label>
               Project Name <span style={{ color: '#64748b', fontSize: '0.8rem' }}>(optional — defaults to directory name)</span>
