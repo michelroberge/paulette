@@ -1,45 +1,49 @@
 # Iteration Summary: Claudette v0.1.0
 
 ## Product Overview
-Claudette is a local-first, single-binary AI-guided development pipeline tool that transforms a product idea into implemented code through five sequential stages: Vision → UX → Architecture → Build → Complete. Targeting solo founders, product-minded builders, AI-first small teams, and tech leads, it solves the fragmentation and context-loss problem between ideation and implementation by enforcing a stage-gated workflow with mandatory human approval checkpoints, full cross-stage traceability, and Git-backed versioning. Each stage is driven by a specialised Claude AI agent with real-time streaming output, and the Build stage executes as a dependency-aware DAG of atomic tasks ("beads") with optional parallelism and autonomous end-to-end mode.
+Claudette is a local-first, single-binary AI-guided software development pipeline tool that takes a product idea from raw concept to executable build plan through five sequential, AI-driven stages: Vision → UX → Architecture → Build → Complete. It targets product-minded builders, AI-first small teams, and technical leads who want structured, auditable AI acceleration across the full development lifecycle — not just code generation. Each stage uses a specialized Claude agent, enforces human approval gates, and maintains cross-stage traceability, ensuring that what gets built faithfully reflects what was intended.
 
 ## Key UX Decisions
-- **Stage-gated linear pipeline** with a left sidebar showing colour-coded status pips (grey=locked, blue=active, green=approved); users can revisit approved stages but cannot skip forward
-- **Tab-based stage views**: every stage has Chat + Artifact tabs; UX adds Mock Preview; Build adds Execute tab
-- **Approve-to-advance**: a persistent green Approve button anchors each active stage, disabled during streaming
-- **Always-streaming**: all AI output (chat, artifacts, mock HTML, bead logs, summary) delivered via SSE with animated thinking indicators and a Stop button during generation
-- **Autonomous mode toggle** in the project header auto-approves stages with a 2s delay, auto-generates mocks, auto-executes beads, and runs up to 10 enhancement cycles unattended
-- **Bead DAG visualisation** using ReactFlow + Dagre with colour-coded node states (amber=ready, blue=in-progress, green=done, grey=blocked) and a live progress bar
-- **Version History Modal** accessible from the header: full git log with stage-tag badges, one-click rollback with cascade clearing of dependent stages
-- **Imported project banner** suppresses auto-kickoff and signals artifacts are auto-generated and awaiting review
-- **Mobile-responsive**: sidebar collapses to horizontal strip below 768px; split layouts stack vertically; iOS zoom prevented
+- **Stage-gated left sidebar**: Five stages displayed with color-coded status pips (grey=locked, blue=active, green=approved); users can revisit approved stages but cannot skip forward.
+- **Tab-based stage views**: Each stage exposes Chat + Artifact tabs minimum; UX adds Mock Preview; Build adds Execute — tab state is preserved on switch.
+- **Approve-to-advance**: A persistent green Approve button anchors each active stage, disabled during streaming; clicking commits the artifact to Git and unlocks the next stage.
+- **Always-streaming UI**: All AI output (chat, artifacts, mock HTML, build logs, summary) streams live via SSE with a Stop button replacing Send during active generation.
+- **Bead DAG visualization**: Build execution uses ReactFlow + Dagre to render a live dependency graph with color-coded bead states (amber=ready, blue=in-progress, green=done, grey=blocked).
+- **Autonomous mode**: A header toggle replaces the Approve bar with an informational banner and drives the entire pipeline end-to-end, including up to 10 enhancement cycles.
+- **Version History Modal**: Full Git log with stage-tag badges, one-click rollback, and remote push/pull — accessible from the project header at any time.
+- **Mobile-responsive**: Sidebar collapses to horizontal scrollable strip below 768px; split layouts stack vertically; iOS zoom prevented on inputs.
 
 ## Architecture Summary
-- **Backend**: Go 1.26 with chi v5 router; file-system persistence (JSON + Markdown under `~/.claudette`); Git operations via `os/exec`; `claude` CLI invoked as subprocess (not direct API); `bd` CLI + Dolt for bead tracking
-- **Frontend**: React 19 + TypeScript 5.9 built with Vite 8; `react-markdown` + `remark-gfm` for artifact rendering; `@xyflow/react` + `@dagrejs/dagre` for DAG; thin `apiFetch`/`apiStreamUrl` API client
-- **Deployment**: single Go binary with frontend SPA embedded via `embed.FS`; no external runtime beyond `claude` and `bd` CLIs
-- **Real-time**: Server-Sent Events for all streaming; events typed as `chunk` / `artifact` / `done` / `tokens`
-- **Key API surface**: `/api/projects` CRUD; pipeline approve/reset/state; chat per stage; import SSE endpoint; bead generate/execute; git history/rollback/remote sync; summary generation
-- **Data model**: projects registered in a global registry file; per-project state in `.ai-factory/` (working artifacts, chat histories, pipeline state JSON); approved artifacts promoted to `docs/{version}/`
-- **Traceability IDs**: `JRN-v*-NNN` (user journeys) → `ARCH-v*-NNN` (architecture components) → build tasks
+- **Backend**: Go 1.26, chi v5 router, rs/cors middleware; single binary via `embed.FS` bundling the compiled React SPA.
+- **Frontend**: React 19 + TypeScript 5.9, built with Vite 8; react-markdown + remark-gfm for rendering; @xyflow/react + @dagrejs/dagre for the bead DAG.
+- **AI Engine**: Anthropic Claude CLI (`claude` subprocess) — not the HTTP API; Vision/UX use Sonnet, Architecture/Build use Opus.
+- **Persistence**: File system only (JSON + Markdown under `~/.claudette`); Git-backed via `os/exec` for version history and artifact commits.
+- **Real-time**: Server-Sent Events (SSE) for all streaming (chat chunks, artifacts, import progress, build logs, summary).
+- **Build execution**: `bd` CLI + Dolt database for bead (DAG task) management; parallel agent execution configurable per run.
+- **Key API surface**: All routes under `/api/projects`; handlers for project CRUD, import, pipeline state machine, chat, mock generation, bead generation/execution, git operations, and summary.
+- **Data model highlights**: Projects stored as JSON with stage statuses, token counts, autonomous flag, framework selection, and enhancement context; artifacts stored as Markdown files; chat histories serialized per stage.
 
 ## Build Strategy
-v0.1.0 is an **initial import baseline** — the codebase was reverse-engineered via Claudette's own import agent and pre-populated with artifacts awaiting human review. There is a single milestone (Import existing codebase) with no task decomposition or bead execution performed. The build plan explicitly defers all enhancement work to subsequent iteration cycles, with the definition of done being artifact approval by the user.
+v0.1.0 represents an **initial import baseline** — the existing codebase was ingested wholesale via the import agent (reverse-engineered Architecture → UX → Architecture cross-reference → Vision). The build plan contains a single milestone (Import existing codebase) with no task breakdown or execution dependencies. No beads were generated or executed for this iteration. The Definition of Done was artifact review and approval by the user.
 
 ## Suggested Enhancements
 
-- **Direct Anthropic API integration** — Replace the `claude` CLI subprocess with direct HTTP calls to the Anthropic API, enabling cloud deployment, multi-user access, proper concurrency control, and elimination of the CLI install prerequisite
-- **Multi-user support with authentication** — Add user accounts, session management, and tenant-isolated registry paths to allow teams to run a shared Claudette instance rather than one per developer machine
-- **Model selection per stage** — Expose a per-project (or per-stage) model override UI, allowing users to trade cost vs. quality (e.g., Haiku for Vision, Opus for Architecture) rather than fixed Sonnet/Opus defaults
-- **Relational persistence layer** — Introduce an embedded SQLite (or similar) store for project metadata, chat histories, and token accounting to enable search, filtering, and multi-project analytics without sacrificing local-first operation
-- **CI/CD pipeline integration hooks** — Add webhook or GitHub Actions trigger support so that bead execution and enhancement cycles can be initiated from external events (e.g., a PR merge auto-triggers a patch enhancement cycle)
+- **Bead-level build execution for Claudette itself**: Generate a real task DAG from the architecture and build artifacts, break work into atomic beads, and execute them — exercising the core pipeline end-to-end and producing actual code changes rather than documentation only.
+
+- **Model selection per project/stage**: Allow users to override which Claude model is used at the project or stage level (currently hardcoded: Sonnet for Vision/UX, Opus for Architecture/Build), enabling cost/quality trade-offs and future multi-provider support.
+
+- **Multi-user / authentication layer**: Add lightweight authentication (API key or OAuth) and per-user registry paths to support small-team shared deployments, which is the next natural growth step beyond single-user local use.
+
+- **Direct Anthropic API integration as an alternative to the CLI**: Replace or supplement the `claude` subprocess invocation with direct HTTP API calls, removing the CLI installation requirement, enabling proper concurrency control, and unlocking streaming via the API's native SSE support.
+
+- **CI/CD pipeline export**: Add a "Export as GitHub Actions workflow" or similar output at the Complete stage, translating the approved build plan and beads into runnable automation — closing the loop between planning and deployment.
 
 ## Known Limitations
-- `claude` CLI must be installed and authenticated on the host machine; no direct API fallback
-- `bd` CLI and Dolt database must be present for bead execution; tightly coupled
-- File-system-only persistence limits query capability and concurrent writes
-- Single-user, local-first only; no authentication, multi-tenancy, or access control
-- CORS restricted to `localhost:5173` and `localhost:8080`; not suitable for networked/cloud deployment as-is
-- Model selection is hardcoded per stage (Vision/UX → Sonnet; Architecture/Build → Opus)
-- Sequential stage progression only; no branching pipelines or parallel stage tracks
-- v0.1.0 build plan contains no executed beads — the codebase was imported, not built through the pipeline itself
+- **Claude CLI dependency**: Requires `claude` binary installed and authenticated on the host; no direct API integration; concurrency is subprocess-limited.
+- **Beads CLI dependency**: `bd` CLI and Dolt database must be installed; bead execution is tightly coupled to this toolchain.
+- **Single-user, local-first only**: No authentication, multi-tenancy, or user isolation; `REGISTRY_PATH` defaults to `~/.claudette`.
+- **File-system persistence only**: No relational database; limited query capability and no multi-user concurrent writes.
+- **Sequential stage advancement**: No branching pipelines, parallel stage work, or A/B artifact variants.
+- **CORS locked to localhost**: Only `localhost:5173` and `localhost:8080` are allowed origins, enforcing the local-first constraint.
+- **v0.1.0 build plan is a stub**: The current build plan contains no actionable tasks or beads — it is purely an import baseline pending real task decomposition in future iterations.
+- **Out of scope (deferred)**: Cloud/SaaS hosting, non-Claude AI providers, relational/cloud database, CI/CD integration, plugin system, native mobile apps.
