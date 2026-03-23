@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -11,25 +12,31 @@ import (
 	"time"
 
 	"github.com/michelroberge/claudette/backend/internal/config"
-	"github.com/michelroberge/claudette/backend/internal/repository/fs"
+	fsrepo "github.com/michelroberge/claudette/backend/internal/repository/fs"
 	"github.com/michelroberge/claudette/backend/internal/server"
 )
 
 func main() {
 	cfg := config.Load()
 
-	registry, err := fs.NewRegistryRepo(cfg.RegistryPath)
+	registry, err := fsrepo.NewRegistryRepo(cfg.RegistryPath)
 	if err != nil {
 		log.Fatalf("failed to initialize registry: %v", err)
 	}
 
-	projectRepo := fs.NewProjectRepo()
-	artifactRepo := fs.NewArtifactRepo()
-	chatRepo := fs.NewChatRepo()
+	projectRepo := fsrepo.NewProjectRepo()
+	artifactRepo := fsrepo.NewArtifactRepo()
+	chatRepo := fsrepo.NewChatRepo()
 
-	srv := server.New(cfg, registry, projectRepo, artifactRepo, chatRepo)
+	// Strip the "static" prefix so files are served from "/".
+	staticSub, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		log.Fatalf("failed to load embedded static files: %v", err)
+	}
 
-	addr := fmt.Sprintf(":%d", cfg.Port)
+	srv := server.New(cfg, registry, projectRepo, artifactRepo, chatRepo, staticSub)
+
+	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
 	httpServer := &http.Server{
 		Addr:    addr,
 		Handler: srv.Router(),
@@ -37,7 +44,7 @@ func main() {
 
 	// Start server in a goroutine
 	go func() {
-		log.Printf("AI App Factory listening on %s", addr)
+		log.Printf("Claudette listening on %s", addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server error: %v", err)
 		}

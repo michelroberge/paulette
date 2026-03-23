@@ -14,7 +14,7 @@ Naming this tool after her felt right: put some light on Claude.
 
 Claudette is an application generator that guides you through a structured development pipeline using conversational AI. Each stage has a dedicated expert you interact with to produce working artifacts.
 
-**The flow:** Vision &rarr; UX Design &rarr; Architecture &rarr; Build &rarr; Review &rarr; Repeat
+**The flow:** Vision &rarr; UX Design &rarr; Architecture &rarr; Build &rarr; Enhance &rarr; Repeat
 
 ## How It Works
 
@@ -55,34 +55,58 @@ Toggle autonomous mode and Claudette builds your entire app end-to-end. It can f
 
 ## Getting Started
 
-```bash
-# Backend
-cd backend
-go run .
+### Prerequisites
 
-# Frontend
-cd frontend
-npm install
-npm run dev
+- Go 1.21+
+- Node.js 18+
+- An Anthropic API key (`ANTHROPIC_API_KEY` environment variable)
+
+### Production Build (single binary)
+
+```bash
+make build
+./claudette
 ```
+
+This builds the React frontend, embeds it into the Go binary, and produces a single executable that serves everything on port 8080.
+
+### Development
+
+```bash
+# Terminal 1 — backend (API on :8080)
+cd backend && go run .
+
+# Terminal 2 — frontend (Vite dev server on :5173)
+cd frontend && npm install && npm run dev
+```
+
+### Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `8080` | Server listen port |
+| `REGISTRY_PATH` | `~/.claudette` | Where project data is stored |
+| `ANTHROPIC_API_KEY` | — | Required for AI features |
 
 ## Project Structure
 
 ```
+Makefile                       # Build frontend + embed + compile
 backend/
-  main.go                    # Entry point
+  main.go                      # Entry point
+  embed.go                     # Embeds frontend dist into binary
   internal/
-    agent/                   # AI agent orchestration & prompts
-    config/                  # Configuration
-    handler/                 # HTTP handlers
-    model/                   # Data models (project, bead, pipeline)
-    pipeline/                # Pipeline state machine
-    repository/              # File-system persistence
-    server/                  # HTTP server setup
-    stream/                  # SSE streaming
-    git/                     # Git integration
+    agent/                     # AI agent orchestration & prompts
+    config/                    # Configuration
+    handler/                   # HTTP handlers
+    model/                     # Data models (project, bead, pipeline)
+    pipeline/                  # Pipeline state machine
+    repository/                # File-system persistence
+    server/                    # HTTP server, routing, static file serving
+    stream/                    # SSE streaming
+    git/                       # Git integration
 frontend/
-  src/                       # React application
+  src/                         # React + TypeScript application (Vite)
 ```
 
 ## License

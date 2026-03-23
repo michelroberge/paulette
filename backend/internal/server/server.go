@@ -1,7 +1,9 @@
 package server
 
 import (
+	"io/fs"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -21,6 +23,7 @@ type Server struct {
 	artifactRepo repository.ArtifactRepo
 	chatRepo     repository.ChatRepo
 	runs         *stream.Manager
+	staticFS     fs.FS
 }
 
 func New(
@@ -29,6 +32,7 @@ func New(
 	projectRepo repository.ProjectRepo,
 	artifactRepo repository.ArtifactRepo,
 	chatRepo repository.ChatRepo,
+	staticFS fs.FS,
 ) *Server {
 	return &Server{
 		cfg:          cfg,
@@ -37,6 +41,7 @@ func New(
 		artifactRepo: artifactRepo,
 		chatRepo:     chatRepo,
 		runs:         stream.NewManager(),
+		staticFS:     staticFS,
 	}
 }
 
@@ -52,7 +57,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(middleware.Recoverer)
 
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:5173"},
+		AllowedOrigins:   []string{"http://localhost:5173", "http://localhost:8080"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type"},
 		AllowCredentials: true,
@@ -119,6 +124,29 @@ func (s *Server) Router() http.Handler {
 		r.Post("/{id}/git/push", gh.Push)
 		r.Post("/{id}/git/pull", gh.Pull)
 	})
+
+	// Serve embedded frontend static files with SPA fallback.
+	if s.staticFS != nil {
+		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+			path := strings.TrimPrefix(r.URL.Path, "/")
+			if path == "" {
+				path = "index.html"
+			}
+
+			// Try to open the requested file.
+			f, err := s.staticFS.Open(path)
+			if err != nil {
+				// File not found — serve index.html for SPA routing.
+				indexFile, _ := fs.ReadFile(s.staticFS, "index.html")
+				w.Header().Set("Content-Type", "text/html")
+				w.Write(indexFile)
+				return
+			}
+			f.Close()
+
+			http.FileServer(http.FS(s.staticFS)).ServeHTTP(w, r)
+		})
+	}
 
 	return r
 }
