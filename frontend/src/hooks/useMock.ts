@@ -82,6 +82,7 @@ export function useMock(projectId: string | null) {
     setGenerating(true);
     setTokenCount(0);
     setStreamingText('');
+    setHtml(null);
 
     const controller = new AbortController();
     abortRef.current = controller;

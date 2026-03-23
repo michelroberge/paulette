@@ -832,6 +832,279 @@ func enrichBeadFromGraph(hostDir string, bead *model.Bead) {
 	}
 }
 
+// ── Bead detail endpoints ──
+
+// beadDetailResponse is the JSON returned by GetDetail.
+type beadDetailResponse struct {
+	model.Bead
+	Notes            string          `json:"notes"`
+	ExecutionContent string          `json:"executionContent"`
+	ChatMessages     []model.Message `json:"chatMessages"`
+}
+
+// GetDetail returns full bead details including execution output and notes.
+func (h *BeadHandler) GetDetail(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	beadID := chi.URLParam(r, "beadId")
+
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	// Find bead in graph
+	graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+	if err != nil {
+		http.Error(w, "failed to read bead graph", http.StatusInternalServerError)
+		return
+	}
+
+	var found *model.Bead
+	for i := range graph.Beads {
+		if graph.Beads[i].ID == beadID {
+			found = &graph.Beads[i]
+			break
+		}
+	}
+	if found == nil {
+		http.Error(w, "bead not found", http.StatusNotFound)
+		return
+	}
+
+	execContent, _ := fsrepo.ReadBeadDoc(project.HostDir, project.Version, beadID)
+	notes, _ := fsrepo.ReadBeadNotes(project.HostDir, project.Version, beadID)
+	chatMsgs, _ := fsrepo.ReadBeadChatHistory(project.HostDir, project.Version, beadID)
+	if chatMsgs == nil {
+		chatMsgs = []model.Message{}
+	}
+
+	resp := beadDetailResponse{
+		Bead:             *found,
+		Notes:            notes,
+		ExecutionContent: execContent,
+		ChatMessages:     chatMsgs,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+type updateBeadRequest struct {
+	Description *string `json:"description"`
+	Notes       *string `json:"notes"`
+}
+
+// UpdateBead patches a bead's description or notes.
+func (h *BeadHandler) UpdateBead(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	beadID := chi.URLParam(r, "beadId")
+
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	var req updateBeadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Description != nil {
+		_, err := runBd(r.Context(), project.HostDir, "update", beadID, "--description", *req.Description)
+		if err != nil {
+			http.Error(w, "failed to update description", http.StatusInternalServerError)
+			return
+		}
+		// Update in graph
+		mu := beadGraphLock(project.HostDir)
+		mu.Lock()
+		graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+		if err == nil {
+			for i := range graph.Beads {
+				if graph.Beads[i].ID == beadID {
+					graph.Beads[i].Description = *req.Description
+					break
+				}
+			}
+			fsrepo.WriteBeadGraph(project.HostDir, graph)
+		}
+		mu.Unlock()
+	}
+
+	if req.Notes != nil {
+		if err := fsrepo.WriteBeadNotes(project.HostDir, project.Version, beadID, *req.Notes); err != nil {
+			http.Error(w, "failed to write notes", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type controlBeadRequest struct {
+	Action string `json:"action"` // "pause" or "restart"
+}
+
+// ControlBead pauses or restarts a bead.
+func (h *BeadHandler) ControlBead(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	beadID := chi.URLParam(r, "beadId")
+
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	var req controlBeadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	switch req.Action {
+	case "pause":
+		if _, err := runBd(r.Context(), project.HostDir, "update", beadID, "--status=open", "--assignee="); err != nil {
+			http.Error(w, "failed to pause bead", http.StatusInternalServerError)
+			return
+		}
+		updateGraphStatus(beadGraphLock(project.HostDir), project.HostDir, beadID, model.BeadStatusOpen)
+
+	case "restart":
+		// Soft restart: reset to open so it can be re-picked by the execution loop
+		if _, err := runBd(r.Context(), project.HostDir, "update", beadID, "--status=open", "--assignee="); err != nil {
+			http.Error(w, "failed to restart bead", http.StatusInternalServerError)
+			return
+		}
+		updateGraphStatus(beadGraphLock(project.HostDir), project.HostDir, beadID, model.BeadStatusOpen)
+
+	default:
+		http.Error(w, "invalid action: must be 'pause' or 'restart'", http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type beadChatRequest struct {
+	Message string `json:"message"`
+}
+
+// BeadChat handles per-bead AI chat via SSE streaming.
+func (h *BeadHandler) BeadChat(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	beadID := chi.URLParam(r, "beadId")
+
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	// Check for existing active run
+	runKey := "bead-chat-" + beadID
+	if existing := h.runs.Active(id, "build", runKey); existing != nil {
+		existing.StreamTo(w, r, 0)
+		return
+	}
+
+	var req beadChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Find bead in graph
+	graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+	if err != nil {
+		http.Error(w, "failed to read bead graph", http.StatusInternalServerError)
+		return
+	}
+	var bead *model.Bead
+	for i := range graph.Beads {
+		if graph.Beads[i].ID == beadID {
+			bead = &graph.Beads[i]
+			break
+		}
+	}
+	if bead == nil {
+		http.Error(w, "bead not found", http.StatusNotFound)
+		return
+	}
+
+	// Save user message
+	userMsg := model.Message{
+		Role:      model.RoleUser,
+		Content:   req.Message,
+		Timestamp: time.Now(),
+	}
+	fsrepo.AppendBeadChatMessage(project.HostDir, project.Version, beadID, userMsg)
+
+	// Build system prompt with bead context
+	execContent, _ := fsrepo.ReadBeadDoc(project.HostDir, project.Version, beadID)
+	notes, _ := fsrepo.ReadBeadNotes(project.HostDir, project.Version, beadID)
+
+	var sb strings.Builder
+	sb.WriteString("You are an AI assistant helping with a specific development task (bead).\n\n")
+	sb.WriteString(fmt.Sprintf("## Bead: %s\n", bead.Title))
+	sb.WriteString(fmt.Sprintf("- Type: %s\n- Status: %s\n- Priority: %d\n\n", bead.Type, bead.Status, bead.Priority))
+	if bead.Description != "" {
+		sb.WriteString(fmt.Sprintf("## Description\n%s\n\n", bead.Description))
+	}
+	if notes != "" {
+		sb.WriteString(fmt.Sprintf("## User Notes\n%s\n\n", notes))
+	}
+	if execContent != "" {
+		sb.WriteString(fmt.Sprintf("## Previous Execution Output\n%s\n\n", execContent))
+	}
+	sb.WriteString("Help the user refine this task. You can discuss implementation details, suggest approaches, or help update the task description and notes.")
+
+	systemPrompt := sb.String()
+
+	// Load chat history
+	chatHistory, _ := fsrepo.ReadBeadChatHistory(project.HostDir, project.Version, beadID)
+	// Remove last message (just appended)
+	if len(chatHistory) > 0 {
+		chatHistory = chatHistory[:len(chatHistory)-1]
+	}
+
+	run := h.runs.Start(id, "build", runKey)
+	if run == nil {
+		http.Error(w, "chat already running for this bead", http.StatusConflict)
+		return
+	}
+
+	events, err := agent.Chat(run.Context(), "claude-sonnet-4-6", systemPrompt, chatHistory, req.Message, project.HostDir)
+	if err != nil {
+		run.Finish(h.runs)
+		http.Error(w, "failed to start agent: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	go func() {
+		defer run.Finish(h.runs)
+
+		for event := range events {
+			if event.Type == "done" {
+				assistantMsg := model.Message{
+					Role:      model.RoleAssistant,
+					Content:   event.Content,
+					Timestamp: time.Now(),
+				}
+				fsrepo.AppendBeadChatMessage(project.HostDir, project.Version, beadID, assistantMsg)
+				run.Emit(agent.StreamEvent{Type: "done", Content: event.Content})
+			} else {
+				run.Emit(event)
+			}
+		}
+	}()
+
+	run.StreamTo(w, r, 0)
+}
+
 // siblingBeads returns all task beads in the same epic as bead, excluding bead itself.
 func siblingBeads(hostDir string, bead model.Bead) []model.Bead {
 	if bead.EpicID == "" {

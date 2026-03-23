@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,6 +11,8 @@ type Config struct {
 	Port         int
 	RegistryPath string
 	ReposPath    string
+	Version      string
+	Author       string
 }
 
 func Load() *Config {
@@ -30,9 +33,32 @@ func Load() *Config {
 		reposPath = filepath.Join(cwd, "repos")
 	}
 
+	version, author := loadProjectMeta()
+
 	return &Config{
 		Port:         port,
 		RegistryPath: registryPath,
 		ReposPath:    reposPath,
+		Version:      version,
+		Author:       author,
 	}
+}
+
+func loadProjectMeta() (version, author string) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", ""
+	}
+	data, err := os.ReadFile(filepath.Join(cwd, ".ai-factory", "project.json"))
+	if err != nil {
+		return "", ""
+	}
+	var meta struct {
+		Version string `json:"version"`
+		Author  string `json:"author"`
+	}
+	if json.Unmarshal(data, &meta) != nil {
+		return "", ""
+	}
+	return meta.Version, meta.Author
 }

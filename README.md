@@ -60,6 +60,9 @@ Toggle autonomous mode and Claudette builds your entire app end-to-end. It can f
 - Go 1.21+
 - Node.js 18+
 - An Anthropic API key (`ANTHROPIC_API_KEY` environment variable)
+- [beads](https://github.com/steveyegge/beads) (`bd`) — required for issue tracking and build orchestration
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) — required for AI agent execution
+- [rtk](https://github.com/rtk-ai/rtk) — optional, recommended for token optimization
 
 ### Production Build (single binary)
 
@@ -69,6 +72,16 @@ make build
 ```
 
 This builds the React frontend, embeds it into the Go binary, and produces a single executable that serves everything on port 8080.
+
+### First Run
+
+After building, run the init command to verify and install dependencies:
+
+```bash
+./claudette init
+```
+
+This checks that `bd`, `claude`, and `rtk` are available, and offers to install any that are missing. Both `bd` and `claude` are required — claudette cannot run without them.
 
 ### Development
 

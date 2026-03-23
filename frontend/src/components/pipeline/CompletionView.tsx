@@ -25,6 +25,7 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
   const [submitting, setSubmitting] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [summaryContent, setSummaryContent] = useState('');
+  const [summaryError, setSummaryError] = useState('');
   const summaryAbortRef = useRef<AbortController | null>(null);
 
   // If summary already ready, fetch it; otherwise stream live chunks
@@ -38,6 +39,7 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
 
     // Connect to live stream
     setSummaryContent('');
+    setSummaryError('');
     const controller = new AbortController();
     summaryAbortRef.current = controller;
 
@@ -46,6 +48,8 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
         setSummaryContent(prev => prev + event.content);
       } else if (event.type === 'done' && event.content) {
         setSummaryContent(event.content);
+      } else if (event.type === 'error') {
+        setSummaryError(event.content || 'Summary generation failed');
       }
     }, controller.signal).catch(() => { /* stream ended or aborted */ });
 
@@ -57,6 +61,8 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
 
   const handleRetry = async () => {
     setRetrying(true);
+    setSummaryError('');
+    setSummaryContent('');
     try {
       await regenerateSummary(project.id);
     } finally {
@@ -79,11 +85,14 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
       <div className="completion-layout">
         <div className="completion-left">
           <div className="completion-header">
-            <div className="completion-icon">✓</div>
-            <h2>Pipeline Complete</h2>
+            <div className="completion-icon">{project.summaryReady ? '✓' : '⏳'}</div>
+            <h2>{project.summaryReady ? 'Pipeline Complete' : 'Almost done!'}</h2>
             <p className="completion-subtitle">
-              All stages have been approved for <strong>{project.name}</strong> v{project.version}
-              {project.iteration > 1 && <span> (iteration {project.iteration})</span>}.
+              {project.summaryReady
+                ? <>All stages have been approved for <strong>{project.name}</strong> v{project.version}
+                    {project.iteration > 1 && <span> (iteration {project.iteration})</span>}.</>
+                : <>Generating iteration summary for <strong>{project.name}</strong> v{project.version}…</>
+              }
             </p>
           </div>
 
@@ -103,8 +112,17 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance }
 
           {!project.summaryReady && (
             <div className="summary-generating">
-              <span className="summary-spinner" />
-              Generating iteration summary…
+              {summaryError ? (
+                <>
+                  <span className="summary-error-icon">✗</span>
+                  <span className="summary-error-text">{summaryError}</span>
+                </>
+              ) : (
+                <>
+                  <span className="summary-spinner" />
+                  Generating iteration summary…
+                </>
+              )}
               <button
                 className="summary-retry-btn"
                 onClick={handleRetry}

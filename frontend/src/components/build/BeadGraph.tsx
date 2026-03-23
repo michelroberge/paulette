@@ -67,6 +67,7 @@ function getNodeStyle(bead: Bead, isReady: boolean) {
     width: isEpic ? NODE_WIDTH_EPIC : NODE_WIDTH_TASK,
     opacity,
     boxShadow,
+    cursor: 'pointer',
   };
 }
 
@@ -205,9 +206,10 @@ function DevilIcon({ delay }: { delay: number }) {
 
 interface Props {
   graph: BeadGraph;
+  onBeadClick?: (beadId: string) => void;
 }
 
-export function BeadGraph({ graph }: Props) {
+export function BeadGraph({ graph, onBeadClick }: Props) {
   const activeCount = graph.beads.filter(b => b.status === 'in_progress').length;
   const reviewingCount = graph.beads.filter(b => b.status === 'reviewing').length;
   const totalTokens = graph.beads.reduce((sum, b) => sum + (b.tokens ?? 0), 0);
@@ -270,11 +272,12 @@ export function BeadGraph({ graph }: Props) {
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onNodeClick={(_event, node) => onBeadClick?.(node.id)}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         nodesDraggable={false}
         nodesConnectable={false}
-        elementsSelectable={false}
+        elementsSelectable={!!onBeadClick}
         proOptions={{ hideAttribution: true }}
       >
         <Background color="#334155" gap={16} />

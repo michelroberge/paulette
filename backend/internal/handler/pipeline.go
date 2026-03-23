@@ -66,13 +66,13 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check artifact exists for current stage
-	exists, err := h.artifactRepo.Exists(project.HostDir, project.CurrentStage)
+	// Check artifact exists for current stage (check both .ai-factory and docs/)
+	artifactContent, err := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, project.CurrentStage)
 	if err != nil {
 		http.Error(w, "failed to check artifact: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if !exists {
+	if strings.TrimSpace(artifactContent) == "" {
 		http.Error(w, "cannot approve: no artifact for current stage", http.StatusBadRequest)
 		return
 	}
@@ -215,10 +215,14 @@ func (h *PipelineHandler) WatchSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	run := h.runs.Active(id, "complete", "summary")
 	if run == nil {
-		// No active run — nothing to stream; return empty done
+		// No active run — send a done event so the client doesn't hang
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
+		fmt.Fprintf(w, "data: {\"type\":\"done\",\"content\":\"\"}\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
 		return
 	}
 	run.StreamTo(w, r, 0)

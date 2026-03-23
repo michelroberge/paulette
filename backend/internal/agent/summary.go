@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/michelroberge/claudette/backend/internal/model"
 )
@@ -47,6 +48,9 @@ Be concise — aim for a document that can be quickly scanned. Avoid repeating f
 // StreamSummary calls Claude to produce a concise summary of all approved artifacts,
 // streaming chunks as StreamEvents. The channel is closed when generation finishes.
 func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, projectName string, version string) (<-chan StreamEvent, error) {
+	// Guard against claude CLI hanging forever
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+
 	var prompt strings.Builder
 	prompt.WriteString(fmt.Sprintf("Project: %s, Version: %s\n\n", projectName, version))
 
@@ -88,6 +92,7 @@ func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, pr
 	ch := make(chan StreamEvent, 64)
 
 	go func() {
+		defer cancel()
 		defer close(ch)
 		defer cmd.Wait()
 

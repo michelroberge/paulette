@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { getArtifact } from '../../api/artifacts';
 import { useBeads } from '../../hooks/useBeads';
 import { BeadGraph } from './BeadGraph';
+import { BeadDetailPanel } from './BeadDetailPanel';
 
 interface Props {
   projectId: string;
@@ -15,12 +16,14 @@ interface Props {
   autoGenerate?: boolean;
   autoExecute?: boolean;
   onExecutionComplete?: () => void;
+  onBuildDone?: () => void;
 }
 
-export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, autoGenerate, autoExecute, onExecutionComplete }: Props) {
+export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, autoGenerate, autoExecute, onExecutionComplete, onBuildDone }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [maxParallel, setMaxParallel] = useState(2);
+  const [selectedBeadId, setSelectedBeadId] = useState<string | null>(null);
 
   const { graph, phase, loading, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
 
@@ -83,8 +86,11 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
   // Notify parent when execution completes
   const prevPhaseRef = useRef(phase);
   useEffect(() => {
-    if (prevPhaseRef.current !== 'done' && phase === 'done') {
-      onExecutionComplete?.();
+    if (phase === 'done') {
+      onBuildDone?.();
+      if (prevPhaseRef.current !== 'done') {
+        onExecutionComplete?.();
+      }
     }
     prevPhaseRef.current = phase;
   }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -147,6 +153,16 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
           artifactExists ? (
             <div className="artifact-content">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactContent}</ReactMarkdown>
+              {!hasBeads && !isGenerating && (
+                <div style={{ padding: '1rem', borderTop: '1px solid #334155', display: 'flex', justifyContent: 'center' }}>
+                  <button
+                    className="generate-mock-button"
+                    onClick={handleGenerate}
+                  >
+                    Generate Beads
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <div className="artifact-preview empty">
@@ -198,7 +214,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
             {hasBeads && (
               <div className="execute-main">
                 <div className="execute-graph">
-                  <BeadGraph graph={graph} />
+                  <BeadGraph graph={graph} onBeadClick={setSelectedBeadId} />
                 </div>
 
                 <div className="execute-details">
@@ -292,6 +308,18 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
           </div>
         )}
       </div>
+
+      {selectedBeadId && (() => {
+        const selectedBead = graph.beads.find(b => b.id === selectedBeadId);
+        return selectedBead ? (
+          <BeadDetailPanel
+            projectId={projectId}
+            beadId={selectedBeadId}
+            bead={selectedBead}
+            onClose={() => setSelectedBeadId(null)}
+          />
+        ) : null;
+      })()}
     </div>
   );
 }

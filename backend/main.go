@@ -11,12 +11,23 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/michelroberge/claudette/backend/internal/cli"
 	"github.com/michelroberge/claudette/backend/internal/config"
 	fsrepo "github.com/michelroberge/claudette/backend/internal/repository/fs"
 	"github.com/michelroberge/claudette/backend/internal/server"
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "init":
+			os.Exit(cli.RunInit())
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
+			os.Exit(1)
+		}
+	}
+
 	cfg := config.Load()
 
 	registry, err := fsrepo.NewRegistryRepo(cfg.RegistryPath)

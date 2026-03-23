@@ -19,5 +19,7 @@ func (h *ConfigHandler) GetInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"reposPath": h.cfg.ReposPath,
+		"version":   h.cfg.Version,
+		"author":    h.cfg.Author,
 	})
 }

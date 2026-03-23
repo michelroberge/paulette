@@ -57,6 +57,8 @@ function App() {
   const [stageTokens, setStageTokens] = useState<Partial<Record<StageName, number>>>({});
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showImportProgress, setShowImportProgress] = useState(false);
+  const [mockGenerated, setMockGenerated] = useState(false);
+  const [buildComplete, setBuildComplete] = useState(false);
 
   const addTokens = useCallback((stage: StageName, n: number) => {
     if (n <= 0) return;
@@ -103,9 +105,11 @@ function App() {
     loadHistory();
   }, [loadHistory]);
 
-  // Reset tab on stage change
+  // Reset tab and gate states on stage change
   useEffect(() => {
     setActiveTab('chat');
+    setMockGenerated(false);
+    setBuildComplete(false);
   }, [selectedStage]);
 
   // Poll for summaryReady when at Complete stage
@@ -198,21 +202,27 @@ function App() {
     if (selectedStage === 'ux' || selectedStage === 'build') {
       // Auto-switch to the relevant tab
       if (selectedStage === 'ux') setActiveTab('mock');
-      if (selectedStage === 'build') setActiveTab('execute');
+      if (selectedStage === 'build') {
+        // Autonomous: go straight to execute (autoGenerate calls generate() directly)
+        // Non-autonomous: show plan first so user can review and click Generate Beads
+        setActiveTab(project.autonomous ? 'execute' : 'artifact');
+      }
       return;
     }
     const timer = setTimeout(() => approveAndAdvance(), 2000);
     return () => clearTimeout(timer);
   }, [artifactUpdated, streaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // UX mock completion → auto-approve
+  // UX mock completion → enable approval (or auto-approve in autonomous mode)
   const handleMockComplete = useCallback(() => {
+    setMockGenerated(true);
     if (!project?.autonomous) return;
     setTimeout(() => approveAndAdvance(), 2000);
   }, [project?.autonomous, approveAndAdvance]);
 
-  // Build execution completion → auto-approve
+  // Build execution completion → enable approval (or auto-approve in autonomous mode)
   const handleExecutionComplete = useCallback(() => {
+    setBuildComplete(true);
     if (!project?.autonomous) return;
     setTimeout(() => approveAndAdvance(), 2000);
   }, [project?.autonomous, approveAndAdvance]);
@@ -335,6 +345,7 @@ function App() {
                     onMockTokens={(n) => addTokens('ux', n)}
                     autoGenerate={!!project.autonomous && isActiveStage}
                     onMockComplete={handleMockComplete}
+                    onMockLoaded={() => setMockGenerated(true)}
                   />
                 )}
 
@@ -349,6 +360,7 @@ function App() {
                     autoGenerate={!!project.autonomous && isActiveStage}
                     autoExecute={!!project.autonomous && isActiveStage}
                     onExecutionComplete={handleExecutionComplete}
+                    onBuildDone={() => setBuildComplete(true)}
                   />
                 )}
               </StageView>
@@ -360,7 +372,7 @@ function App() {
                   ) : (
                     <ApproveButton
                       projectId={project.id}
-                      disabled={streaming}
+                      disabled={streaming || (selectedStage === 'ux' && !mockGenerated) || (selectedStage === 'build' && !buildComplete)}
                       onApproved={handleApproved}
                     />
                   )}

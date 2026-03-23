@@ -1,0 +1,2227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claudette</title>
+    <style>
+        :root {
+            --background: #09090b;
+            --foreground: #fafafa;
+            --card: #18181b;
+            --border: #27272a;
+            --primary: #fafafa;
+            --muted: #71717a;
+            --accent: #3b82f6;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --radius: 6px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--background);
+            color: var(--foreground);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+
+        /* Screen Tab Navigation */
+        .screen-tabs {
+            display: flex;
+            gap: 4px;
+            padding: 8px 16px;
+            background: #0a0a0c;
+            border-bottom: 1px solid var(--border);
+            overflow-x: auto;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .screen-tab {
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 13px;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+
+        .screen-tab:hover {
+            background: var(--card);
+            color: var(--foreground);
+        }
+
+        .screen-tab.active {
+            background: var(--card);
+            color: var(--foreground);
+            border-color: var(--accent);
+        }
+
+        .screen {
+            display: none;
+            max-width: 1024px;
+            margin: 24px auto;
+            padding: 0 16px;
+        }
+
+        .screen.active {
+            display: block;
+        }
+
+        .screen-container {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+        }
+
+        /* ASCII Banner */
+        .ascii-banner {
+            text-align: center;
+            padding: 40px 20px;
+            background: linear-gradient(180deg, #1a1a1f 0%, var(--card) 100%);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .ascii-art {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.2;
+            color: var(--accent);
+            white-space: pre;
+            margin-bottom: 16px;
+        }
+
+        .banner-subtitle {
+            color: var(--muted);
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .version-label {
+            display: inline-block;
+            padding: 2px 8px;
+            background: var(--border);
+            border-radius: var(--radius);
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        /* Project Grid */
+        .project-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            padding: 24px;
+        }
+
+        .project-card {
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .project-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        .project-card.dashed {
+            border-style: dashed;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 160px;
+            color: var(--muted);
+        }
+
+        .project-card.dashed:hover {
+            color: var(--foreground);
+        }
+
+        .project-card .delete-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 24px;
+            height: 24px;
+            border: none;
+            background: var(--border);
+            border-radius: var(--radius);
+            color: var(--muted);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .project-card:hover .delete-btn {
+            opacity: 1;
+        }
+
+        .project-card .delete-btn:hover {
+            background: var(--error);
+            color: white;
+        }
+
+        .project-name {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .stage-pips {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+
+        .pip {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--border);
+        }
+
+        .pip.active {
+            background: var(--accent);
+        }
+
+        .pip.approved {
+            background: var(--success);
+        }
+
+        .current-stage {
+            font-size: 13px;
+            color: var(--accent);
+            margin-bottom: 8px;
+        }
+
+        .last-updated {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .add-icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 16px;
+            color: var(--muted);
+            font-size: 12px;
+            border-top: 1px solid var(--border);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1001;
+        }
+
+        .modal {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            width: 100%;
+            max-width: 400px;
+            margin: 16px;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--foreground);
+            font-size: 14px;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .modal-footer {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: var(--radius);
+            font-size: 14px;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            transition: all 0.2s;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--foreground);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .btn-primary {
+            background: var(--foreground);
+            color: var(--background);
+            border-color: var(--foreground);
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+            border-color: var(--success);
+        }
+
+        .btn-danger {
+            background: var(--error);
+            color: white;
+            border-color: var(--error);
+        }
+
+        /* Import Progress */
+        .import-progress {
+            padding: 40px;
+        }
+
+        .progress-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .progress-header h2 {
+            font-size: 20px;
+            margin-bottom: 8px;
+        }
+
+        .progress-header p {
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .progress-steps {
+            max-width: 500px;
+            margin: 0 auto 24px;
+        }
+
+        .progress-step {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-radius: var(--radius);
+            margin-bottom: 8px;
+        }
+
+        .step-indicator {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+
+        .step-indicator.pending {
+            background: var(--border);
+            color: var(--muted);
+        }
+
+        .step-indicator.progress {
+            background: var(--accent);
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+
+        .step-indicator.done {
+            background: var(--success);
+            color: white;
+        }
+
+        .step-indicator.error {
+            background: var(--error);
+            color: white;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .step-label {
+            font-size: 14px;
+        }
+
+        .progress-log {
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 24px;
+        }
+
+        .log-line {
+            margin-bottom: 4px;
+        }
+
+        .log-line.success {
+            color: var(--success);
+        }
+
+        .log-line.error {
+            color: var(--error);
+        }
+
+        /* Project Workspace */
+        .workspace {
+            display: flex;
+            min-height: 600px;
+        }
+
+        .workspace-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 20px;
+            background: var(--background);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .back-btn {
+            width: 32px;
+            height: 32px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: transparent;
+            color: var(--foreground);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .back-btn:hover {
+            background: var(--card);
+        }
+
+        .project-info {
+            flex: 1;
+        }
+
+        .project-info h1 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .project-meta {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .token-counter {
+            font-size: 12px;
+            color: var(--muted);
+            padding: 4px 8px;
+            background: var(--card);
+            border-radius: var(--radius);
+        }
+
+        .toggle-btn {
+            padding: 6px 12px;
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--muted);
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .toggle-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 200px;
+            background: var(--background);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stages-list {
+            flex: 1;
+            padding: 16px;
+        }
+
+        .stage-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: var(--radius);
+            margin-bottom: 4px;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .stage-item:hover {
+            background: var(--card);
+        }
+
+        .stage-item.active {
+            background: var(--card);
+            border: 1px solid var(--accent);
+        }
+
+        .stage-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            flex-shrink: 0;
+        }
+
+        .stage-icon.locked {
+            background: var(--border);
+            color: var(--muted);
+        }
+
+        .stage-icon.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        .stage-icon.approved {
+            background: var(--success);
+            color: white;
+        }
+
+        .stage-name {
+            flex: 1;
+            font-size: 13px;
+        }
+
+        .stage-tokens {
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .reset-btn {
+            position: absolute;
+            right: 8px;
+            width: 20px;
+            height: 20px;
+            border: none;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            opacity: 0;
+            font-size: 12px;
+        }
+
+        .stage-item:hover .reset-btn {
+            opacity: 1;
+        }
+
+        .sidebar-footer {
+            padding: 16px;
+            border-top: 1px solid var(--border);
+            text-align: center;
+        }
+
+        .sidebar-brand {
+            font-family: 'Courier New', monospace;
+            font-size: 10px;
+            color: var(--muted);
+            white-space: pre;
+            line-height: 1.1;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .content-tabs {
+            display: flex;
+            gap: 4px;
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .content-tab {
+            padding: 8px 16px;
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 13px;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -13px;
+        }
+
+        .content-tab:hover {
+            color: var(--foreground);
+        }
+
+        .content-tab.active {
+            color: var(--foreground);
+            border-bottom-color: var(--accent);
+        }
+
+        .tab-actions {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .framework-select {
+            padding: 6px 10px;
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--foreground);
+            font-size: 12px;
+        }
+
+        /* Chat Panel */
+        .chat-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            overflow: hidden;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 16px;
+        }
+
+        .chat-message {
+            margin-bottom: 16px;
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .message-role {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .message-role.user {
+            color: var(--success);
+        }
+
+        .thinking-dots {
+            display: inline-flex;
+            gap: 2px;
+        }
+
+        .thinking-dots span {
+            width: 4px;
+            height: 4px;
+            background: var(--accent);
+            border-radius: 50%;
+            animation: bounce 1.4s infinite;
+        }
+
+        .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-4px); }
+        }
+
+        .message-content {
+            font-size: 14px;
+            color: var(--foreground);
+            line-height: 1.6;
+        }
+
+        .chat-input-area {
+            display: flex;
+            gap: 8px;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 12px;
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--foreground);
+            font-size: 14px;
+            resize: none;
+        }
+
+        .chat-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .send-btn {
+            padding: 12px 20px;
+            background: var(--accent);
+            border: none;
+            border-radius: var(--radius);
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .send-btn:hover {
+            opacity: 0.9;
+        }
+
+        .send-btn.stop {
+            background: var(--error);
+        }
+
+        /* Artifact Panel */
+        .artifact-panel {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .artifact-content {
+            font-size: 14px;
+            line-height: 1.7;
+        }
+
+        .artifact-content h1 {
+            font-size: 24px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .artifact-content h2 {
+            font-size: 18px;
+            margin-top: 24px;
+            margin-bottom: 12px;
+        }
+
+        .artifact-content h3 {
+            font-size: 15px;
+            margin-top: 20px;
+            margin-bottom: 8px;
+        }
+
+        .artifact-content p {
+            margin-bottom: 12px;
+            color: var(--foreground);
+        }
+
+        .artifact-content ul {
+            margin-left: 20px;
+            margin-bottom: 12px;
+        }
+
+        .artifact-content li {
+            margin-bottom: 6px;
+        }
+
+        /* Approve Bar */
+        .approve-bar {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--background);
+        }
+
+        .approve-info {
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .approve-btn {
+            padding: 10px 24px;
+            background: var(--success);
+            border: none;
+            border-radius: var(--radius);
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .approve-btn:hover {
+            opacity: 0.9;
+        }
+
+        .approve-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .auto-indicator {
+            padding: 8px 16px;
+            background: var(--accent);
+            border-radius: var(--radius);
+            color: white;
+            font-size: 13px;
+        }
+
+        /* Banner */
+        .info-banner {
+            padding: 12px 20px;
+            background: rgba(59, 130, 246, 0.1);
+            border-bottom: 1px solid var(--accent);
+            font-size: 13px;
+            color: var(--accent);
+        }
+
+        /* Mock Preview */
+        .mock-container {
+            flex: 1;
+            display: flex;
+        }
+
+        .mock-iframe {
+            flex: 1;
+            background: white;
+            border: none;
+        }
+
+        .activity-panel {
+            width: 280px;
+            background: var(--background);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .activity-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .activity-log {
+            flex: 1;
+            padding: 12px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        /* Build Stage */
+        .build-plan-content {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .beads-btn {
+            padding: 6px 12px;
+            background: var(--warning);
+            border: none;
+            border-radius: var(--radius);
+            color: var(--background);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .execute-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .execute-config {
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .config-label {
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .config-input {
+            width: 60px;
+            padding: 6px 10px;
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--foreground);
+            font-size: 13px;
+            text-align: center;
+        }
+
+        .dag-container {
+            flex: 1;
+            padding: 20px;
+            min-height: 300px;
+            position: relative;
+        }
+
+        .dag-graph {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            justify-content: center;
+            align-items: flex-start;
+        }
+
+        .bead-node {
+            padding: 12px 16px;
+            border-radius: var(--radius);
+            font-size: 12px;
+            min-width: 120px;
+            text-align: center;
+            border: 1px solid var(--border);
+        }
+
+        .bead-node.ready {
+            background: rgba(245, 158, 11, 0.2);
+            border-color: var(--warning);
+            color: var(--warning);
+        }
+
+        .bead-node.progress {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .bead-node.done {
+            background: rgba(34, 197, 94, 0.2);
+            border-color: var(--success);
+            color: var(--success);
+        }
+
+        .bead-node.blocked {
+            background: var(--border);
+            color: var(--muted);
+        }
+
+        .dag-legend {
+            display: flex;
+            gap: 16px;
+            padding: 12px 20px;
+            border-top: 1px solid var(--border);
+            font-size: 11px;
+            color: var(--muted);
+            align-items: center;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.ready { background: var(--warning); }
+        .legend-dot.progress { background: var(--accent); }
+        .legend-dot.done { background: var(--success); }
+        .legend-dot.blocked { background: var(--border); }
+
+        .execution-log {
+            height: 150px;
+            background: var(--background);
+            border-top: 1px solid var(--border);
+            padding: 12px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .progress-bar-container {
+            padding: 12px 20px;
+            border-top: 1px solid var(--border);
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--success);
+            width: 60%;
+            transition: width 0.3s;
+        }
+
+        .progress-label {
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 6px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .agents-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            background: var(--accent);
+            border-radius: 10px;
+            font-size: 11px;
+            color: white;
+        }
+
+        /* Completion View */
+        .completion-container {
+            display: flex;
+            min-height: 500px;
+        }
+
+        .completion-left {
+            flex: 1;
+            padding: 40px;
+            border-right: 1px solid var(--border);
+        }
+
+        .completion-right {
+            flex: 1;
+            padding: 40px;
+            overflow-y: auto;
+        }
+
+        .completion-icon {
+            width: 64px;
+            height: 64px;
+            background: var(--success);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: white;
+            margin-bottom: 20px;
+        }
+
+        .completion-title {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .completion-subtitle {
+            color: var(--muted);
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+
+        .artifacts-list {
+            margin-bottom: 32px;
+        }
+
+        .artifacts-list h3 {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .artifact-link {
+            display: block;
+            padding: 12px;
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 8px;
+            color: var(--foreground);
+            text-decoration: none;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .artifact-link:hover {
+            border-color: var(--accent);
+        }
+
+        .enhance-section h3 {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .enhance-textarea {
+            width: 100%;
+            height: 100px;
+            padding: 12px;
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--foreground);
+            font-size: 14px;
+            resize: none;
+            margin-bottom: 12px;
+        }
+
+        .version-bump {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .version-option {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .version-option input {
+            accent-color: var(--accent);
+        }
+
+        .enhance-actions {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        .summary-content {
+            font-size: 14px;
+            line-height: 1.7;
+        }
+
+        .summary-content h2 {
+            font-size: 18px;
+            margin-bottom: 12px;
+        }
+
+        .summary-content p {
+            margin-bottom: 12px;
+        }
+
+        .retry-btn {
+            margin-top: 12px;
+        }
+
+        /* Version History Modal */
+        .history-modal {
+            max-width: 600px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .history-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+
+        .dirty-banner {
+            padding: 12px 20px;
+            background: rgba(245, 158, 11, 0.1);
+            border-bottom: 1px solid var(--warning);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 13px;
+            color: var(--warning);
+        }
+
+        .commits-list {
+            padding: 16px;
+        }
+
+        .commit-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            border-radius: var(--radius);
+            margin-bottom: 8px;
+            background: var(--background);
+            border: 1px solid var(--border);
+        }
+
+        .commit-hash {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            padding: 2px 6px;
+            background: var(--border);
+            border-radius: 4px;
+            color: var(--muted);
+        }
+
+        .commit-info {
+            flex: 1;
+        }
+
+        .commit-message {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .commit-meta {
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .commit-tags {
+            display: flex;
+            gap: 4px;
+            margin-top: 6px;
+        }
+
+        .tag-badge {
+            padding: 2px 6px;
+            background: rgba(59, 130, 246, 0.2);
+            border-radius: 4px;
+            font-size: 10px;
+            color: var(--accent);
+        }
+
+        .commit-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .reset-commit-btn {
+            padding: 4px 8px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--muted);
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .reset-commit-btn:hover {
+            border-color: var(--error);
+            color: var(--error);
+        }
+
+        .remote-section {
+            padding: 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        .remote-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            margin-bottom: 12px;
+        }
+
+        .remote-header h4 {
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .remote-badge {
+            padding: 2px 6px;
+            background: rgba(34, 197, 94, 0.2);
+            border-radius: 4px;
+            font-size: 10px;
+            color: var(--success);
+        }
+
+        .remote-content {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .remote-input {
+            flex: 1;
+            min-width: 200px;
+            padding: 8px 10px;
+            background: var(--background);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--foreground);
+            font-size: 12px;
+        }
+
+        .remote-btn {
+            padding: 8px 12px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--foreground);
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .remote-btn:hover {
+            background: var(--card);
+        }
+
+        /* Delete Confirmation */
+        .delete-modal .modal-body {
+            text-align: center;
+            padding: 30px;
+        }
+
+        .delete-modal .warning-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .delete-modal p {
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .delete-modal .project-name-confirm {
+            font-weight: 600;
+            color: var(--error);
+        }
+
+        /* Full workspace container */
+        .full-workspace {
+            display: flex;
+            flex-direction: column;
+            min-height: 600px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Screen Tabs -->
+    <div class="screen-tabs">
+        <button class="screen-tab active" onclick="showScreen('home')">Home Screen</button>
+        <button class="screen-tab" onclick="showScreen('create-modal')">Create Project Modal</button>
+        <button class="screen-tab" onclick="showScreen('import-modal')">Import Repo Modal</button>
+        <button class="screen-tab" onclick="showScreen('delete-modal')">Delete Confirmation</button>
+        <button class="screen-tab" onclick="showScreen('import-progress')">Import Progress</button>
+        <button class="screen-tab" onclick="showScreen('vision-stage')">Vision Stage</button>
+        <button class="screen-tab" onclick="showScreen('ux-stage')">UX Stage</button>
+        <button class="screen-tab" onclick="showScreen('architecture-stage')">Architecture Stage</button>
+        <button class="screen-tab" onclick="showScreen('build-stage')">Build Stage</button>
+        <button class="screen-tab" onclick="showScreen('completion')">Completion View</button>
+        <button class="screen-tab" onclick="showScreen('history-modal')">Version History</button>
+    </div>
+
+    <!-- Home Screen -->
+    <div id="home" class="screen active">
+        <div class="screen-container">
+            <div class="ascii-banner">
+                <div class="ascii-art">
+   _____ _                 _      _   _       
+  / ____| |               | |    | | | |      
+ | |    | | __ _ _   _  __| | ___| |_| |_ ___ 
+ | |    | |/ _` | | | |/ _` |/ _ \ __| __/ _ \
+ | |____| | (_| | |_| | (_| |  __/ |_| ||  __/
+  \_____|_|\__,_|\__,_|\__,_|\___|\__|\__\___|
+                </div>
+                <p class="banner-subtitle">AI Product Factory</p>
+                <span class="version-label">v0.1.0</span>
+            </div>
+
+            <div class="project-grid">
+                <div class="project-card">
+                    <button class="delete-btn">✕</button>
+                    <div class="project-name">E-Commerce Platform</div>
+                    <div class="stage-pips">
+                        <div class="pip approved"></div>
+                        <div class="pip approved"></div>
+                        <div class="pip active"></div>
+                        <div class="pip"></div>
+                    </div>
+                    <div class="current-stage">Architecture</div>
+                    <div class="last-updated">Updated 2 hours ago</div>
+                </div>
+
+                <div class="project-card">
+                    <button class="delete-btn">✕</button>
+                    <div class="project-name">Task Management App</div>
+                    <div class="stage-pips">
+                        <div class="pip approved"></div>
+                        <div class="pip approved"></div>
+                        <div class="pip approved"></div>
+                        <div class="pip approved"></div>
+                    </div>
+                    <div class="current-stage">Complete</div>
+                    <div class="last-updated">Updated yesterday</div>
+                </div>
+
+                <div class="project-card">
+                    <button class="delete-btn">✕</button>
+                    <div class="project-name">API Gateway Service</div>
+                    <div class="stage-pips">
+                        <div class="pip approved"></div>
+                        <div class="pip active"></div>
+                        <div class="pip"></div>
+                        <div class="pip"></div>
+                    </div>
+                    <div class="current-stage">UX Design</div>
+                    <div class="last-updated">Updated 3 days ago</div>
+                </div>
+
+                <div class="project-card dashed">
+                    <div class="add-icon">+</div>
+                    <div>New Project</div>
+                </div>
+
+                <div class="project-card dashed">
+                    <div class="add-icon">⬇</div>
+                    <div>Import Repo</div>
+                </div>
+            </div>
+
+            <div class="footer">
+                © 2024 Claudette. Built with Claude.
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Project Modal -->
+    <div id="create-modal" class="screen">
+        <div class="modal-overlay" style="position: relative; min-height: 400px;">
+            <div class="modal">
+                <div class="modal-header">Create New Project</div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label class="form-label">Project Name</label>
+                        <input type="text" class="form-input" placeholder="My Awesome Project">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Host Directory Path</label>
+                        <input type="text" class="form-input" placeholder="/Users/dev/projects/my-project">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary">Cancel</button>
+                    <button class="btn btn-primary">Create</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Repo Modal -->
+    <div id="import-modal" class="screen">
+        <div class="modal-overlay" style="position: relative; min-height: 400px;">
+            <div class="modal">
+                <div class="modal-header">Import Repository</div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label class="form-label">Repository Path or Git URL</label>
+                        <input type="text" class="form-input" placeholder="/path/to/repo or https://github.com/user/repo.git">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary">Cancel</button>
+                    <button class="btn btn-primary">Import</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="screen">
+        <div class="modal-overlay" style="position: relative; min-height: 400px;">
+            <div class="modal delete-modal">
+                <div class="modal-header">Delete Project</div>
+                <div class="modal-body">
+                    <div class="warning-icon">⚠</div>
+                    <p>Are you sure you want to delete</p>
+                    <p class="project-name-confirm">"E-Commerce Platform"</p>
+                    <p style="color: var(--muted); font-size: 12px;">This action cannot be undone.</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary">Cancel</button>
+                    <button class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Progress View -->
+    <div id="import-progress" class="screen">
+        <div class="screen-container">
+            <div class="import-progress">
+                <div class="progress-header">
+                    <h2>Importing Repository</h2>
+                    <p>Analyzing codebase and generating artifacts...</p>
+                </div>
+
+                <div class="progress-steps">
+                    <div class="progress-step">
+                        <div class="step-indicator done">✓</div>
+                        <span class="step-label">Architecture Analysis</span>
+                    </div>
+                    <div class="progress-step">
+                        <div class="step-indicator done">✓</div>
+                        <span class="step-label">UX Reverse-Engineering</span>
+                    </div>
+                    <div class="progress-step">
+                        <div class="step-indicator progress">●</div>
+                        <span class="step-label">Architecture Cross-Reference</span>
+                    </div>
+                    <div class="progress-step">
+                        <div class="step-indicator pending">4</div>
+                        <span class="step-label">Vision Synthesis</span>
+                    </div>
+                    <div class="progress-step">
+                        <div class="step-indicator pending">5</div>
+                        <span class="step-label">Build Plan Synthesis</span>
+                    </div>
+                </div>
+
+                <div class="progress-log">
+                    <div class="log-line success">[✓] Scanning directory structure...</div>
+                    <div class="log-line success">[✓] Found 47 source files</div>
+                    <div class="log-line success">[✓] Detected framework: React + TypeScript</div>
+                    <div class="log-line success">[✓] Architecture analysis complete</div>
+                    <div class="log-line success">[✓] Identified 12 UI components</div>
+                    <div class="log-line success">[✓] Mapped 8 user flows</div>
+                    <div class="log-line">[...] Cross-referencing architecture patterns...</div>
+                    <div class="log-line">[...] Validating component dependencies...</div>
+                </div>
+
+                <div style="text-align: center;">
+                    <button class="btn btn-success" disabled>Start Review</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vision Stage -->
+    <div id="vision-stage" class="screen">
+        <div class="screen-container full-workspace">
+            <div class="workspace-header">
+                <button class="back-btn">←</button>
+                <div class="project-info">
+                    <h1>E-Commerce Platform</h1>
+                    <div class="project-meta">v0.1.0 • Author: John Doe</div>
+                </div>
+                <div class="header-actions">
+                    <div class="token-counter">🎟 24.5k tokens</div>
+                    <button class="toggle-btn">⚡ Auto</button>
+                    <button class="btn btn-secondary">History</button>
+                </div>
+            </div>
+
+            <div class="workspace">
+                <div class="sidebar">
+                    <div class="stages-list">
+                        <div class="stage-item active">
+                            <div class="stage-icon active">●</div>
+                            <span class="stage-name">Vision</span>
+                            <span class="stage-tokens">8.2k</span>
+                            <button class="reset-btn">⟳</button>
+                        </div>
+                        <div class="stage-item">
+                            <div class="stage-icon locked">○</div>
+                            <span class="stage-name">UX Design</span>
+                            <span class="stage-tokens">-</span>
+                        </div>
+                        <div class="stage-item">
+                            <div class="stage-icon locked">○</div>
+                            <span class="stage-name">Architecture</span>
+                            <span class="stage-tokens">-</span>
+                        </div>
+                        <div class="stage-item">
+                            <div class="stage-icon locked">○</div>
+                            <span class="stage-name">Build</span>
+                            <span class="stage-tokens">-</span>
+                        </div>
+                    </div>
+                    <div class="sidebar-footer">
+                        <div class="sidebar-brand">Claudette
+v0.1.0</div>
+                    </div>
+                </div>
+
+                <div class="main-content">
+                    <div class="content-tabs">
+                        <button class="content-tab active">Chat</button>
+                        <button class="content-tab">Artifact</button>
+                    </div>
+
+                    <div class="chat-panel">
+                        <div class="chat-messages">
+                            <div class="chat-message">
+                                <div class="message-header">
+                                    <span class="message-role">Vision Advisor</span>
+                                </div>
+                                <div class="message-content">
+                                    Let's start building your product vision! I'll help you define the core purpose, target users, and key value propositions for your e-commerce platform. What problem are you trying to solve for your customers?
+                                </div>
+                            </div>
+
+                            <div class="chat-message">
+                                <div class="message-header">
+                                    <span class="message-role user">You</span>
+                                </div>
+                                <div class="message-content">
+                                    We want to create a marketplace for local artisans to sell handmade goods directly to consumers, with a focus on sustainability and supporting small businesses.
+                                </div>
+                            </div>
+
+                            <div class="chat-message">
+                                <div class="message-header">
+                                    <span class="message-role">Vision Advisor</span>
+                                    <div class="thinking-dots">
+                                        <span></span>
+                                        <span></span>
+                                        <span></span>
+                                    </div>
+                                </div>
+                                <div class="message-content">
+                                    That's a compelling vision! A marketplace connecting local artisans with conscious consumers addresses several important trends...
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="chat-input-area">
+                            <textarea class="chat-input" placeholder="Type your message..." rows="2"></textarea>
+                            <button class="send-btn stop">Stop</button>
+                        </div>
+                    </div>
+
+                    <div class="approve-bar">
+                        <div class="approve-info">Review the vision artifact before approving</div>
+                        <button class="approve-btn" disabled>Approve ✓</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- UX Stage -->
+    <div id="ux-stage" class="screen">
+        <div class="screen-container full-workspace">
+            <div class="workspace-header">
+                <button class="back-btn">←</button>
+                <div class="project-info">
+                    <h1>E-Commerce Platform</h1>
+                    <div class="project-meta">v0.1.0 • Author: John Doe</div>
+                </div>
+                <div class="header-actions">
+                    <div class="token-counter">🎟 52.3k tokens</div>
+                    <button class="toggle-btn active">⚡ Auto</button>
+                    <button class="btn btn-secondary">History</button>
+                </div>
+            </div>
+
+            <div class="workspace">
+                <div class="sidebar">
+                    <div class="stages-list">
+                        <div class="stage-item">
+                            <div class="stage-icon approved">✓</div>
+                            <span class="stage-name">Vision</span>
+                            <span class="stage-tokens">12.4k</span>
+                            <button class="reset-btn">⟳</button>
+                        </div>
+                        <div class="stage-item active">
+                            <div class="stage-icon active">●</div>
+                            <span class="stage-name">UX Design</span>
+                            <span class="stage-tokens">18.7k</span>
+                            <button class="reset-btn">⟳</button>
+                        </div>
+                        <div class="stage-item">
+                            <div class="stage-icon locked">○</div>
+                            <span class="stage-name">Architecture</span>
+                            <span class="stage-tokens">-</span>
+                        </div>
+                        <div class="stage-item">
+                            <div class="stage-icon locked">○</div>
+                            <span class="stage-name">Build</span>
+                            <span class="stage-tokens">-</span>
+                        </div>
+                    </div>
+                    <div class="sidebar-footer">
+                        <div class="sidebar-brand">Claudette
+v0.1.0</div>
+                    </div>
+                </div>
+
+                <div class="main-content">
+                    <div class="info-banner">
+                        ℹ This artifact was auto-generated from your codebase. Review and refine via chat, then approve.
+                    </div>
+
+                    <div class="content-tabs">
+                        <button class="content-tab">Chat</button>
+                        <button class="content-tab">UX Design</button>
+                        <button class="content-tab active">Mock Preview</button>
+                        <div class="tab-actions">
+                            <select class="framework-select">
+                                <option>Shadcn/UI</option>
+                                <option>Tailwind CSS</option>
+                                <option>Bootstrap</option>
+                                <option>Material UI</option>
+                                <option>Vanilla CSS</option>
+                                <option>Other...</option>
+                            </select>
+                            <input type="text" class="form-input" style="width: 200px; padding: 6px 10px; font-size: 12px;" placeholder="Refinement instructions...">
+                            <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;">Generate Mock</button>
+                        </div>
+                    </div>
+
+                    <div class="mock-container" style="flex: 1; display: flex;">
+                        <div class="mock-iframe" style="flex: 1; display: flex; align-items: center; justify-content: center; background: #1a1a1f;">
+                            <div style="text-align: center; color: var(--muted);">
+                                <div style="font-size: 48px; margin-bottom: 16px;">🖼</div>
+                                <div style="font-size: 14px;">HTML Mock Preview</div>
+                                <div style="font-size: 12px; margin-top: 8px;">Generated prototype renders here</div>
+                            </div>
+                        </div>
+
+                        <div class="activity-panel">
+                            <div class="activity-header">
+                                Agent Activity
+                                <div class="thinking-dots" style="margin-left: 8px; display: inline-flex;">
+                                    <span></span>
+                                    <span></span>
+                                    <span></span>
+                                </div>
+                            </div>
+                            <div class="activity-log">
+                                <div>[agent] Analyzing UX requirements...</div>
+                                <div>[agent] Generating component structure...</div>
+                                <div>[agent] Applying Shadcn/UI styles...</div>
+                                <div>[agent] Creating responsive layout...</div>
+                                <div>[agent] Adding placeholder content...</div>
+                                <div style="color: var(--accent);">[stream] Building header component...</div>
+                                <div style="color: var(--accent);">[stream] Adding navigation items...</div>
+                                <div style="color: var(--muted);">...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="approve-bar">
+                        <div class="auto-indicator">⚡ Auto-approve active — will advance automatically</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Architecture Stage -->
+    <div id="architecture-stage" class="screen">
+        <div class="screen-container full-workspace">
+            <div class="workspace-header">
+                <button class="back-btn">←</button>
+                <div class="project-info">
+                    <h1>E-Commerce Platform</h1>
+                    <div class="project-meta">v0.1.0 • Author: John Doe</div>
+                </div>
+                <div class="header-actions">
+                    <div class="token-counter">🎟 89.1k tokens</div>
+                    <button class="toggle-btn">⚡ Auto</button>
+                    <button class="btn btn-secondary">History</button>
+                </div>
+            </div>
+
+            <div class="workspace">
+                <div class="sidebar">
+                    <div class="stages-list">
+                        <div class="stage-item">
+                            <div class="stage-icon approved">✓</div>
+                            <span class="stage-name">Vision</span>
+                            <span class="stage-tokens">12.4k</span>
+                            <button class="reset-btn">⟳</button>
+                        </div>
+                        <div class="stage-item">
+                            <div class="stage-icon approved">✓</div>
+                            <span class="stage-name">UX Design</span>
+                            <span class="stage-tokens">24.2k</span>
+                            <button class="reset-btn">⟳</button>
+                        </div>
+                        <div class="stage-item active">
+                            <div class="stage-icon active">●</div>
+                            <span class="stage-name">Architecture</span>
+                            <span class="stage-tokens">31.8k</span>
+                            <button class="reset-btn">⟳</button>
+                        </div>
+                        <div class="stage-item">
+                            <div class="stage-icon locked">○</div>
+                            <span class="stage-name">Build</span>
+                            <span class="stage-tokens">-</span>
+                        </div>
+                    </div>
+                    <div class="sidebar-footer">
+                        <div class="sidebar-brand">Claudette
+v0.1.0</div>
+                    </div>
+                </div>
+
+                <div class="main-content">
+                    <div class="content-tabs">
+                        <button class="content-tab">Chat</button>
+                        <button class="content-tab active">Artifact</button>
+                    </div>
+
+                    <div class="artifact-panel">
+                        <div class="artifact-content">
+                            <h1>Architecture Document</h1>
+                            
+                            <h2>System Overview</h2>
+                            <p>The E-Commerce Platform follows a modern microservices architecture with a React frontend, Node.js backend services, and PostgreSQL database. The system is designed for horizontal scalability and high availability.</p>
+
+                            <h2>Technology Stack</h2>
+                            <h3>Frontend</h3>
+                            <ul>
+                                <li><strong>React 18</strong> with TypeScript for type safety</li>
+                                <li><strong>TanStack Query</strong> for server state management</li>
+                                <li><strong>Zustand</strong> for client state</li>
+                                <li><strong>Shadcn/UI</strong> component library</li>
+                            </ul>
+
+                            <h3>Backend Services</h3>
+                            <ul>
+                                <li><strong>API Gateway</strong> — Express.js with rate limiting</li>
+                                <li><strong>User Service</strong> — Authentication & profiles</li>
+                                <li><strong>Product Service</strong> — Catalog management</li>
+                                <li><strong>Order Service</strong> — Checkout & fulfillment</li>
+                            </ul>
+
+                            <h2>Data Architecture</h2>
+                            <p>Primary database is PostgreSQL with read replicas for scaling. Redis is used for session management and caching. File storage leverages S3-compatible object storage.</p>
+
+                            <h2>Security Considerations</h2>
+                            <ul>
+                                <li>JWT-based authentication with refresh tokens</li>
+                                <li>RBAC for authorization</li>
+                                <li>Input validation at API boundaries</li>
+                                <li>Encrypted data at rest and in transit</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="approve-bar">
+                        <div class="approve-info">Architecture powered by Claude Opus</div>
+                        <button class="approve-btn">Approve ✓</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Build Stage -->
+    <div id="build-stage" class="screen">
+        <div class="screen-container full-workspace">
+            <div class="workspace-header">
+                <button class="back-btn">←</button>
+                <div class="project-info">
+                    <h1>E-Commerce Platform</h1>
+                    <div class="project-meta">v0.1.0 • Author: John Doe</div>
+                </div>
+                <div class="header-actions">
+                    <div class="token-counter">🎟 156.2k tokens</div>
+                    <button class="toggle-btn">⚡ Auto</button>
+                    <button class="btn btn-secondary">History</button>
+                </div>
+            </div>
+
+            <div class="workspace">
+                <div class="sidebar">
+                    <div class="stages-list">
+                        <div class="stage-item">
+                            <div class="stage-icon approved">✓</div>
+                            <span class="stage-name">Vision</span>
+                            <span class="stage-tokens">12.4k</span>
+                        </div>
+                        <div class="stage-item">
+                            <div class="stage-icon approved">✓</div>
+                            <span class="stage-name">UX Design</span>
+                            <span class="stage-tokens">24.2k</span>
+                        </div>
+                        <div class="stage-item">
+                            <div class="stage-icon approved">✓</div>
+                            <span class="stage-name">Architecture</span>
+                            <span class="stage-tokens">31.8k</span>
+                        </div>
+                        <div class="stage-item active">
+                            <div class="stage-icon active">●</div>
+                            <span class="stage-name">Build</span>
+                            <span class="stage-tokens">67.3k</span>
+                            <button class="reset-btn">⟳</button>
+                        </div>
+                    </div>
+                    <div class="sidebar-footer">
+                        <div class="sidebar-brand">Claudette
+v0.1.0</div>
+                    </div>
+                </div>
+
+                <div class="main-content">
+                    <div class="content-tabs">
+                        <button class="content-tab">Chat</button>
+                        <button class="content-tab">Build Plan</button>
+                        <button class="content-tab active">Execute</button>
+                        <div class="tab-actions">
+                            <button class="beads-btn">Generate Beads</button>
+                        </div>
+                    </div>
+
+                    <div class="execute-container">
+                        <div class="execute-config">
+                            <span class="config-label">Max Parallel Agents:</span>
+                            <input type="number" class="config-input" value="3">
+                            <button class="btn btn-success" style="margin-left: auto;">Execute Beads</button>
+                            <button class="btn btn-danger">Stop</button>
+                        </div>
+
+                        <div class="dag-container">
+                            <div class="dag-graph">
+                                <div class="bead-node done">Setup Project<br><small>✓ Complete</small></div>
+                                <div class="bead-node done">Database Schema<br><small>✓ Complete</small></div>
+                                <div class="bead-node done">User Model<br><small>✓ Complete</small></div>
+                                <div class="bead-node progress">Auth Service<br><small>● In Progress</small></div>
+                                <div class="bead-node progress">Product API<br><small>● In Progress</small></div>
+                                <div class="bead-node ready">Cart Logic<br><small>○ Ready</small></div>
+                                <div class="bead-node ready">Checkout Flow<br><small>○ Ready</small></div>
+                                <div class="bead-node blocked">Payment Integration<br><small>◌ Blocked</small></div>
+                                <div class="bead-node blocked">Order History<br><small>◌ Blocked</small></div>
+                                <div class="bead-node blocked">Email Notifications<br><small>◌ Blocked</small></div>
+                            </div>
+                        </div>
+
+                        <div class="dag-legend">
+                            <div class="legend-item"><div class="legend-dot ready"></div> Ready</div>
+                            <div class="legend-item"><div class="legend-dot progress"></div> In Progress</div>
+                            <div class="legend-item"><div class="legend-dot done"></div> Done</div>
+                            <div class="legend-item"><div class="legend-dot blocked"></div> Blocked</div>
+                            <div style="margin-left: auto;">
+                                <span class="agents-badge">● 2 agents active</span>
+                            </div>
+                        </div>
+
+                        <div class="progress-bar-container">
+                            <div class="progress-bar">
+                                <div class="progress-fill" style="width: 30%;"></div>
+                            </div>
+                            <div class="progress-label">
+                                <span>3 of 10 beads completed</span>
+                                <span>30%</span>
+                            </div>
+                        </div>
+
+                        <div class="execution-log">
+                            <div>[agent-1] Starting Auth Service implementation...</div>
+                            <div>[agent-2] Starting Product API implementation...</div>
+                            <div>[agent-1] Creating JWT middleware...</div>
+                            <div>[agent-2] Defining product routes...</div>
+                            <div style="color: var(--success);">[agent-1] ✓ Auth middleware complete</div>
+                            <div>[agent-1] Implementing login endpoint...</div>
+                            <div>[agent-2] Adding pagination support...</div>
+                        </div>
+                    </div>
+
+                    <div class="approve-bar">
+                        <div class="approve-info">Execution in progress — complete all beads to approve</div>
+                        <button class="approve-btn" disabled>Approve ✓</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Completion View -->
+    <div id="completion" class="screen">
+        <div class="screen-container">
+            <div class="workspace-header">
+                <button class="back-btn">←</button>
+                <div class="project-info">
+                    <h1>E-Commerce Platform</h1>
+                    <div class="project-meta">v0.1.0 • Author: John Doe</div>
+                </div>
+                <div class="header-actions">
+                    <div class="token-counter">🎟 234.8k tokens</div>
+                    <button class="btn btn-secondary">History</button>
+                </div>
+            </div>
+
+            <div class="completion-container">
+                <div class="completion-left">
+                    <div class="completion-icon">✓</div>
+                    <h2 class="completion-title">Build Complete!</h2>
+                    <p class="completion-subtitle">Your e-commerce platform has been successfully generated.</p>
+
+                    <div class="artifacts-list">
+                        <h3>Approved Artifacts</h3>
+                        <a class="artifact-link">📄 Vision Document</a>
+                        <a class="artifact-link">🎨 UX Design</a>
+                        <a class="artifact-link">🏗 Architecture</a>
+                        <a class="artifact-link">📋 Build Plan</a>
+                    </div>
+
+                    <div class="enhance-section">
+                        <h3>Enhancement Cycle</h3>
+                        <textarea class="enhance-textarea" placeholder="Describe new features or improvements..."></textarea>
+                        
+                        <div class="version-bump">
+                            <label class="version-option">
+                                <input type="radio" name="version" checked> Patch (0.1.1)
+                            </label>
+                            <label class="version-option">
+                                <input type="radio" name="version"> Minor (0.2.0)
+                            </label>
+                            <label class="version-option">
+                                <input type="radio" name="version"> Major (1.0.0)
+                            </label>
+                        </div>
+
+                        <div class="enhance-actions">
+                            <button class="btn btn-primary">Start Enhancement</button>
+                            <button class="btn btn-secondary">Quick Enhance</button>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-secondary" style="width: 100%;">Start New Project</button>
+                </div>
+
+                <div class="completion-right">
+                    <div class="summary-content">
+                        <h2>Project Summary</h2>
+                        <p>The E-Commerce Platform is a full-stack marketplace application connecting local artisans with conscious consumers. The platform emphasizes sustainability and supports small businesses.</p>
+                        
+                        <p><strong>Key Features Implemented:</strong></p>
+                        <ul>
+                            <li>User authentication with JWT tokens</li>
+                            <li>Product catalog with search and filtering</li>
+                            <li>Shopping cart with persistent state</li>
+                            <li>Stripe payment integration</li>
+                            <li>Order management and history</li>
+                            <li>Email notifications for order updates</li>
+                        </ul>
+
+                        <p><strong>Suggested Enhancements:</strong></p>
+                        <ul>
+                            <li>Add social login (Google, Facebook)</li>
+                            <li>Implement wishlist functionality</li>
+                            <li>Add product reviews and ratings</li>
+                            <li>Create seller dashboard</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Version History Modal -->
+    <div id="history-modal" class="screen">
+        <div class="modal-overlay" style="position: relative; min-height: 600px;">
+            <div class="modal history-modal">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>Version History</span>
+                    <button class="btn btn-secondary" style="padding: 4px 8px;">✕</button>
+                </div>
+
+                <div class="dirty-banner">
+                    <span>⚠ You have uncommitted changes</span>
+                    <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;">Discard</button>
+                </div>
+
+                <div class="history-body">
+                    <div class="commits-list">
+                        <div class="commit-item">
+                            <span class="commit-hash">a3f2b1c</span>
+                            <div class="commit-info">
+                                <div class="commit-message">Approved Architecture stage</div>
+                                <div class="commit-meta">John Doe • 2 hours ago</div>
+                                <div class="commit-tags">
+                                    <span class="tag-badge">architecture-approved</span>
+                                </div>
+                            </div>
+                            <div class="commit-actions">
+                                <button class="reset-commit-btn">Reset to</button>
+                            </div>
+                        </div>
+
+                        <div class="commit-item">
+                            <span class="commit-hash">8d4e2f9</span>
+                            <div class="commit-info">
+                                <div class="commit-message">Approved UX Design stage</div>
+                                <div class="commit-meta">John Doe • 5 hours ago</div>
+                                <div class="commit-tags">
+                                    <span class="tag-badge">ux-approved</span>
+                                </div>
+                            </div>
+                            <div class="commit-actions">
+                                <button class="reset-commit-btn">Reset to</button>
+                            </div>
+                        </div>
+
+                        <div class="commit-item">
+                            <span class="commit-hash">f1c7a3b</span>
+                            <div class="commit-info">
+                                <div class="commit-message">Approved Vision stage</div>
+                                <div class="commit-meta">John Doe • Yesterday</div>
+                                <div class="commit-tags">
+                                    <span class="tag-badge">vision-approved</span>
+                                </div>
+                            </div>
+                            <div class="commit-actions">
+                                <button class="reset-commit-btn">Reset to</button>
+                            </div>
+                        </div>
+
+                        <div class="commit-item">
+                            <span class="commit-hash">2b9d4e1</span>
+                            <div class="commit-info">
+                                <div class="commit-message">Initial project setup</div>
+                                <div class="commit-meta">John Doe • 2 days ago</div>
+                            </div>
+                            <div class="commit-actions">
+                                <button class="reset-commit-btn">Reset to</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="remote-section">
+                        <div class="remote-header">
+                            <h4>
+                                Remote Settings
+                                <span class="remote-badge">remote set</span>
+                            </h4>
+                            <span>▼</span>
+                        </div>
+                        <div class="remote-content">
+                            <input type="text" class="remote-input" value="https://github.com/johndoe/ecommerce-platform.git">
+                            <button class="remote-btn">Set</button>
+                            <button class="remote-btn">Remove</button>
+                            <button class="remote-btn">Push</button>
+                            <button class="remote-btn">Pull</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showScreen(screenId) {
+            // Hide all screens
+            document.querySelectorAll('.screen').forEach(screen => {
+                screen.classList.remove('active');
+            });
+            
+            // Deactivate all tabs
+            document.querySelectorAll('.screen-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected screen
+            document.getElementById(screenId).classList.add('active');
+            
+            // Activate corresponding tab
+            event.target.classList.add('active');
+        }
+    </script>
+</body>
+</html>

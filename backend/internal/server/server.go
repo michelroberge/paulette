@@ -110,6 +110,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/stages/build/beads/watch", bh.Watch)
 		r.Post("/{id}/stages/build/beads/generate", bh.Generate)
 		r.Post("/{id}/stages/build/beads/execute", bh.Execute)
+		r.Get("/{id}/stages/build/beads/{beadId}", bh.GetDetail)
+		r.Patch("/{id}/stages/build/beads/{beadId}", bh.UpdateBead)
+		r.Post("/{id}/stages/build/beads/{beadId}/control", bh.ControlBead)
+		r.Post("/{id}/stages/build/beads/{beadId}/chat", bh.BeadChat)
 
 		r.Post("/{id}/stages/{stage}/reset", rh.Reset)
 

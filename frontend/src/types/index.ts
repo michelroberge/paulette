@@ -80,6 +80,12 @@ export interface BeadGraph {
   beads: Bead[];
 }
 
+export interface BeadDetail extends Bead {
+  notes: string;
+  executionContent: string;
+  chatMessages: Message[];
+}
+
 export interface BuildStreamEvent {
   type: 'chunk' | 'bead_created' | 'bead_update' | 'log' | 'done' | 'error' | 'plan_limit';
   content: string;

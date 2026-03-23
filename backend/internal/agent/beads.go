@@ -250,6 +250,7 @@ Your approach MUST be:
 		"--verbose",
 		"--model", beadExecutionModel(bead.Tags),
 		"--allowedTools", "Write,Edit,Bash",
+		"--permission-mode", "acceptEdits",
 		"--system-prompt", systemPrompt.String(),
 	)
 	cmd.Stdin = strings.NewReader(userMsg.String())
@@ -371,6 +372,7 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 		"--verbose",
 		"--model", "claude-sonnet-4-6",
 		"--allowedTools", "Bash",
+		"--permission-mode", "acceptEdits",
 		"--system-prompt", devilAdvocateSystemPrompt,
 	)
 	cmd.Stdin = strings.NewReader(userMsg.String())

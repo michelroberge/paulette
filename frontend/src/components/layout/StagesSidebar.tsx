@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { PipelineState, StageName } from '../../types';
+import { getConfig } from '../../api/config';
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -31,6 +32,15 @@ const statusIcons: Record<string, string> = {
 
 export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset, stageTokens }: Props) {
   const [confirmStage, setConfirmStage] = useState<StageName | null>(null);
+  const [appVersion, setAppVersion] = useState('');
+  const [appAuthor, setAppAuthor] = useState('');
+
+  useEffect(() => {
+    getConfig().then(c => {
+      setAppVersion(c.version);
+      setAppAuthor(c.author);
+    }).catch(console.error);
+  }, []);
 
   if (!pipeline) return null;
 
@@ -94,8 +104,8 @@ export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset,
 <span className="bead bead-purple">◉</span>
 <span className="bead bead-green">●</span>
           </pre>
-          <div className="sidebar-brand-name">Claudette <span>v1.0</span></div>
-          <div className="sidebar-copyright">&copy; 2025 Michel Roberge</div>
+          <div className="sidebar-brand-name">Claudette {appVersion && <span>v{appVersion}</span>}</div>
+          <div className="sidebar-copyright">&copy; {new Date().getFullYear()} {appAuthor || 'Michel Roberge'}</div>
         </div>
       </nav>
 

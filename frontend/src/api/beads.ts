@@ -1,5 +1,5 @@
 import { apiFetch, apiStreamUrl } from './client';
-import type { BeadGraph, BuildStreamEvent } from '../types';
+import type { BeadGraph, BeadDetail, BuildStreamEvent, StreamEvent } from '../types';
 
 export function getBeadGraph(projectId: string): Promise<BeadGraph> {
   return apiFetch<BeadGraph>(`/projects/${projectId}/stages/build/beads`);
@@ -132,6 +132,39 @@ export function executeBeads(
     apiStreamUrl(`/projects/${projectId}/stages/build/beads/execute`),
     { maxParallel },
     onEvent,
+    signal,
+  );
+}
+
+export function getBeadDetail(projectId: string, beadId: string): Promise<BeadDetail> {
+  return apiFetch<BeadDetail>(`/projects/${projectId}/stages/build/beads/${beadId}`);
+}
+
+export function updateBead(projectId: string, beadId: string, updates: { description?: string; notes?: string }): Promise<void> {
+  return apiFetch(`/projects/${projectId}/stages/build/beads/${beadId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+}
+
+export function controlBead(projectId: string, beadId: string, action: 'pause' | 'restart'): Promise<void> {
+  return apiFetch(`/projects/${projectId}/stages/build/beads/${beadId}/control`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  });
+}
+
+export function sendBeadChat(
+  projectId: string,
+  beadId: string,
+  message: string,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamBeads(
+    apiStreamUrl(`/projects/${projectId}/stages/build/beads/${beadId}/chat`),
+    { message },
+    onEvent as (event: BuildStreamEvent) => void,
     signal,
   );
 }

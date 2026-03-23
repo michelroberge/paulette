@@ -29,7 +29,14 @@ Screen navigation:
 - The active tab should be visually highlighted
 - If there is only one screen, no tab bar is needed — just render it directly
 
-Output ONLY the HTML file. Start with <!DOCTYPE html> and end with </html>. Do not include any explanation, markdown, or code fences.`
+CRITICAL OUTPUT RULES:
+- Your ENTIRE response must be ONLY the HTML file — nothing else
+- Start your response with <!DOCTYPE html> as the very first characters
+- End your response with </html> as the very last characters
+- Do NOT include any explanation, summary, preamble, markdown, code fences, or commentary before or after the HTML
+- Do NOT ask for permission, confirmation, or offer to save the file
+- Do NOT describe what the mockup contains
+- Just output the raw HTML. Nothing else.`
 
 var frameworkInstructions = map[model.UXFramework]string{
 	model.FrameworkTailwind: `Framework: Tailwind CSS
@@ -84,7 +91,91 @@ func buildMockSystemPrompt(cfg *model.FrameworkConfig) string {
 	return fmt.Sprintf(mockSystemPromptBase, instructions)
 }
 
+const maxMockRetries = 2
+
+const mockRetryPrompt = `Your previous response was NOT valid HTML. You returned conversational text instead of raw HTML.
+
+I need you to output ONLY the HTML mockup. Your response must:
+- Start with <!DOCTYPE html> as the very first characters
+- End with </html> as the very last characters
+- Contain NO explanation, summary, or commentary
+
+Here is your previous (wrong) response for reference — do NOT repeat this mistake:
+---
+%s
+---
+
+Now output the complete HTML wireframe mockup. RAW HTML ONLY.`
+
+// looksLikeHTML checks whether the response starts with a valid HTML doctype or tag.
+func looksLikeHTML(s string) bool {
+	trimmed := strings.TrimSpace(s)
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "<!doctype html") || strings.HasPrefix(lower, "<html")
+}
+
+// invokeMockClaude runs a single Claude invocation and collects streamed events.
+// It sends chunks to the provided channel and returns the full response text.
+func invokeMockClaude(ctx context.Context, systemPrompt, userPrompt string, ch chan<- StreamEvent) (string, error) {
+	cmd := exec.CommandContext(ctx, "claude",
+		"--print",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--system-prompt", systemPrompt,
+	)
+	cmd.Stdin = strings.NewReader(userPrompt)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start claude: %w", err)
+	}
+	defer cmd.Wait()
+
+	var fullResponse strings.Builder
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var event claudeEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+
+		switch event.Type {
+		case "assistant":
+			if event.Message != nil {
+				for _, c := range event.Message.Content {
+					if c.Type == "text" && c.Text != "" {
+						fullResponse.WriteString(c.Text)
+						ch <- StreamEvent{Type: "chunk", Content: c.Text}
+					}
+				}
+			}
+		case "result":
+			if event.Usage != nil {
+				ch <- StreamEvent{Type: "tokens", Content: strconv.Itoa(event.Usage.OutputTokens)}
+			}
+			if fullResponse.Len() == 0 && event.Result != "" {
+				fullResponse.WriteString(event.Result)
+				ch <- StreamEvent{Type: "chunk", Content: event.Result}
+			}
+		}
+	}
+
+	return fullResponse.String(), nil
+}
+
 // GenerateMock streams an HTML wireframe mockup from Claude based on UX artifact content.
+// If Claude returns conversational text instead of raw HTML, it retries up to maxMockRetries
+// times with a correction prompt.
 func GenerateMock(ctx context.Context, uxArtifact string, refinement string, frameworkCfg *model.FrameworkConfig) (<-chan StreamEvent, error) {
 	var prompt strings.Builder
 	prompt.WriteString("UX Design Document:\n---\n")
@@ -97,65 +188,43 @@ func GenerateMock(ctx context.Context, uxArtifact string, refinement string, fra
 
 	systemPrompt := buildMockSystemPrompt(frameworkCfg)
 
-	cmd := exec.CommandContext(ctx, "claude",
-		"--print",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--system-prompt", systemPrompt,
-	)
-	cmd.Stdin = strings.NewReader(prompt.String())
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start claude: %w", err)
-	}
-
 	ch := make(chan StreamEvent, 64)
 
 	go func() {
 		defer close(ch)
-		defer cmd.Wait()
 
-		var fullResponse strings.Builder
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		userPrompt := prompt.String()
 
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
+		for attempt := 0; attempt <= maxMockRetries; attempt++ {
+			if ctx.Err() != nil {
+				return
 			}
 
-			var event claudeEvent
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				continue
+			response, err := invokeMockClaude(ctx, systemPrompt, userPrompt, ch)
+			if err != nil {
+				ch <- StreamEvent{Type: "done", Content: ""}
+				return
 			}
 
-			switch event.Type {
-			case "assistant":
-				if event.Message != nil {
-					for _, c := range event.Message.Content {
-						if c.Type == "text" && c.Text != "" {
-							fullResponse.WriteString(c.Text)
-							ch <- StreamEvent{Type: "chunk", Content: c.Text}
-						}
-					}
+			if looksLikeHTML(response) {
+				ch <- StreamEvent{Type: "done", Content: response}
+				return
+			}
+
+			// Response was not HTML — retry with correction prompt
+			if attempt < maxMockRetries {
+				// Truncate the bad response for the retry prompt (keep first 500 chars)
+				snippet := response
+				if len(snippet) > 500 {
+					snippet = snippet[:500] + "..."
 				}
-			case "result":
-				if event.Usage != nil {
-					ch <- StreamEvent{Type: "tokens", Content: strconv.Itoa(event.Usage.OutputTokens)}
-				}
-				if fullResponse.Len() == 0 && event.Result != "" {
-					fullResponse.WriteString(event.Result)
-					ch <- StreamEvent{Type: "chunk", Content: event.Result}
-				}
+				userPrompt = fmt.Sprintf(mockRetryPrompt, snippet)
+				ch <- StreamEvent{Type: "chunk", Content: "\n\n[Response was not valid HTML — retrying...]\n\n"}
+			} else {
+				// Exhausted retries — return whatever we got
+				ch <- StreamEvent{Type: "done", Content: response}
 			}
 		}
-
-		ch <- StreamEvent{Type: "done", Content: fullResponse.String()}
 	}()
 
 	return ch, nil

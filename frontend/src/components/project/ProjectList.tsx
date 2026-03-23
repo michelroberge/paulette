@@ -45,10 +45,16 @@ export function ProjectList({ onSelect }: Props) {
   const [importVersion, setImportVersion] = useState('1.0.0');
   const [importing, setImporting] = useState(false);
   const [reposPath, setReposPath] = useState('');
+  const [appVersion, setAppVersion] = useState('');
+  const [appAuthor, setAppAuthor] = useState('');
 
   useEffect(() => {
     listProjects().then(setProjects).catch(console.error);
-    getConfig().then(c => setReposPath(c.reposPath)).catch(console.error);
+    getConfig().then(c => {
+      setReposPath(c.reposPath);
+      setAppVersion(c.version);
+      setAppAuthor(c.author);
+    }).catch(console.error);
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -125,7 +131,7 @@ export function ProjectList({ onSelect }: Props) {
         <div className="claudette-title-block">
           <h1>Claudette</h1>
           <span className="claudette-subtitle">AI App Factory</span>
-          <span className="claudette-version">v1.0</span>
+          <span className="claudette-version">{appVersion ? `v${appVersion}` : ''}</span>
         </div>
       </div>
       <p>Select a project or create a new one.</p>
@@ -250,7 +256,7 @@ export function ProjectList({ onSelect }: Props) {
       )}
 
       <footer className="copyright">
-        &copy; {new Date().getFullYear()} Michel Roberge. All rights reserved.
+        &copy; {new Date().getFullYear()} {appAuthor || 'Michel Roberge'}. All rights reserved.
       </footer>
     </div>
   );

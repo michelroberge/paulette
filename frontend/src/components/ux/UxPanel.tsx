@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { useMock } from '../../hooks/useMock';
 import { getArtifact } from '../../api/artifacts';
 import { FrameworkSelector } from './FrameworkSelector';
+import { BuildingAnimation } from './BuildingAnimation';
 
 interface Props {
   projectId: string;
@@ -14,9 +15,10 @@ interface Props {
   onMockTokens?: (n: number) => void;
   autoGenerate?: boolean;
   onMockComplete?: () => void;
+  onMockLoaded?: () => void;
 }
 
-export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hidden, onMockTokens, autoGenerate, onMockComplete }: Props) {
+export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hidden, onMockTokens, autoGenerate, onMockComplete, onMockLoaded }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [refinement, setRefinement] = useState('');
@@ -55,6 +57,13 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
     }
   }, [streamingText]);
 
+
+  // Notify parent when mock already exists (e.g. returning to UX stage)
+  useEffect(() => {
+    if (loaded && html) {
+      onMockLoaded?.();
+    }
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-generate mock in autonomous mode
   useEffect(() => {
@@ -158,9 +167,7 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
               )}
 
               {generating && !html && (
-                <div className="artifact-preview empty">
-                  <p>Generating wireframes...</p>
-                </div>
+                <BuildingAnimation />
               )}
             </div>
 
