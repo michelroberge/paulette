@@ -4,7 +4,7 @@
   "author": "Michel Roberge",
   "version": "0.1.0",
   "hostDir": "/Users/michelroberge/dev/claudette",
-  "currentStage": "build",
+  "currentStage": "complete",
   "iteration": 1,
   "imported": true,
   "summaryReady": false,
@@ -13,5 +13,5 @@
     "ux": 62927
   },
   "createdAt": "2026-03-23T18:48:52.916017-04:00",
-  "updatedAt": "2026-03-23T19:40:37.905816-04:00"
+  "updatedAt": "2026-03-23T19:43:47.63747-04:00"
 }

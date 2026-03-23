@@ -30,18 +30,21 @@ interface StageTab {
   label: string;
 }
 
-function getTabsForStage(stage: StageName | null): StageTab[] {
+function getTabsForStage(stage: StageName | null, imported?: boolean): StageTab[] {
   if (!stage || stage === 'complete') return [];
   if (stage === 'ux') return [
     { id: 'chat', label: 'Chat' },
     { id: 'artifact', label: 'UX Design' },
     { id: 'mock', label: 'Mock Preview' },
   ];
-  if (stage === 'build') return [
-    { id: 'chat', label: 'Chat' },
-    { id: 'artifact', label: 'Build Plan' },
-    { id: 'execute', label: 'Execute' },
-  ];
+  if (stage === 'build') {
+    const tabs: StageTab[] = [
+      { id: 'chat', label: 'Chat' },
+      { id: 'artifact', label: 'Build Plan' },
+    ];
+    if (!imported) tabs.push({ id: 'execute', label: 'Execute' });
+    return tabs;
+  }
   return [
     { id: 'chat', label: 'Chat' },
     { id: 'artifact', label: 'Artifact' },
@@ -264,7 +267,7 @@ function App() {
 
   const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
   const isActiveStage = currentStageInfo?.status === 'active';
-  const tabs = getTabsForStage(selectedStage);
+  const tabs = getTabsForStage(selectedStage, project?.imported);
 
   return (
     <div className="app-shell">
@@ -372,7 +375,7 @@ function App() {
                   ) : (
                     <ApproveButton
                       projectId={project.id}
-                      disabled={streaming || (selectedStage === 'ux' && !mockGenerated) || (selectedStage === 'build' && !buildComplete)}
+                      disabled={streaming || (selectedStage === 'ux' && !mockGenerated) || (selectedStage === 'build' && !buildComplete && !project?.imported)}
                       onApproved={handleApproved}
                     />
                   )}
