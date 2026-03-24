@@ -9,9 +9,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/pipeline"
-	"github.com/michelroberge/claudine/backend/internal/repository"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/repository"
 )
 
 type ResetHandler struct {
@@ -54,22 +54,22 @@ func (h *ResetHandler) Reset(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		// Remove chat history
-		chatFile := filepath.Join(project.HostDir, ".claudine", string(s), "chat-history.json")
+		chatFile := filepath.Join(project.HostDir, ".paulette", string(s), "chat-history.json")
 		os.Remove(chatFile)
 
 		// Remove artifact
-		artifactFile := filepath.Join(project.HostDir, ".claudine", string(s), string(s)+".md")
+		artifactFile := filepath.Join(project.HostDir, ".paulette", string(s), string(s)+".md")
 		os.Remove(artifactFile)
 
 		// Remove UX mock and framework config if applicable
 		if s == model.StageUX {
-			os.Remove(filepath.Join(project.HostDir, ".claudine", "ux", "mock.html"))
-			os.Remove(filepath.Join(project.HostDir, ".claudine", "ux", "framework.json"))
+			os.Remove(filepath.Join(project.HostDir, ".paulette", "ux", "mock.html"))
+			os.Remove(filepath.Join(project.HostDir, ".paulette", "ux", "framework.json"))
 		}
 
 		// Remove bead graph if applicable
 		if s == model.StageBuild {
-			beadsFile := filepath.Join(project.HostDir, ".claudine", "build", "beads-graph.json")
+			beadsFile := filepath.Join(project.HostDir, ".paulette", "build", "beads-graph.json")
 			os.Remove(beadsFile)
 		}
 	}

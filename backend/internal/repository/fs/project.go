@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
-const factoryDir = ".claudine"
+const factoryDir = ".paulette"
 
 type ProjectRepo struct{}
 

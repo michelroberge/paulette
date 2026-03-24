@@ -1,18 +1,18 @@
-# claudine
+# paulette
 
 **An AI-powered application generator built on Claude.**
 
 ## The Name
 
-claudine was a colleague from my early career who specialized in mainframe development. She was thorough, understood things quickly, and brought light to everyone's days. She had a rare talent for working with you to solve any problem — professional or personal.
+paulette was a colleague from my early career who specialized in mainframe development. She was thorough, understood things quickly, and brought light to everyone's days. She had a rare talent for working with you to solve any problem — professional or personal.
 
-I have no idea where claudine is today, but I'd like to think she's doing well and kicking. She's that kind of woman.
+I have no idea where paulette is today, but I'd like to think she's doing well and kicking. She's that kind of woman.
 
 Naming this tool after her felt right: put some light on Claude.
 
-## Who Is *this* claudine?
+## Who Is *this* paulette?
 
-claudine is an application generator that guides you through a structured development pipeline using conversational AI. Each stage has a dedicated expert you interact with to produce working artifacts.
+paulette is an application generator that guides you through a structured development pipeline using conversational AI. Each stage has a dedicated expert you interact with to produce working artifacts.
 
 **The flow:** Vision &rarr; UX Design &rarr; Architecture &rarr; Build &rarr; Enhance &rarr; Repeat
 
@@ -44,7 +44,7 @@ When all beads are complete, your app is done.
 
 ### Autonomous Mode
 
-Toggle autonomous mode and claudine builds your entire app end-to-end. It can finish a build cycle, review the result, and feed recommendations into an enhancement loop for continuous improvement.
+Toggle autonomous mode and paulette builds your entire app end-to-end. It can finish a build cycle, review the result, and feed recommendations into an enhancement loop for continuous improvement.
 
 ## Tech Stack
 
@@ -68,7 +68,7 @@ Toggle autonomous mode and claudine builds your entire app end-to-end. It can fi
 
 ```bash
 make build
-./claudine
+./paulette
 ```
 
 This builds the React frontend, embeds it into the Go binary, and produces a single executable that serves everything on port 8080.
@@ -78,10 +78,10 @@ This builds the React frontend, embeds it into the Go binary, and produces a sin
 After building, run the init command to verify and install dependencies:
 
 ```bash
-./claudine init
+./paulette init
 ```
 
-This checks that `bd`, `claude`, and `rtk` are available, and offers to install any that are missing. Both `bd` and `claude` are required — claudine cannot run without them.
+This checks that `bd`, `claude`, and `rtk` are available, and offers to install any that are missing. Both `bd` and `claude` are required — paulette cannot run without them.
 
 ### Development
 
@@ -98,7 +98,7 @@ cd frontend && npm install && npm run dev
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `8080` | Server listen port |
-| `REGISTRY_PATH` | `~/.claudine` | Where project data is stored |
+| `REGISTRY_PATH` | `~/.paulette` | Where project data is stored |
 | `ANTHROPIC_API_KEY` | — | Required for AI features |
 
 ## Project Structure

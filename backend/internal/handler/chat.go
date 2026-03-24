@@ -12,12 +12,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/agent"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/pipeline"
-	"github.com/michelroberge/claudine/backend/internal/repository"
-	fsrepo "github.com/michelroberge/claudine/backend/internal/repository/fs"
-	"github.com/michelroberge/claudine/backend/internal/stream"
+	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/repository"
+	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
+	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
 // stageModels maps each pipeline stage to the Claude model to use for chat.
@@ -123,15 +123,15 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	var enhCtx *agent.EnhancementContext
 	if project.EnhancementVision != "" {
 		enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-		// Load summary from current .claudine (it was archived but also kept)
-		summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
+		// Load summary from current .paulette (it was archived but also kept)
+		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 		if data, err := os.ReadFile(summaryPath); err == nil {
 			enhCtx.Summary = string(data)
 		}
 		// Load prior iteration's artifact for this stage
 		prevVersion := findPriorIterationVersion(project.HostDir)
 		if prevVersion != "" {
-			priorArtifactPath := filepath.Join(project.HostDir, ".claudine", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
+			priorArtifactPath := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
 			if data, err := os.ReadFile(priorArtifactPath); err == nil {
 				enhCtx.PriorArtifact = string(data)
 			}
@@ -222,7 +222,7 @@ func sseWrite(w http.ResponseWriter, flusher http.Flusher, event agent.StreamEve
 
 // findPriorIterationVersion finds the most recent archived iteration version.
 func findPriorIterationVersion(hostDir string) string {
-	iterDir := filepath.Join(hostDir, ".claudine", "iterations")
+	iterDir := filepath.Join(hostDir, ".paulette", "iterations")
 	entries, err := os.ReadDir(iterDir)
 	if err != nil {
 		return ""

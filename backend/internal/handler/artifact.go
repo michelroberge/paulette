@@ -6,8 +6,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/repository"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/repository"
 )
 
 type ArtifactHandler struct {

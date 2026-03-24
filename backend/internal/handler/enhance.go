@@ -12,10 +12,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/git"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/pipeline"
-	"github.com/michelroberge/claudine/backend/internal/repository"
+	"github.com/michelroberge/paulette/backend/internal/git"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/repository"
 )
 
 type EnhanceHandler struct {
@@ -72,14 +72,14 @@ func (h *EnhanceHandler) Enhance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify summary exists
-	summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
+	summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 	if _, err := os.Stat(summaryPath); os.IsNotExist(err) {
 		http.Error(w, "summary.md not found — complete the pipeline first", http.StatusBadRequest)
 		return
 	}
 
 	// Archive current iteration
-	archiveDir := filepath.Join(project.HostDir, ".claudine", "iterations", "v"+project.Version)
+	archiveDir := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+project.Version)
 	if err := archiveIteration(project.HostDir, archiveDir); err != nil {
 		http.Error(w, "failed to archive iteration: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -97,7 +97,7 @@ func (h *EnhanceHandler) Enhance(w http.ResponseWriter, r *http.Request) {
 		if s == model.StageComplete {
 			break
 		}
-		stageDir := filepath.Join(project.HostDir, ".claudine", string(s))
+		stageDir := filepath.Join(project.HostDir, ".paulette", string(s))
 		chatFile := filepath.Join(stageDir, "chat-history.json")
 		artifactFile := filepath.Join(stageDir, string(s)+".md")
 		os.Remove(chatFile)
@@ -153,7 +153,7 @@ func archiveIteration(hostDir, archiveDir string) error {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
 
-	factoryBase := filepath.Join(hostDir, ".claudine")
+	factoryBase := filepath.Join(hostDir, ".paulette")
 
 	// Copy summary.md
 	summaryPath := filepath.Join(factoryBase, "summary.md")

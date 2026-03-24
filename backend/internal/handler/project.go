@@ -12,9 +12,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/michelroberge/claudine/backend/internal/git"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/repository"
+	"github.com/michelroberge/paulette/backend/internal/git"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/repository"
 )
 
 type ProjectHandler struct {
@@ -97,7 +97,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Initialize .claudine directory structure
+	// Initialize .paulette directory structure
 	if err := h.projectRepo.Init(req.HostDir); err != nil {
 		http.Error(w, "failed to init project directory: "+err.Error(), http.StatusInternalServerError)
 		return

@@ -12,11 +12,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/michelroberge/claudine/backend/internal/agent"
-	"github.com/michelroberge/claudine/backend/internal/git"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/repository"
-	"github.com/michelroberge/claudine/backend/internal/stream"
+	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/git"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/repository"
+	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
 type ImportHandler struct {
@@ -95,7 +95,7 @@ func (h *ImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		version = "1.0.0"
 	}
 
-	// Initialize .claudine directory structure
+	// Initialize .paulette directory structure
 	if err := h.projectRepo.Init(req.HostDir); err != nil {
 		http.Error(w, "failed to init project directory: "+err.Error(), http.StatusInternalServerError)
 		return

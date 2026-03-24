@@ -9,14 +9,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/agent"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/repository"
-	fsrepo "github.com/michelroberge/claudine/backend/internal/repository/fs"
-	"github.com/michelroberge/claudine/backend/internal/stream"
+	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/repository"
+	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
+	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
-const mockRelPath = ".claudine/ux/mock.html"
+const mockRelPath = ".paulette/ux/mock.html"
 
 type MockHandler struct {
 	registry     repository.RegistryRepo

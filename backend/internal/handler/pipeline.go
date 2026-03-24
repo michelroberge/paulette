@@ -12,13 +12,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/agent"
-	"github.com/michelroberge/claudine/backend/internal/git"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/pipeline"
-	"github.com/michelroberge/claudine/backend/internal/repository"
-	fsrepo "github.com/michelroberge/claudine/backend/internal/repository/fs"
-	"github.com/michelroberge/claudine/backend/internal/stream"
+	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/git"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/repository"
+	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
+	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
 type PipelineHandler struct {
@@ -66,7 +66,7 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check artifact exists for current stage (check both .claudine and docs/)
+	// Check artifact exists for current stage (check both .paulette and docs/)
 	artifactContent, err := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, project.CurrentStage)
 	if err != nil {
 		http.Error(w, "failed to check artifact: "+err.Error(), http.StatusInternalServerError)
@@ -109,20 +109,20 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Promote artifact from .claudine to docs and remove from .claudine
+	// Promote artifact from .paulette to docs and remove from .paulette
 	if artifact, readErr := h.artifactRepo.Read(project.HostDir, previousStage); readErr == nil && artifact != "" {
 		if docErr := fsrepo.WriteStageDoc(project.HostDir, project.Version, previousStage, artifact); docErr != nil {
 			log.Printf("docs promotion failed for %s: %v", previousStage, docErr)
 		} else {
-			// Remove the artifact from .claudine now that it lives in docs
-			aiFactoryPath := filepath.Join(project.HostDir, ".claudine", string(previousStage), string(previousStage)+".md")
+			// Remove the artifact from .paulette now that it lives in docs
+			aiFactoryPath := filepath.Join(project.HostDir, ".paulette", string(previousStage), string(previousStage)+".md")
 			if rmErr := os.Remove(aiFactoryPath); rmErr != nil {
-				log.Printf("failed to remove .claudine artifact %s: %v", aiFactoryPath, rmErr)
+				log.Printf("failed to remove .paulette artifact %s: %v", aiFactoryPath, rmErr)
 			}
 		}
 	}
 
-	// Git commit the promoted artifact and the removal from .claudine
+	// Git commit the promoted artifact and the removal from .paulette
 	commitMsg := fmt.Sprintf("approve(%s): promote artifact to docs", previousStage)
 	if err := h.git.AddAllAndCommit(project.HostDir, commitMsg); err != nil {
 		log.Printf("git commit failed for %s: %v", previousStage, err)
@@ -184,7 +184,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 			return
 		}
 
-		summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
+		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 		if err := os.WriteFile(summaryPath, []byte(summary), 0644); err != nil {
 			log.Printf("failed to write summary: %v", err)
 			run.Emit(agent.StreamEvent{Type: "error", Content: "failed to write summary"})
@@ -203,7 +203,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		}
 
 		commitMsg := fmt.Sprintf("complete(v%s): iteration summary", project.Version)
-		if err := h.git.AddAndCommit(project.HostDir, []string{".claudine/summary.md"}, commitMsg); err != nil {
+		if err := h.git.AddAndCommit(project.HostDir, []string{".paulette/summary.md"}, commitMsg); err != nil {
 			log.Printf("git commit summary failed: %v", err)
 		}
 		// Tag the completed version
@@ -247,7 +247,7 @@ func (h *PipelineHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "project not found", http.StatusNotFound)
 		return
 	}
-	summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
+	summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 	b, err := os.ReadFile(summaryPath)
 	if err != nil {
 		if os.IsNotExist(err) {

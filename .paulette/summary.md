@@ -1,7 +1,7 @@
-# Iteration Summary: claudine v0.1.0
+# Iteration Summary: paulette v0.1.0
 
 ## Product Overview
-claudine is a local-first, AI-guided software development pipeline tool that takes a product idea from concept to running code through five sequential stages: Vision → UX → Architecture → Build → Complete. It targets product-minded builders, AI-first development teams, and tech leads who want structured, traceable AI collaboration across the full development lifecycle — not just isolated code generation. Each stage uses a specialized Claude-backed agent, enforces human approval gates, and produces versioned artifacts committed to Git, ensuring that what gets built matches what was intended.
+paulette is a local-first, AI-guided software development pipeline tool that takes a product idea from concept to running code through five sequential stages: Vision → UX → Architecture → Build → Complete. It targets product-minded builders, AI-first development teams, and tech leads who want structured, traceable AI collaboration across the full development lifecycle — not just isolated code generation. Each stage uses a specialized Claude-backed agent, enforces human approval gates, and produces versioned artifacts committed to Git, ensuring that what gets built matches what was intended.
 
 ## Key UX Decisions
 - **Five-stage linear pipeline** with a left sidebar showing colour-coded status pips (grey/blue/green); users cannot skip stages forward but can roll back
@@ -20,7 +20,7 @@ claudine is a local-first, AI-guided software development pipeline tool that tak
 - **Frontend**: React 19 (TypeScript 5.9, Vite 8), `react-markdown` + `remark-gfm`, `@xyflow/react` + `@dagrejs/dagre`
 - **AI Engine**: Anthropic `claude` CLI invoked as a subprocess (not direct API); conversation history serialized as a formatted string
 - **Build/Issue Tracking**: `bd` CLI + Dolt database for bead DAG execution
-- **Persistence**: File system only — JSON project registry + Markdown/text artifacts under `~/.claudine` (no relational DB)
+- **Persistence**: File system only — JSON project registry + Markdown/text artifacts under `~/.paulette` (no relational DB)
 - **Real-time**: Server-Sent Events for all streaming (chat chunks, artifact delimiters, token counts, import progress, build logs)
 - **Git integration**: `os/exec` shell calls; every artifact approval = a Git commit; rollback via hard reset
 - **Key API surface**: `POST /api/projects`, `PATCH /api/projects/:id`, `DELETE /api/projects/:id`, `/api/projects/:id/pipeline`, `/api/projects/:id/chat/:stage` (SSE), `/api/projects/:id/import` (SSE), `/api/projects/:id/beads/*`, `/api/projects/:id/git/*`
@@ -40,13 +40,13 @@ v0.1.0 was an **initial codebase import** — the build plan contains a single m
 
 4. **Structured Artifact Diffing on Rollback** — When a user rolls back a stage or resets to a Git commit, show a side-by-side Markdown diff of the affected artifact(s) before confirming. Reduces accidental loss of approved work and makes rollback consequences explicit.
 
-5. **CI/CD Export Hook** — Add a "Export to CI" action in the Completion view that generates a GitHub Actions or GitLab CI workflow file from the approved build plan beads, enabling teams to bridge the claudine pipeline into their existing automation infrastructure.
+5. **CI/CD Export Hook** — Add a "Export to CI" action in the Completion view that generates a GitHub Actions or GitLab CI workflow file from the approved build plan beads, enabling teams to bridge the paulette pipeline into their existing automation infrastructure.
 
 ## Known Limitations
 - **`claude` CLI subprocess dependency**: requires the CLI installed, authenticated, and on PATH on the host machine; no direct Anthropic API path
 - **`bd` CLI + Dolt dependency**: bead execution is tightly coupled to this external toolchain
 - **File-system-only persistence**: no relational DB; limits query capability and makes multi-user access unsafe
-- **Single-user, local-first only**: `~/.claudine` default path; no authentication, multi-tenancy, or user isolation
+- **Single-user, local-first only**: `~/.paulette` default path; no authentication, multi-tenancy, or user isolation
 - **Sequential stage advancement only**: no concurrent stage work, branching pipelines, or A/B artifact variants
 - **Fixed model-per-stage**: Sonnet for Vision/UX, Opus for Architecture/Build; no per-project override
 - **CORS locked to localhost**: `localhost:5173` and `localhost:8080` only; blocks any non-local deployment

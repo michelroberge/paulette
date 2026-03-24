@@ -17,12 +17,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/agent"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/pipeline"
-	"github.com/michelroberge/claudine/backend/internal/repository"
-	fsrepo "github.com/michelroberge/claudine/backend/internal/repository/fs"
-	"github.com/michelroberge/claudine/backend/internal/stream"
+	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/repository"
+	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
+	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
 // beadGraphMu serializes writes to beads-graph.json per project host directory.
@@ -473,7 +473,7 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 		var enhCtx *agent.EnhancementContext
 		if project.EnhancementVision != "" {
 			enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-			summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
+			summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 			if data, err := os.ReadFile(summaryPath); err == nil {
 				enhCtx.Summary = string(data)
 			}
