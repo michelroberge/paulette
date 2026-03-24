@@ -12,13 +12,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/Claudine/backend/internal/agent"
-	"github.com/michelroberge/Claudine/backend/internal/git"
-	"github.com/michelroberge/Claudine/backend/internal/model"
-	"github.com/michelroberge/Claudine/backend/internal/pipeline"
-	"github.com/michelroberge/Claudine/backend/internal/repository"
-	fsrepo "github.com/michelroberge/Claudine/backend/internal/repository/fs"
-	"github.com/michelroberge/Claudine/backend/internal/stream"
+	"github.com/michelroberge/claudine/backend/internal/agent"
+	"github.com/michelroberge/claudine/backend/internal/git"
+	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/pipeline"
+	"github.com/michelroberge/claudine/backend/internal/repository"
+	fsrepo "github.com/michelroberge/claudine/backend/internal/repository/fs"
+	"github.com/michelroberge/claudine/backend/internal/stream"
 )
 
 type PipelineHandler struct {

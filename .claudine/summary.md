@@ -1,7 +1,7 @@
-# Iteration Summary: Claudine v0.1.0
+# Iteration Summary: claudine v0.1.0
 
 ## Product Overview
-Claudine is a local-first, AI-guided software development pipeline tool that takes a product idea from concept to running code through five sequential stages: Vision → UX → Architecture → Build → Complete. It targets product-minded builders, AI-first development teams, and tech leads who want structured, traceable AI collaboration across the full development lifecycle — not just isolated code generation. Each stage uses a specialized Claude-backed agent, enforces human approval gates, and produces versioned artifacts committed to Git, ensuring that what gets built matches what was intended.
+claudine is a local-first, AI-guided software development pipeline tool that takes a product idea from concept to running code through five sequential stages: Vision → UX → Architecture → Build → Complete. It targets product-minded builders, AI-first development teams, and tech leads who want structured, traceable AI collaboration across the full development lifecycle — not just isolated code generation. Each stage uses a specialized Claude-backed agent, enforces human approval gates, and produces versioned artifacts committed to Git, ensuring that what gets built matches what was intended.
 
 ## Key UX Decisions
 - **Five-stage linear pipeline** with a left sidebar showing colour-coded status pips (grey/blue/green); users cannot skip stages forward but can roll back
@@ -40,7 +40,7 @@ v0.1.0 was an **initial codebase import** — the build plan contains a single m
 
 4. **Structured Artifact Diffing on Rollback** — When a user rolls back a stage or resets to a Git commit, show a side-by-side Markdown diff of the affected artifact(s) before confirming. Reduces accidental loss of approved work and makes rollback consequences explicit.
 
-5. **CI/CD Export Hook** — Add a "Export to CI" action in the Completion view that generates a GitHub Actions or GitLab CI workflow file from the approved build plan beads, enabling teams to bridge the Claudine pipeline into their existing automation infrastructure.
+5. **CI/CD Export Hook** — Add a "Export to CI" action in the Completion view that generates a GitHub Actions or GitLab CI workflow file from the approved build plan beads, enabling teams to bridge the claudine pipeline into their existing automation infrastructure.
 
 ## Known Limitations
 - **`claude` CLI subprocess dependency**: requires the CLI installed, authenticated, and on PATH on the host machine; no direct Anthropic API path

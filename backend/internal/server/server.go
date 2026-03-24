@@ -9,11 +9,11 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/cors"
 
-	"github.com/michelroberge/Claudine/backend/internal/config"
-	"github.com/michelroberge/Claudine/backend/internal/git"
-	"github.com/michelroberge/Claudine/backend/internal/handler"
-	"github.com/michelroberge/Claudine/backend/internal/repository"
-	"github.com/michelroberge/Claudine/backend/internal/stream"
+	"github.com/michelroberge/claudine/backend/internal/config"
+	"github.com/michelroberge/claudine/backend/internal/git"
+	"github.com/michelroberge/claudine/backend/internal/handler"
+	"github.com/michelroberge/claudine/backend/internal/repository"
+	"github.com/michelroberge/claudine/backend/internal/stream"
 )
 
 type Server struct {

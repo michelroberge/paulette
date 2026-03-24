@@ -12,11 +12,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/michelroberge/Claudine/backend/internal/agent"
-	"github.com/michelroberge/Claudine/backend/internal/git"
-	"github.com/michelroberge/Claudine/backend/internal/model"
-	"github.com/michelroberge/Claudine/backend/internal/repository"
-	"github.com/michelroberge/Claudine/backend/internal/stream"
+	"github.com/michelroberge/claudine/backend/internal/agent"
+	"github.com/michelroberge/claudine/backend/internal/git"
+	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/repository"
+	"github.com/michelroberge/claudine/backend/internal/stream"
 )
 
 type ImportHandler struct {

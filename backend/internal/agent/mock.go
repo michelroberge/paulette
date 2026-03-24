@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/model"
 )
 
 const mockSystemPromptBase = `You are a UI mockup generator for an AI Product Factory. Based on the provided UX design document, generate a complete standalone HTML page that visually represents the proposed UI as high-fidelity wireframe mockups.

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/model"
 )
 
 var systemPrompts = map[model.StageName]string{

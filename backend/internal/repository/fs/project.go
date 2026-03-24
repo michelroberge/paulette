@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/model"
 )
 
 const factoryDir = ".claudine"

@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/michelroberge/Claudine/backend/internal/agent"
-	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/agent"
+	"github.com/michelroberge/claudine/backend/internal/model"
 )
 
 // Command category constants.

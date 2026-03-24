@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/model"
 )
 
 type registryData struct {

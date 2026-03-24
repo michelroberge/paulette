@@ -12,9 +12,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/michelroberge/Claudine/backend/internal/git"
-	"github.com/michelroberge/Claudine/backend/internal/model"
-	"github.com/michelroberge/Claudine/backend/internal/repository"
+	"github.com/michelroberge/claudine/backend/internal/git"
+	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/repository"
 )
 
 type ProjectHandler struct {

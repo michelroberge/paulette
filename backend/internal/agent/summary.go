@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/model"
 )
 
 const summarySystemPrompt = `You are a technical writer summarizing a completed product development iteration.

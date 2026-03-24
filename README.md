@@ -1,18 +1,18 @@
-# Claudine
+# claudine
 
 **An AI-powered application generator built on Claude.**
 
 ## The Name
 
-Claudine was a colleague from my early career who specialized in mainframe development. She was thorough, understood things quickly, and brought light to everyone's days. She had a rare talent for working with you to solve any problem — professional or personal.
+claudine was a colleague from my early career who specialized in mainframe development. She was thorough, understood things quickly, and brought light to everyone's days. She had a rare talent for working with you to solve any problem — professional or personal.
 
-I have no idea where Claudine is today, but I'd like to think she's doing well and kicking. She's that kind of woman.
+I have no idea where claudine is today, but I'd like to think she's doing well and kicking. She's that kind of woman.
 
 Naming this tool after her felt right: put some light on Claude.
 
-## Who Is *this* Claudine?
+## Who Is *this* claudine?
 
-Claudine is an application generator that guides you through a structured development pipeline using conversational AI. Each stage has a dedicated expert you interact with to produce working artifacts.
+claudine is an application generator that guides you through a structured development pipeline using conversational AI. Each stage has a dedicated expert you interact with to produce working artifacts.
 
 **The flow:** Vision &rarr; UX Design &rarr; Architecture &rarr; Build &rarr; Enhance &rarr; Repeat
 
@@ -44,7 +44,7 @@ When all beads are complete, your app is done.
 
 ### Autonomous Mode
 
-Toggle autonomous mode and Claudine builds your entire app end-to-end. It can finish a build cycle, review the result, and feed recommendations into an enhancement loop for continuous improvement.
+Toggle autonomous mode and claudine builds your entire app end-to-end. It can finish a build cycle, review the result, and feed recommendations into an enhancement loop for continuous improvement.
 
 ## Tech Stack
 
@@ -81,7 +81,7 @@ After building, run the init command to verify and install dependencies:
 ./claudine init
 ```
 
-This checks that `bd`, `claude`, and `rtk` are available, and offers to install any that are missing. Both `bd` and `claude` are required — Claudine cannot run without them.
+This checks that `bd`, `claude`, and `rtk` are available, and offers to install any that are missing. Both `bd` and `claude` are required — claudine cannot run without them.
 
 ### Development
 

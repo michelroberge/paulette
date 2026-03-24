@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/michelroberge/Claudine/backend/internal/agent"
+	"github.com/michelroberge/claudine/backend/internal/agent"
 )
 
 // Run represents a managed agent operation whose events are buffered for reconnection.

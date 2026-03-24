@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/model"
 )
 
 // ErrPlanLimit is returned when Claude hits its plan/turn limit.

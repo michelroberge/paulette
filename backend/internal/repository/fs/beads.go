@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/model"
 )
 
 const beadsGraphRelPath = ".claudine/build/beads-graph.json"

@@ -1,4 +1,4 @@
-module github.com/michelroberge/Claudine/backend
+module github.com/michelroberge/claudine/backend
 
 go 1.26.1
 

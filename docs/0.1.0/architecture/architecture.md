@@ -1,4 +1,4 @@
-# System Architecture: Claudine
+# System Architecture: claudine
 
 ## Tech Stack
 

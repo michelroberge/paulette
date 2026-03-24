@@ -1,10 +1,10 @@
-# Product Vision: Claudine
+# Product Vision: claudine
 
 ## Problem Statement
 
 Building software from scratch is a fragmented, high-friction process. Product ideas get lost in translation between vision, design, architecture, and implementation. Developers spend enormous effort context-switching between tools, tracking decisions, and maintaining traceability from requirements to code. Existing AI coding assistants help with isolated tasks but do not guide the end-to-end journey from idea to deployed application — leaving teams to stitch together their own workflows with no guarantees of coherence, auditability, or repeatability.
 
-This matters because the cost of misalignment between intent and implementation compounds at every stage. A weak vision produces a flawed UX design; a flawed UX produces a broken architecture; a broken architecture produces unmaintainable code. Claudine enforces structure and traceability at every step, ensuring that what gets built is what was actually intended.
+This matters because the cost of misalignment between intent and implementation compounds at every stage. A weak vision produces a flawed UX design; a flawed UX produces a broken architecture; a broken architecture produces unmaintainable code. claudine enforces structure and traceability at every step, ensuring that what gets built is what was actually intended.
 
 ## Target Users
 

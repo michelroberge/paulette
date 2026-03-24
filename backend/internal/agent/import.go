@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/claudine/backend/internal/model"
 )
 
 // importStep describes one stage of the import artifact generation.

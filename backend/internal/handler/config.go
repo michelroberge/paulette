@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/michelroberge/Claudine/backend/internal/config"
+	"github.com/michelroberge/claudine/backend/internal/config"
 )
 
 type ConfigHandler struct {

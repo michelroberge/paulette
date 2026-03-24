@@ -1,10 +1,10 @@
-# UX Design: Claudine
+# UX Design: claudine
 
 ## User Journeys
 
 ### JRN-v0.1.0-001: Create and Launch a New Project
 
-A user visits the Claudine home screen, sees an ASCII-art branded banner and a grid of existing projects. They click **"+ New Project"**, which opens a modal asking for a project name and a host directory path. On submission, the backend initialises the directory with `.claudine/` scaffolding, runs `git init`, and registers the project. The user is taken into the project workspace at the **Vision** stage.
+A user visits the claudine home screen, sees an ASCII-art branded banner and a grid of existing projects. They click **"+ New Project"**, which opens a modal asking for a project name and a host directory path. On submission, the backend initialises the directory with `.claudine/` scaffolding, runs `git init`, and registers the project. The user is taken into the project workspace at the **Vision** stage.
 
 ### JRN-v0.1.0-002: Import an Existing Codebase
 
@@ -76,7 +76,7 @@ When a project was imported (reverse-engineered from existing code), a banner is
 ## Screen Descriptions
 
 ### Home Screen (Project List)
-- **Claudine ASCII banner** with gradient title, subtitle, and version label.
+- **claudine ASCII banner** with gradient title, subtitle, and version label.
 - **Project grid**: Cards for each existing project showing name, current stage (as colour-coded progress pips — grey=locked, blue=active, green=approved), current stage label, last-updated timestamp, and a delete (✕) button.
 - **New Project card**: Dashed-border card with a "+" icon that opens the create modal.
 - **Import Repo card**: Dashed-border card that opens the import modal.
@@ -105,7 +105,7 @@ When a project was imported (reverse-engineered from existing code), a banner is
 ### Project Workspace (main application shell)
 The shell has three zones:
 1. **ProjectHeader** (top bar): Back button, project name, version, author, token counter, Autonomous toggle, History button.
-2. **StagesSidebar** (left): Stages list with status icons, token counts per stage, and a reset button on hover. Claudine ASCII branding at the bottom.
+2. **StagesSidebar** (left): Stages list with status icons, token counts per stage, and a reset button on hover. claudine ASCII branding at the bottom.
 3. **Main Content** (right): Stage content area.
 
 ### Vision Stage View

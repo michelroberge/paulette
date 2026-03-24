@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/michelroberge/Claudine/backend/internal/cli"
-	"github.com/michelroberge/Claudine/backend/internal/config"
-	fsrepo "github.com/michelroberge/Claudine/backend/internal/repository/fs"
-	"github.com/michelroberge/Claudine/backend/internal/server"
+	"github.com/michelroberge/claudine/backend/internal/cli"
+	"github.com/michelroberge/claudine/backend/internal/config"
+	fsrepo "github.com/michelroberge/claudine/backend/internal/repository/fs"
+	"github.com/michelroberge/claudine/backend/internal/server"
 )
 
 func main() {
@@ -55,7 +55,7 @@ func main() {
 
 	// Start server in a goroutine
 	go func() {
-		log.Printf("Claudine listening on %s", addr)
+		log.Printf("claudine listening on %s", addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server error: %v", err)
 		}
