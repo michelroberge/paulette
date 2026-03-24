@@ -38,6 +38,9 @@ type Project struct {
 	Imported          bool                `json:"imported,omitempty"`
 	SummaryReady      bool                `json:"summaryReady"`
 	Autonomous        bool                `json:"autonomous"`
+	DevCommands       []string            `json:"devCommands,omitempty"`
+	BuildCommands     []string            `json:"buildCommands,omitempty"`
+	RunCommands       []string            `json:"runCommands,omitempty"`
 	SummaryTokens     int                 `json:"summaryTokens,omitempty"`
 	StageTokens       map[StageName]int   `json:"stageTokens,omitempty"`
 	CreatedAt         time.Time           `json:"createdAt"`

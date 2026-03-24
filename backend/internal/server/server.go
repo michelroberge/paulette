@@ -71,7 +71,7 @@ func (s *Server) Router() http.Handler {
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.runs)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.runs)
-	bh := handler.NewBeadHandler(s.registry, s.artifactRepo, s.runs)
+	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
 	acth := handler.NewActivityHandler(s.runs)

@@ -77,6 +77,14 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract validation commands when approving architecture
+	if project.CurrentStage == model.StageArchitecture {
+		dev, build, run := pipeline.ParseValidationCommands(artifactContent)
+		project.DevCommands = dev
+		project.BuildCommands = build
+		project.RunCommands = run
+	}
+
 	// Advance to next stage
 	previousStage := project.CurrentStage
 	nextStage, err := pipeline.NextStage(project.CurrentStage)

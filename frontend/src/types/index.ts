@@ -13,6 +13,9 @@ export interface Project {
   imported?: boolean;
   summaryReady: boolean;
   autonomous?: boolean;
+  devCommands?: string[];
+  buildCommands?: string[];
+  runCommands?: string[];
   summaryTokens?: number;
   stageTokens?: Partial<Record<StageName, number>>;
   createdAt: string;

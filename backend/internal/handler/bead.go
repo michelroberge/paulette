@@ -19,6 +19,7 @@ import (
 
 	"github.com/michelroberge/claudette/backend/internal/agent"
 	"github.com/michelroberge/claudette/backend/internal/model"
+	"github.com/michelroberge/claudette/backend/internal/pipeline"
 	"github.com/michelroberge/claudette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/claudette/backend/internal/repository/fs"
 	"github.com/michelroberge/claudette/backend/internal/stream"
@@ -34,12 +35,13 @@ func beadGraphLock(hostDir string) *sync.Mutex {
 
 type BeadHandler struct {
 	registry     repository.RegistryRepo
+	projectRepo  repository.ProjectRepo
 	artifactRepo repository.ArtifactRepo
 	runs         *stream.Manager
 }
 
-func NewBeadHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager) *BeadHandler {
-	return &BeadHandler{registry: registry, artifactRepo: artifactRepo, runs: runs}
+func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager) *BeadHandler {
+	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, runs: runs}
 }
 
 // GetGraph returns the current bead graph JSON for a project,
@@ -666,6 +668,75 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 		}
 
 		wg.Wait()
+
+		// --- Validation Gate ---
+		vcmds := pipeline.CommandsFromProject(project)
+		if vcmds.HasCommands() {
+			for attempt := 0; attempt < pipeline.MaxValidationRetries; attempt++ {
+				run.Emit(agent.StreamEvent{Type: "validation_start", Content: fmt.Sprintf("Validation attempt %d/%d", attempt+1, pipeline.MaxValidationRetries)})
+
+				results, allPassed := pipeline.RunValidation(ctx, project.HostDir, vcmds, func(ev agent.StreamEvent) {
+					run.Emit(ev)
+				})
+
+				if allPassed {
+					run.Emit(agent.StreamEvent{Type: "log", Content: "✅ All validation commands passed"})
+					break
+				}
+
+				if attempt == pipeline.MaxValidationRetries-1 {
+					run.Emit(agent.StreamEvent{Type: "error", Content: "❌ Validation failed after max retries"})
+					break
+				}
+
+				// Create a fix bead with the error output
+				fixDesc := pipeline.FormatFailureSummary(results)
+				fixTitle := fmt.Sprintf("Fix validation failures (attempt %d)", attempt+1)
+
+				fixID, err := bdCreate(ctx, project.HostDir, fixTitle, fixDesc, string(model.BeadTypeTask), 0)
+				if err != nil {
+					run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to create fix bead: " + err.Error()})
+					break
+				}
+				if err := bdClaim(ctx, project.HostDir, fixID); err != nil {
+					run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to claim fix bead: " + err.Error()})
+					break
+				}
+
+				fixBead := model.Bead{
+					ID:          fixID,
+					Title:       fixTitle,
+					Description: fixDesc,
+					Type:        model.BeadTypeTask,
+					Status:      model.BeadStatusInProgress,
+					Priority:    0,
+					Deps:        []string{},
+				}
+				beadJSON, _ := json.Marshal(fixBead)
+				run.Emit(agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
+				run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 🔧 Fixing validation failures...", fixID)})
+
+				fixEvents, err := agent.ExecuteBead(ctx, project.HostDir, fixBead, artifacts, enhCtx)
+				if err != nil {
+					run.Emit(agent.StreamEvent{Type: "error", Content: "Fix bead execution failed: " + err.Error()})
+					break
+				}
+				for ev := range fixEvents {
+					if ev.Type == "plan_limit" {
+						run.Emit(ev)
+						break
+					} else if ev.Type == "chunk" {
+						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] %s", fixID, ev.Content)})
+					} else if ev.Type == "tokens" && ev.Tokens > 0 {
+						totalBuildTokens.Add(int64(ev.Tokens))
+					}
+				}
+				bdClose(ctx, project.HostDir, fixID)
+				run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Fix applied, re-validating...", fixID)})
+			}
+		}
+		// --- End Validation Gate ---
+
 		run.Emit(agent.StreamEvent{Type: "done", Content: "Execution complete"})
 	}()
 

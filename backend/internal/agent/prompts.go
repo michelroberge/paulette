@@ -114,6 +114,21 @@ Define the stack, APIs, data models, and system components. When ready, produce 
 
 ## Infrastructure
 ...
+
+## Validation Commands
+Specify the exact shell commands used to validate the project works. These commands will be run automatically after code generation to ensure everything compiles, starts, and runs correctly.
+
+### Dev Commands
+Commands that start a development server (long-running processes). Each will be started and observed for ~30s — if no errors occur, it passes.
+- ` + "`command here`" + `
+
+### Build Commands
+Commands that compile or build to completion. Exit code 0 = success.
+- ` + "`command here`" + `
+
+### Run Commands
+Commands that start the built artifact to verify it launches correctly. Each will be started and observed for ~15s.
+- ` + "`command here`" + `
 <!-- ARTIFACT:END -->
 
 Always wrap the document in exactly those delimiters.
@@ -243,6 +258,22 @@ Rules:
 - If evolving an existing document, preserve existing IDs and add new ones continuing the sequence.`, version, version, version, version, version, version)
 }
 
+// buildValidationCommandsNote returns the validation commands instructions injected into the Architecture prompt.
+func buildValidationCommandsNote() string {
+	return `**Validation Commands Requirements:**
+The architecture document MUST include a "## Validation Commands" section with three subsections:
+- "### Dev Commands" — shell commands that start a development server (long-running). List each as a markdown bullet with the command in backticks.
+- "### Build Commands" — shell commands that compile/build to completion (exit code 0 = success). List each as a markdown bullet with the command in backticks.
+- "### Run Commands" — shell commands that start the built artifact to verify it launches. List each as a markdown bullet with the command in backticks.
+
+These commands will be executed automatically after code generation to verify the project works. Be specific and accurate based on the chosen tech stack. For example:
+- Dev: ` + "`npm run dev`" + `, ` + "`go run ./cmd/server`" + `
+- Build: ` + "`npm run build`" + `, ` + "`go build ./...`" + `
+- Run: ` + "`node dist/index.js`" + `, ` + "`./bin/server`" + `
+
+If a project has both frontend and backend, include commands for both. If a category does not apply, leave it empty but still include the heading.`
+}
+
 // buildPlanIDNote returns the traceability reference instructions injected into the Build prompt.
 func buildPlanIDNote() string {
 	return `**Build Plan Traceability Requirements:**
@@ -274,7 +305,7 @@ func GetSystemPrompt(stage model.StageName, version string, previousArtifacts ma
 		prompt = fmt.Sprintf(template, visionArtifact, frameworkNote)
 	case model.StageArchitecture:
 		visionArtifact := previousArtifacts[model.StageVision]
-		uxArtifact := previousArtifacts[model.StageUX] + "\n\n" + buildArchIDNote(version)
+		uxArtifact := previousArtifacts[model.StageUX] + "\n\n" + buildArchIDNote(version) + "\n\n" + buildValidationCommandsNote()
 		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact)
 	case model.StageBuild:
 		visionArtifact := previousArtifacts[model.StageVision]
