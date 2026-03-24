@@ -12,7 +12,7 @@ const (
 	FrameworkOther     UXFramework = "other"
 )
 
-// FrameworkConfig is stored at .ai-factory/ux/framework.json.
+// FrameworkConfig is stored at .claudine/ux/framework.json.
 type FrameworkConfig struct {
 	Framework  UXFramework `json:"framework"`
 	CustomName string      `json:"customName,omitempty"`

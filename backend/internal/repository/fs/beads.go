@@ -10,7 +10,7 @@ import (
 	"github.com/michelroberge/Claudine/backend/internal/model"
 )
 
-const beadsGraphRelPath = ".ai-factory/build/beads-graph.json"
+const beadsGraphRelPath = ".claudine/build/beads-graph.json"
 
 // BeadGraphPath returns the absolute path to beads-graph.json for a project.
 func BeadGraphPath(hostDir string) string {

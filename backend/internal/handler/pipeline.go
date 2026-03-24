@@ -66,7 +66,7 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check artifact exists for current stage (check both .ai-factory and docs/)
+	// Check artifact exists for current stage (check both .claudine and docs/)
 	artifactContent, err := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, project.CurrentStage)
 	if err != nil {
 		http.Error(w, "failed to check artifact: "+err.Error(), http.StatusInternalServerError)
@@ -109,20 +109,20 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Promote artifact from .ai-factory to docs and remove from .ai-factory
+	// Promote artifact from .claudine to docs and remove from .claudine
 	if artifact, readErr := h.artifactRepo.Read(project.HostDir, previousStage); readErr == nil && artifact != "" {
 		if docErr := fsrepo.WriteStageDoc(project.HostDir, project.Version, previousStage, artifact); docErr != nil {
 			log.Printf("docs promotion failed for %s: %v", previousStage, docErr)
 		} else {
-			// Remove the artifact from .ai-factory now that it lives in docs
-			aiFactoryPath := filepath.Join(project.HostDir, ".ai-factory", string(previousStage), string(previousStage)+".md")
+			// Remove the artifact from .claudine now that it lives in docs
+			aiFactoryPath := filepath.Join(project.HostDir, ".claudine", string(previousStage), string(previousStage)+".md")
 			if rmErr := os.Remove(aiFactoryPath); rmErr != nil {
-				log.Printf("failed to remove .ai-factory artifact %s: %v", aiFactoryPath, rmErr)
+				log.Printf("failed to remove .claudine artifact %s: %v", aiFactoryPath, rmErr)
 			}
 		}
 	}
 
-	// Git commit the promoted artifact and the removal from .ai-factory
+	// Git commit the promoted artifact and the removal from .claudine
 	commitMsg := fmt.Sprintf("approve(%s): promote artifact to docs", previousStage)
 	if err := h.git.AddAllAndCommit(project.HostDir, commitMsg); err != nil {
 		log.Printf("git commit failed for %s: %v", previousStage, err)
@@ -184,7 +184,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 			return
 		}
 
-		summaryPath := filepath.Join(project.HostDir, ".ai-factory", "summary.md")
+		summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
 		if err := os.WriteFile(summaryPath, []byte(summary), 0644); err != nil {
 			log.Printf("failed to write summary: %v", err)
 			run.Emit(agent.StreamEvent{Type: "error", Content: "failed to write summary"})
@@ -203,7 +203,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		}
 
 		commitMsg := fmt.Sprintf("complete(v%s): iteration summary", project.Version)
-		if err := h.git.AddAndCommit(project.HostDir, []string{".ai-factory/summary.md"}, commitMsg); err != nil {
+		if err := h.git.AddAndCommit(project.HostDir, []string{".claudine/summary.md"}, commitMsg); err != nil {
 			log.Printf("git commit summary failed: %v", err)
 		}
 		// Tag the completed version
@@ -247,7 +247,7 @@ func (h *PipelineHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "project not found", http.StatusNotFound)
 		return
 	}
-	summaryPath := filepath.Join(project.HostDir, ".ai-factory", "summary.md")
+	summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
 	b, err := os.ReadFile(summaryPath)
 	if err != nil {
 		if os.IsNotExist(err) {

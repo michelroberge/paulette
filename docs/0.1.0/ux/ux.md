@@ -4,7 +4,7 @@
 
 ### JRN-v0.1.0-001: Create and Launch a New Project
 
-A user visits the Claudine home screen, sees an ASCII-art branded banner and a grid of existing projects. They click **"+ New Project"**, which opens a modal asking for a project name and a host directory path. On submission, the backend initialises the directory with `.ai-factory/` scaffolding, runs `git init`, and registers the project. The user is taken into the project workspace at the **Vision** stage.
+A user visits the Claudine home screen, sees an ASCII-art branded banner and a grid of existing projects. They click **"+ New Project"**, which opens a modal asking for a project name and a host directory path. On submission, the backend initialises the directory with `.claudine/` scaffolding, runs `git init`, and registers the project. The user is taken into the project workspace at the **Vision** stage.
 
 ### JRN-v0.1.0-002: Import an Existing Codebase
 

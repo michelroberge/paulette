@@ -31,7 +31,7 @@ func (r *ArtifactRepo) Read(hostDir string, stage model.StageName) (string, erro
 	return string(b), nil
 }
 
-// ReadWithFallback reads from .ai-factory first; if not found, falls back to docs/{version}/.
+// ReadWithFallback reads from .claudine first; if not found, falls back to docs/{version}/.
 func (r *ArtifactRepo) ReadWithFallback(hostDir, version string, stage model.StageName) (string, error) {
 	content, err := r.Read(hostDir, stage)
 	if err != nil {

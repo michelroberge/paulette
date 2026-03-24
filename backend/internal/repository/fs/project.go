@@ -9,7 +9,7 @@ import (
 	"github.com/michelroberge/Claudine/backend/internal/model"
 )
 
-const factoryDir = ".ai-factory"
+const factoryDir = ".claudine"
 
 type ProjectRepo struct{}
 

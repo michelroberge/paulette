@@ -49,7 +49,7 @@ func loadProjectMeta() (version, author string) {
 	if err != nil {
 		return "", ""
 	}
-	data, err := os.ReadFile(filepath.Join(cwd, ".ai-factory", "project.json"))
+	data, err := os.ReadFile(filepath.Join(cwd, ".claudine", "project.json"))
 	if err != nil {
 		return "", ""
 	}

@@ -123,15 +123,15 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	var enhCtx *agent.EnhancementContext
 	if project.EnhancementVision != "" {
 		enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-		// Load summary from current .ai-factory (it was archived but also kept)
-		summaryPath := filepath.Join(project.HostDir, ".ai-factory", "summary.md")
+		// Load summary from current .claudine (it was archived but also kept)
+		summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
 		if data, err := os.ReadFile(summaryPath); err == nil {
 			enhCtx.Summary = string(data)
 		}
 		// Load prior iteration's artifact for this stage
 		prevVersion := findPriorIterationVersion(project.HostDir)
 		if prevVersion != "" {
-			priorArtifactPath := filepath.Join(project.HostDir, ".ai-factory", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
+			priorArtifactPath := filepath.Join(project.HostDir, ".claudine", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
 			if data, err := os.ReadFile(priorArtifactPath); err == nil {
 				enhCtx.PriorArtifact = string(data)
 			}
@@ -222,7 +222,7 @@ func sseWrite(w http.ResponseWriter, flusher http.Flusher, event agent.StreamEve
 
 // findPriorIterationVersion finds the most recent archived iteration version.
 func findPriorIterationVersion(hostDir string) string {
-	iterDir := filepath.Join(hostDir, ".ai-factory", "iterations")
+	iterDir := filepath.Join(hostDir, ".claudine", "iterations")
 	entries, err := os.ReadDir(iterDir)
 	if err != nil {
 		return ""

@@ -473,7 +473,7 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 		var enhCtx *agent.EnhancementContext
 		if project.EnhancementVision != "" {
 			enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-			summaryPath := filepath.Join(project.HostDir, ".ai-factory", "summary.md")
+			summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
 			if data, err := os.ReadFile(summaryPath); err == nil {
 				enhCtx.Summary = string(data)
 			}

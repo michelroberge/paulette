@@ -16,7 +16,7 @@ import (
 	"github.com/michelroberge/Claudine/backend/internal/stream"
 )
 
-const mockRelPath = ".ai-factory/ux/mock.html"
+const mockRelPath = ".claudine/ux/mock.html"
 
 type MockHandler struct {
 	registry     repository.RegistryRepo

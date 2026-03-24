@@ -61,7 +61,7 @@
 ### [ARCH-v0.1.0-006] Project Handler
 > Journeys: JRN-v0.1.0-001, JRN-v0.1.0-002
 
-`backend/internal/handler/project.go` — Handles full project CRUD. On `Create`, initialises the host directory with `.ai-factory/` scaffolding, calls `git init`, calls `bd init` (Beads), and registers the project in the global registry. On `Delete`, removes from registry only (host files are preserved). `Patch` currently only toggles `autonomous` mode.
+`backend/internal/handler/project.go` — Handles full project CRUD. On `Create`, initialises the host directory with `.claudine/` scaffolding, calls `git init`, calls `bd init` (Beads), and registers the project in the global registry. On `Delete`, removes from registry only (host files are preserved). `Patch` currently only toggles `autonomous` mode.
 
 ---
 
@@ -75,7 +75,7 @@
 ### [ARCH-v0.1.0-008] Pipeline Handler & State Machine
 > Journeys: JRN-v0.1.0-003, JRN-v0.1.0-004, JRN-v0.1.0-005, JRN-v0.1.0-006, JRN-v0.1.0-007, JRN-v0.1.0-008, JRN-v0.1.0-010
 
-`backend/internal/handler/pipeline.go` + `backend/internal/pipeline/machine.go` — Controls stage progression. `Approve` advances the project to the next stage, copies the working artifact to `docs/{version}/`, and clears the `.ai-factory` working copy. `GetPipeline` reconstructs the full stage list with statuses (`locked`, `active`, `approved`). On transition to `complete`, triggers async summary generation.
+`backend/internal/handler/pipeline.go` + `backend/internal/pipeline/machine.go` — Controls stage progression. `Approve` advances the project to the next stage, copies the working artifact to `docs/{version}/`, and clears the `.claudine` working copy. `GetPipeline` reconstructs the full stage list with statuses (`locked`, `active`, `approved`). On transition to `complete`, triggers async summary generation.
 
 ---
 

@@ -9,7 +9,7 @@ import (
 	"github.com/michelroberge/Claudine/backend/internal/model"
 )
 
-const frameworkRelPath = ".ai-factory/ux/framework.json"
+const frameworkRelPath = ".claudine/ux/framework.json"
 
 // FrameworkPath returns the absolute path to framework.json for a project.
 func FrameworkPath(hostDir string) string {

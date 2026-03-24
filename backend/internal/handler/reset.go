@@ -54,22 +54,22 @@ func (h *ResetHandler) Reset(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		// Remove chat history
-		chatFile := filepath.Join(project.HostDir, ".ai-factory", string(s), "chat-history.json")
+		chatFile := filepath.Join(project.HostDir, ".claudine", string(s), "chat-history.json")
 		os.Remove(chatFile)
 
 		// Remove artifact
-		artifactFile := filepath.Join(project.HostDir, ".ai-factory", string(s), string(s)+".md")
+		artifactFile := filepath.Join(project.HostDir, ".claudine", string(s), string(s)+".md")
 		os.Remove(artifactFile)
 
 		// Remove UX mock and framework config if applicable
 		if s == model.StageUX {
-			os.Remove(filepath.Join(project.HostDir, ".ai-factory", "ux", "mock.html"))
-			os.Remove(filepath.Join(project.HostDir, ".ai-factory", "ux", "framework.json"))
+			os.Remove(filepath.Join(project.HostDir, ".claudine", "ux", "mock.html"))
+			os.Remove(filepath.Join(project.HostDir, ".claudine", "ux", "framework.json"))
 		}
 
 		// Remove bead graph if applicable
 		if s == model.StageBuild {
-			beadsFile := filepath.Join(project.HostDir, ".ai-factory", "build", "beads-graph.json")
+			beadsFile := filepath.Join(project.HostDir, ".claudine", "build", "beads-graph.json")
 			os.Remove(beadsFile)
 		}
 	}

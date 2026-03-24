@@ -95,7 +95,7 @@ func (h *ImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		version = "1.0.0"
 	}
 
-	// Initialize .ai-factory directory structure
+	// Initialize .claudine directory structure
 	if err := h.projectRepo.Init(req.HostDir); err != nil {
 		http.Error(w, "failed to init project directory: "+err.Error(), http.StatusInternalServerError)
 		return

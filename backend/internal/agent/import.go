@@ -126,7 +126,7 @@ func buildCodebaseDigest(hostDir string) (string, error) {
 	// Collect all files, excluding common non-source directories
 	excludeDirs := map[string]bool{
 		".git": true, "node_modules": true, "vendor": true, "__pycache__": true,
-		".next": true, "dist": true, "build": true, ".ai-factory": true,
+		".next": true, "dist": true, "build": true, ".claudine": true,
 		".venv": true, "venv": true, "target": true, "bin": true, "obj": true,
 		".idea": true, ".vscode": true, "coverage": true, ".cache": true,
 	}

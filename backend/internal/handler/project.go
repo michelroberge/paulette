@@ -97,7 +97,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Initialize .ai-factory directory structure
+	// Initialize .claudine directory structure
 	if err := h.projectRepo.Init(req.HostDir); err != nil {
 		http.Error(w, "failed to init project directory: "+err.Error(), http.StatusInternalServerError)
 		return
