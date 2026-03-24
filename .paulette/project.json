@@ -1,18 +1,14 @@
 {
-  "id": "1212930a-3691-4732-ae36-7d5a4837c421",
-  "name": "paulette",
-  "author": "",
+  "id": "45ded6c6-df4b-4de5-8d61-29646ebaeeeb",
+  "name": "Paulette",
+  "author": "Michel Roberge",
   "version": "0.1.0",
-  "hostDir": "C:\\dev\\me\\paulette",
-  "currentStage": "complete",
+  "hostDir": "/Users/michelroberge/dev/paulette",
+  "currentStage": "vision",
   "iteration": 1,
   "imported": true,
-  "summaryReady": true,
+  "summaryReady": false,
   "autonomous": false,
-  "summaryTokens": 1820,
-  "stageTokens": {
-    "complete": 1820
-  },
-  "createdAt": "2026-03-24T09:05:10.3521092-04:00",
-  "updatedAt": "2026-03-24T15:14:59.2042563-04:00"
+  "createdAt": "2026-03-24T17:42:00.958887-04:00",
+  "updatedAt": "2026-03-24T17:42:00.958887-04:00"
 }
