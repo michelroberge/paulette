@@ -4,11 +4,11 @@
   "author": "Michel Roberge",
   "version": "0.1.0",
   "hostDir": "/Users/michelroberge/dev/claudine",
-  "currentStage": "architecture",
+  "currentStage": "build",
   "iteration": 1,
   "imported": true,
   "summaryReady": false,
   "autonomous": false,
   "createdAt": "2026-03-23T20:40:08.338469-04:00",
-  "updatedAt": "2026-03-23T20:40:24.670822-04:00"
+  "updatedAt": "2026-03-23T20:40:27.58772-04:00"
 }
