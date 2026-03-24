@@ -6,11 +6,11 @@
 
 Claudine was a colleague from my early career who specialized in mainframe development. She was thorough, understood things quickly, and brought light to everyone's days. She had a rare talent for working with you to solve any problem — professional or personal.
 
-I have no idea where Claudine is today, but I'd like to think she's doing well. She's that kind of woman.
+I have no idea where Claudine is today, but I'd like to think she's doing well and kicking. She's that kind of woman.
 
 Naming this tool after her felt right: put some light on Claude.
 
-## What Is Claudine?
+## Who Is *this* Claudine?
 
 Claudine is an application generator that guides you through a structured development pipeline using conversational AI. Each stage has a dedicated expert you interact with to produce working artifacts.
 
@@ -68,7 +68,7 @@ Toggle autonomous mode and Claudine builds your entire app end-to-end. It can fi
 
 ```bash
 make build
-./Claudine
+./claudine
 ```
 
 This builds the React frontend, embeds it into the Go binary, and produces a single executable that serves everything on port 8080.
@@ -78,7 +78,7 @@ This builds the React frontend, embeds it into the Go binary, and produces a sin
 After building, run the init command to verify and install dependencies:
 
 ```bash
-./Claudine init
+./claudine init
 ```
 
 This checks that `bd`, `claude`, and `rtk` are available, and offers to install any that are missing. Both `bd` and `claude` are required — Claudine cannot run without them.
