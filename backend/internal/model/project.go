@@ -2,6 +2,22 @@ package model
 
 import "time"
 
+// BtwMessage is a queued follow-up message the user sent while an agent was running.
+type BtwMessage struct {
+	Message string    `json:"message"`
+	SentAt  time.Time `json:"sentAt"`
+}
+
+// StageActivity records the current operation running (or last failed) within a stage.
+// Persisted to .paulette/activity.json so it survives server restarts.
+type StageActivity struct {
+	Operation  string       `json:"operation"`          // "chat", "mock", "beads-generate", "beads-execute", "summary"
+	Status     string       `json:"status"`             // "running" | "failed"
+	StartedAt  time.Time    `json:"startedAt"`
+	Error      string       `json:"error,omitempty"`
+	PendingBtw []BtwMessage `json:"pendingBtw,omitempty"` // queued follow-up messages
+}
+
 type StageStatus string
 
 const (
@@ -21,9 +37,10 @@ const (
 )
 
 type StageInfo struct {
-	Name         StageName   `json:"name"`
-	Status       StageStatus `json:"status"`
-	ArtifactPath string      `json:"artifactPath"`
+	Name         StageName      `json:"name"`
+	Status       StageStatus    `json:"status"`
+	ArtifactPath string         `json:"artifactPath"`
+	Activity     *StageActivity `json:"activity,omitempty"`
 }
 
 type Project struct {

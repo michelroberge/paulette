@@ -37,11 +37,12 @@ type BeadHandler struct {
 	registry     repository.RegistryRepo
 	projectRepo  repository.ProjectRepo
 	artifactRepo repository.ArtifactRepo
+	activityRepo repository.ActivityRepo
 	runs         *stream.Manager
 }
 
-func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager) *BeadHandler {
-	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, runs: runs}
+func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager) *BeadHandler {
+	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs}
 }
 
 // GetGraph returns the current bead graph JSON for a project,
@@ -248,9 +249,11 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 	if run == nil {
 		return nil, nil // race: already started
 	}
+	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "beads-generate")
 
 	go func() {
 		defer run.Finish(h.runs)
+		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
 
 		ctx := run.Context()
 
@@ -473,9 +476,11 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 	if run == nil {
 		return nil, nil // race: already started
 	}
+	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "beads-execute")
 
 	go func() {
 		defer run.Finish(h.runs)
+		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
 
 		var totalBuildTokens atomic.Int64
 		defer func() {

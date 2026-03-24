@@ -21,11 +21,12 @@ const mockRelPath = ".paulette/ux/mock.html"
 type MockHandler struct {
 	registry     repository.RegistryRepo
 	artifactRepo repository.ArtifactRepo
+	activityRepo repository.ActivityRepo
 	runs         *stream.Manager
 }
 
-func NewMockHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager) *MockHandler {
-	return &MockHandler{registry: registry, artifactRepo: artifactRepo, runs: runs}
+func NewMockHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager) *MockHandler {
+	return &MockHandler{registry: registry, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs}
 }
 
 type mockGetResponse struct {
@@ -118,15 +119,18 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 	if run == nil {
 		return nil, nil // race: already started
 	}
+	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
 
 	events, err := agent.GenerateMock(run.Context(), uxContent, refinement, frameworkCfg)
 	if err != nil {
+		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
 		run.Finish(h.runs)
 		return nil, fmt.Errorf("failed to start mock generation: %w", err)
 	}
 
 	go func() {
 		defer run.Finish(h.runs)
+		defer clearActivity(h.activityRepo, project.HostDir, model.StageUX)
 
 		var stageTokensAccum int
 		defer func() {
@@ -144,9 +148,11 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 			}
 			if event.Type == "done" {
 				html := agent.ExtractHTML(event.Content)
-				p := filepath.Join(project.HostDir, mockRelPath)
-				if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
-					os.WriteFile(p, []byte(html), 0644)
+				if html != "" {
+					p := filepath.Join(project.HostDir, mockRelPath)
+					if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
+						os.WriteFile(p, []byte(html), 0644)
+					}
 				}
 				run.Emit(agent.StreamEvent{Type: "done", Content: html})
 			} else {

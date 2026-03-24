@@ -32,14 +32,16 @@ type ChatHandler struct {
 	registry     repository.RegistryRepo
 	chatRepo     repository.ChatRepo
 	artifactRepo repository.ArtifactRepo
+	activityRepo repository.ActivityRepo
 	runs         *stream.Manager
 }
 
-func NewChatHandler(registry repository.RegistryRepo, chatRepo repository.ChatRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager) *ChatHandler {
+func NewChatHandler(registry repository.RegistryRepo, chatRepo repository.ChatRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager) *ChatHandler {
 	return &ChatHandler{
 		registry:     registry,
 		chatRepo:     chatRepo,
 		artifactRepo: artifactRepo,
+		activityRepo: activityRepo,
 		runs:         runs,
 	}
 }
@@ -169,17 +171,21 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	if run == nil {
 		return nil, nil // race: already started
 	}
+	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
 
 	// Start Claude CLI subprocess using the run's context (survives client disconnect)
 	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, message, project.HostDir)
 	if err != nil {
+		clearActivity(h.activityRepo, project.HostDir, stage)
 		run.Finish(h.runs)
 		return nil, fmt.Errorf("failed to start agent: %w", err)
 	}
 
-	// Background goroutine: process agent events, emit through run
+	// Background goroutine: process agent events, emit through run.
+	// LIFO defer: clearActivity runs first, then run.Finish — watcher sees clean state.
 	go func() {
 		defer run.Finish(h.runs)
+		defer clearActivity(h.activityRepo, project.HostDir, stage)
 
 		var stageTokensAccum int
 		defer func() {

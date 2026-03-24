@@ -72,10 +72,11 @@ func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, pr
 		prompt.WriteString(fmt.Sprintf("## %s Artifact\n---\n%s\n---\n\n", s.label, content))
 	}
 
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
+		"--include-partial-messages",
 		"--model", "claude-sonnet-4-6",
 		"--system-prompt", summarySystemPrompt,
 	)

@@ -939,6 +939,23 @@ body {
   flex-shrink: 0;
 }
 
+.summary-error-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  height: 100%;
+  color: #f87171;
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 2rem;
+}
+
+.summary-error-icon {
+  font-size: 2rem;
+}
+
 .summary-retry-btn {
   margin-left: auto;
   padding: 0.2rem 0.6rem;
@@ -1236,6 +1253,9 @@ body {
   height: 4px;
   border-radius: 2px;
   background: #334155;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .stage-pip.done {
@@ -1450,6 +1470,19 @@ body {
   0%, 100% { transform: translateY(0); }
   50%       { transform: translateY(-5px); }
 }
+
+@keyframes bead-pulse-blue {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(59,130,246,0.3); }
+  50%       { box-shadow: 0 0 18px 6px rgba(59,130,246,0.7); }
+}
+
+@keyframes bead-pulse-red {
+  0%, 100% { box-shadow: 0 0 4px 1px rgba(239,68,68,0.3); }
+  50%       { box-shadow: 0 0 18px 6px rgba(239,68,68,0.7); }
+}
+
+.bead-node-active    { animation: bead-pulse-blue 1.4s ease-in-out infinite; }
+.bead-node-reviewing { animation: bead-pulse-red  1.2s ease-in-out infinite; }
 
 .agent-activity-icon {
   animation: agent-bounce 0.7s ease-in-out infinite;
@@ -2520,4 +2553,181 @@ body {
 
 .bead-detail-chat-input .refinement-input {
   flex: 1;
+}
+
+/* ── Stage robot icons ─────────────────────────────────────── */
+
+.stage-robot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
+  color: #94a3b8;
+}
+
+.stage-robot svg {
+  width: 100%;
+  height: 100%;
+}
+
+.stage-robot--small {
+  width: 1rem;
+  height: 1rem;
+}
+
+.stage-robot--running {
+  color: #3b82f6;
+}
+
+.stage-robot--failed {
+  color: #ef4444;
+}
+
+/* Pulsing ring for running state */
+.robot-pulse-ring {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid #3b82f6;
+  animation: robot-pulse 1.4s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes robot-pulse {
+  0%   { opacity: 1; transform: scale(0.8); }
+  70%  { opacity: 0; transform: scale(1.4); }
+  100% { opacity: 0; transform: scale(1.4); }
+}
+
+/* Fail badge */
+.robot-fail-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 0.55rem;
+  font-weight: 700;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+/* Stage item row: robot + name + optional token count + reset btn */
+.stage-item-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+/* ── /btw inline form ─────────────────────────────────────── */
+
+.btw-form {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid #1e293b;
+}
+
+.btw-form-main {
+  margin-top: 0;
+  padding: 0.5rem 0.75rem;
+  border-top: none;
+  border-bottom: 1px solid #1e293b;
+}
+
+.btw-input {
+  flex: 1;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #e2e8f0;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.4rem;
+  min-width: 0;
+}
+
+.btw-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.btw-send-btn {
+  background: #1e40af;
+  border: none;
+  border-radius: 4px;
+  color: #e2e8f0;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.4rem;
+  flex-shrink: 0;
+}
+
+.btw-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btw-pending-count {
+  background: #334155;
+  border-radius: 10px;
+  color: #e2e8f0;
+  font-size: 0.65rem;
+  font-weight: 700;
+  min-width: 16px;
+  padding: 0 4px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* ── Project card activity badge ────────────────────────────── */
+
+.project-card-activity {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.75rem;
+  color: #93c5fd;
+}
+
+.activity-pulse {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3b82f6;
+  animation: activity-pulse 1.4s ease-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes activity-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+  70%  { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+}
+
+/* Stage pip robot variant */
+.stage-pip .stage-robot {
+  opacity: 0.3;
+}
+
+.stage-pip.done .stage-robot {
+  opacity: 1;
+  color: #22c55e;
+}
+
+.stage-pip.active .stage-robot {
+  opacity: 1;
+  color: #3b82f6;
 }

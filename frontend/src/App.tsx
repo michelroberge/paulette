@@ -11,13 +11,17 @@ import { BuildPanel } from './components/build/BuildPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { VersionHistoryModal } from './components/git/VersionHistoryModal';
-import { getPipeline, approveStage, resetStage } from './api/pipeline';
+import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
 import { getArtifact } from './api/artifacts';
 import { getMock } from './api/mock';
 import { getBeadGraph } from './api/beads';
 import { startEnhancement } from './api/enhance';
 import { getProject, patchProject } from './api/projects';
+import { getActiveRuns, sendBtw } from './api/activity';
+import type { ActiveRun } from './api/activity';
 import { useChat } from './hooks/useChat';
+import { useAgentStream } from './hooks/useAgentStream';
+import { AgentStreamingView } from './components/layout/AgentStreamingView';
 import type { Project, PipelineState, StageName, VersionBump } from './types';
 import './App.css';
 
@@ -65,6 +69,9 @@ function App() {
   const [showImportProgress, setShowImportProgress] = useState(false);
   const [mockGenerated, setMockGenerated] = useState(false);
   const [buildComplete, setBuildComplete] = useState(false);
+  const [activeRuns, setActiveRuns] = useState<ActiveRun[]>([]);
+  const [btwInput, setBtwInput] = useState('');
+  const [btwSending, setBtwSending] = useState(false);
 
   const addTokens = useCallback((stage: StageName, n: number) => {
     if (n <= 0) return;
@@ -78,6 +85,9 @@ function App() {
 
   const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send, stop } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger, selectedStage ? (n) => addTokens(selectedStage, n) : undefined);
+
+  const { active: agentActive, streamingText: agentStreamingText, operation: agentOperation, stage: agentStage } =
+    useAgentStream(project?.id ?? null, activeRuns);
 
   const loadPipeline = useCallback(async () => {
     if (!project) return;
@@ -106,6 +116,29 @@ function App() {
       });
     }
   }, [project, loadPipeline]);
+
+  // Subscribe to live pipeline updates via SSE
+  useEffect(() => {
+    if (!project) return;
+    const controller = new AbortController();
+    watchPipeline(project.id, setPipeline, controller.signal).catch(() => {});
+    return () => controller.abort();
+  }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll active runs so the sidebar knows which run IDs to use for /btw
+  useEffect(() => {
+    if (!project) { setActiveRuns([]); return; }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const runs = await getActiveRuns(project.id);
+        if (!cancelled) setActiveRuns(runs);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     loadHistory();
@@ -208,6 +241,19 @@ function App() {
 
   // ── Autonomous mode ──
 
+  const handleBtwSend = async (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    if (!project) return;
+    const agentRun = activeRuns.find(r => r.stage === agentStage && r.operation !== 'chat' && r.operation !== 'mock');
+    if (!agentRun || !btwInput.trim()) return;
+    setBtwSending(true);
+    try {
+      await sendBtw(project.id, agentRun.id, btwInput.trim());
+      setBtwInput('');
+    } catch { /* ignore */ }
+    finally { setBtwSending(false); }
+  };
+
   const handleToggleAutonomous = async () => {
     if (!project) return;
     const updated = await patchProject(project.id, { autonomous: !project.autonomous });
@@ -255,6 +301,7 @@ function App() {
           ) : pipeline?.currentStage === 'complete' && selectedStage === 'complete' ? (
             <CompletionView
               project={project}
+              activity={pipeline?.stages.find(s => s.name === 'complete')?.activity}
               onNewProject={() => { setProject(null); setPipeline(null); }}
               onViewStage={stage => setSelectedStage(stage)}
               onEnhance={handleEnhance}
@@ -276,6 +323,17 @@ function App() {
                   This artifact was auto-generated from your codebase. Review and refine via chat, then approve.
                 </div>
               )}
+              {agentActive && agentOperation !== 'chat' && selectedStage !== 'ux' && !(selectedStage === 'build' && activeTab === 'execute') ? (
+                <AgentStreamingView
+                  streamingText={agentStreamingText}
+                  operation={agentOperation}
+                  btwInput={btwInput}
+                  btwSending={btwSending}
+                  onBtwChange={setBtwInput}
+                  onBtwSubmit={handleBtwSend}
+                  btwPendingCount={pipeline?.stages.find(s => s.name === agentStage)?.activity?.pendingBtw?.length ?? 0}
+                />
+              ) : (
               <StageView tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab}>
                 {activeTab === 'chat' && (
                   <ChatPanel
@@ -321,6 +379,7 @@ function App() {
                   />
                 )}
               </StageView>
+              )}
 
               {isActiveStage && (
                 <div className="approve-bar">

@@ -24,10 +24,19 @@ export interface Project {
 
 export type VersionBump = 'major' | 'minor' | 'patch';
 
+export interface StageActivity {
+  operation: string;   // "chat" | "mock" | "beads-generate" | "beads-execute" | "summary"
+  status: 'running' | 'failed';
+  startedAt: string;
+  error?: string;
+  pendingBtw?: Array<{ message: string; sentAt: string }>;
+}
+
 export interface StageInfo {
   name: StageName;
   status: StageStatus;
   artifactPath: string;
+  activity?: StageActivity;
 }
 
 export interface PipelineState {

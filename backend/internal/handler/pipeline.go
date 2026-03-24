@@ -25,15 +25,17 @@ type PipelineHandler struct {
 	registry     repository.RegistryRepo
 	projectRepo  repository.ProjectRepo
 	artifactRepo repository.ArtifactRepo
+	activityRepo repository.ActivityRepo
 	runs         *stream.Manager
 	git          *git.Service
 }
 
-func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager, gitSvc *git.Service) *PipelineHandler {
+func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, gitSvc *git.Service) *PipelineHandler {
 	return &PipelineHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
 		artifactRepo: artifactRepo,
+		activityRepo: activityRepo,
 		runs:         runs,
 		git:          gitSvc,
 	}
@@ -47,10 +49,69 @@ func (h *PipelineHandler) GetPipeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := pipeline.BuildPipelineState(project.CurrentStage)
-
+	state := h.buildState(project)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(state)
+}
+
+// buildState assembles pipeline state enriched with per-stage activity.
+func (h *PipelineHandler) buildState(project *model.Project) model.PipelineState {
+	liveRuns := h.runs.ActiveForProject(project.ID)
+	persisted, _ := h.activityRepo.ReadActivity(project.HostDir)
+	activities := mergeActivities(liveRuns, persisted)
+	return pipeline.BuildPipelineState(project.CurrentStage, activities)
+}
+
+// WatchPipeline is an SSE endpoint that pushes updated PipelineState whenever runs change.
+func (h *PipelineHandler) WatchPipeline(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	emit := func() {
+		p, e := h.registry.Get(id)
+		if e != nil {
+			return
+		}
+		state := h.buildState(p)
+		data, _ := json.Marshal(state)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	emit() // send initial state immediately
+
+	ch, subID := h.runs.Watch(id)
+	defer h.runs.Unwatch(id, subID)
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ch:
+			emit()
+		case <-ticker.C:
+			emit()
+		case <-r.Context().Done():
+			return
+		}
+	}
+
+	_ = project // suppress unused warning; project used only for 404 check above
 }
 
 type approveResponse struct {
@@ -98,6 +159,19 @@ func (h *PipelineHandler) ApproveInternal(projectID string) error {
 	}
 	if strings.TrimSpace(artifactContent) == "" {
 		return fmt.Errorf("cannot approve: no artifact for current stage")
+	}
+
+	// Require all beads closed before approving build
+	if project.CurrentStage == model.StageBuild {
+		graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+		if err != nil {
+			return fmt.Errorf("cannot approve: failed to read bead graph: %w", err)
+		}
+		for _, b := range graph.Beads {
+			if b.Status != model.BeadStatusClosed {
+				return fmt.Errorf("cannot approve: bead %s (%s) is not closed", b.ID, b.Title)
+			}
+		}
 	}
 
 	// Extract validation commands when approving architecture
@@ -167,9 +241,12 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 	if run == nil {
 		return // already running
 	}
+	writeActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary")
 
 	go func() {
+		// LIFO defer: clearActivity runs first, then run.Finish (so watcher sees clean state)
 		defer run.Finish(h.runs)
+		defer clearActivity(h.activityRepo, project.HostDir, model.StageComplete)
 
 		artifacts := make(map[model.StageName]string)
 		for _, s := range pipeline.StageOrder {
@@ -184,6 +261,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 
 		events, err := agent.StreamSummary(run.Context(), artifacts, project.Name, project.Version)
 		if err != nil {
+			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", err.Error())
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
 			return
 		}
@@ -201,6 +279,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 
 		summary := strings.TrimSpace(fullText.String())
 		if summary == "" {
+			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", "summary generation produced no output")
 			run.Emit(agent.StreamEvent{Type: "error", Content: "summary generation produced no output"})
 			return
 		}

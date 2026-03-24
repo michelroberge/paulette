@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
@@ -29,14 +31,18 @@ Screen navigation:
 - The active tab should be visually highlighted
 - If there is only one screen, no tab bar is needed — just render it directly
 
-CRITICAL OUTPUT RULES:
-- Your ENTIRE response must be ONLY the HTML file — nothing else
-- Start your response with <!DOCTYPE html> as the very first characters
-- End your response with </html> as the very last characters
-- Do NOT include any explanation, summary, preamble, markdown, code fences, or commentary before or after the HTML
-- Do NOT ask for permission, confirmation, or offer to save the file
-- Do NOT describe what the mockup contains
-- Just output the raw HTML. Nothing else.`
+OUTPUT FORMAT — follow this exactly:
+- Wrap the complete HTML file between ----HTML_START---- and ----HTML_END---- markers, each on its own line:
+
+----HTML_START----
+<!DOCTYPE html>
+...full HTML...
+</html>
+----HTML_END----
+
+- Do NOT write anything outside these markers — no preamble, explanation, commentary, or markdown
+- Do NOT ask for permission or describe what the mockup contains
+- The HTML between the markers must be the complete, self-contained file`
 
 var frameworkInstructions = map[model.UXFramework]string{
 	model.FrameworkTailwind: `Framework: Tailwind CSS
@@ -93,37 +99,40 @@ func buildMockSystemPrompt(cfg *model.FrameworkConfig) string {
 
 const maxMockRetries = 2
 
-const mockRetryPrompt = `Your previous response was NOT valid HTML. You returned conversational text instead of raw HTML.
+const mockRetryPrompt = `Your previous response is missing the required ----HTML_START---- and ----HTML_END---- markers.
 
-I need you to output ONLY the HTML mockup. Your response must:
-- Start with <!DOCTYPE html> as the very first characters
-- End with </html> as the very last characters
-- Contain NO explanation, summary, or commentary
+You MUST wrap the HTML exactly like this:
+----HTML_START----
+<!DOCTYPE html>
+...complete HTML wireframe...
+</html>
+----HTML_END----
+
+Nothing should appear before ----HTML_START---- or after ----HTML_END----.
 
 Here is your previous (wrong) response for reference — do NOT repeat this mistake:
 ---
 %s
 ---
 
-Now output the complete HTML wireframe mockup. RAW HTML ONLY.`
+Now output the complete HTML wireframe mockup wrapped in the required markers.`
 
-// looksLikeHTML checks whether the response starts with a valid HTML doctype or tag.
-func looksLikeHTML(s string) bool {
-	trimmed := strings.TrimSpace(s)
-	lower := strings.ToLower(trimmed)
-	return strings.HasPrefix(lower, "<!doctype html") || strings.HasPrefix(lower, "<html")
+// hasHTMLBlock checks whether the response contains the ----HTML_START---- / ----HTML_END---- delimiters.
+func hasHTMLBlock(s string) bool {
+	return strings.Contains(s, "----HTML_START----") && strings.Contains(s, "----HTML_END----")
 }
 
 // invokeMockClaude runs a single Claude invocation and collects streamed events.
 // It sends chunks to the provided channel and returns the full response text.
 func invokeMockClaude(ctx context.Context, systemPrompt, userPrompt string, ch chan<- StreamEvent) (string, error) {
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--system-prompt", systemPrompt,
 	)
 	cmd.Stdin = strings.NewReader(userPrompt)
+	cmd.Stderr = os.Stderr // surface claude errors in server logs
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -132,7 +141,6 @@ func invokeMockClaude(ctx context.Context, systemPrompt, userPrompt string, ch c
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("start claude: %w", err)
 	}
-	defer cmd.Wait()
 
 	var fullResponse strings.Builder
 	scanner := bufio.NewScanner(stdout)
@@ -160,6 +168,10 @@ func invokeMockClaude(ctx context.Context, systemPrompt, userPrompt string, ch c
 				}
 			}
 		case "result":
+			if event.IsError {
+				cmd.Wait() // reap before returning
+				return "", fmt.Errorf("claude error: %s", event.Result)
+			}
 			if event.Usage != nil {
 				ch <- StreamEvent{Type: "tokens", Content: strconv.Itoa(event.Usage.OutputTokens)}
 			}
@@ -170,6 +182,18 @@ func invokeMockClaude(ctx context.Context, systemPrompt, userPrompt string, ch c
 		}
 	}
 
+	if serr := scanner.Err(); serr != nil {
+		cmd.Wait() // reap before returning
+		return "", fmt.Errorf("reading claude output: %w", serr)
+	}
+
+	if werr := cmd.Wait(); werr != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("claude cancelled: %w", ctx.Err())
+		}
+		return "", fmt.Errorf("claude exited with error: %w", werr)
+	}
+
 	return fullResponse.String(), nil
 }
 
@@ -177,6 +201,8 @@ func invokeMockClaude(ctx context.Context, systemPrompt, userPrompt string, ch c
 // If Claude returns conversational text instead of raw HTML, it retries up to maxMockRetries
 // times with a correction prompt.
 func GenerateMock(ctx context.Context, uxArtifact string, refinement string, frameworkCfg *model.FrameworkConfig) (<-chan StreamEvent, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+
 	var prompt strings.Builder
 	prompt.WriteString("UX Design Document:\n---\n")
 	prompt.WriteString(uxArtifact)
@@ -191,6 +217,7 @@ func GenerateMock(ctx context.Context, uxArtifact string, refinement string, fra
 	ch := make(chan StreamEvent, 64)
 
 	go func() {
+		defer cancel()
 		defer close(ch)
 
 		userPrompt := prompt.String()
@@ -202,11 +229,11 @@ func GenerateMock(ctx context.Context, uxArtifact string, refinement string, fra
 
 			response, err := invokeMockClaude(ctx, systemPrompt, userPrompt, ch)
 			if err != nil {
-				ch <- StreamEvent{Type: "done", Content: ""}
+				ch <- StreamEvent{Type: "error", Content: err.Error()}
 				return
 			}
 
-			if looksLikeHTML(response) {
+			if hasHTMLBlock(response) {
 				ch <- StreamEvent{Type: "done", Content: response}
 				return
 			}
@@ -230,10 +257,20 @@ func GenerateMock(ctx context.Context, uxArtifact string, refinement string, fra
 	return ch, nil
 }
 
-// ExtractHTML strips markdown code fences if Claude accidentally wraps the HTML.
+// ExtractHTML extracts HTML from between ----HTML_START---- and ----HTML_END---- markers.
+// Falls back to stripping markdown code fences if markers are absent.
 func ExtractHTML(raw string) string {
+	const startMarker = "----HTML_START----"
+	const endMarker = "----HTML_END----"
+
+	si := strings.Index(raw, startMarker)
+	ei := strings.LastIndex(raw, endMarker)
+	if si >= 0 && ei > si {
+		return strings.TrimSpace(raw[si+len(startMarker) : ei])
+	}
+
+	// Fallback: strip markdown code fences
 	s := strings.TrimSpace(raw)
-	// Remove ```html ... ``` or ``` ... ```
 	if strings.HasPrefix(s, "```") {
 		first := strings.Index(s, "\n")
 		if first >= 0 {

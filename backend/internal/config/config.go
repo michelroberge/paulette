@@ -11,13 +11,15 @@ type Config struct {
 	Port         int
 	RegistryPath string
 	ReposPath    string
+	ClaudePath   string
 	Version      string
 	Author       string
 }
 
 // Settings represents user-persisted configuration saved by "paulette init".
 type Settings struct {
-	ReposPath string `json:"reposPath,omitempty"`
+	ReposPath  string `json:"reposPath,omitempty"`
+	ClaudePath string `json:"claudePath,omitempty"`
 }
 
 // SettingsPath returns the path to the settings file.
@@ -73,12 +75,22 @@ func Load() *Config {
 		reposPath = filepath.Join(home, ".paulette", "repos")
 	}
 
+	// Priority: env var > settings.json > default ("claude")
+	claudePath := os.Getenv("CLAUDE_PATH")
+	if claudePath == "" {
+		claudePath = settings.ClaudePath
+	}
+	if claudePath == "" {
+		claudePath = "claude"
+	}
+
 	version, author := loadProjectMeta()
 
 	return &Config{
 		Port:         port,
 		RegistryPath: registryPath,
 		ReposPath:    reposPath,
+		ClaudePath:   claudePath,
 		Version:      version,
 		Author:       author,
 	}

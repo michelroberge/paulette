@@ -16,6 +16,16 @@ import (
 // ErrPlanLimit is returned when Claude hits its plan/turn limit.
 var ErrPlanLimit = errors.New("claude plan limit reached")
 
+// claudeBin is the path to the claude executable. Defaults to "claude" (PATH lookup).
+var claudeBin = "claude"
+
+// SetClaudePath overrides the claude executable path used by all agent functions.
+func SetClaudePath(path string) {
+	if path != "" {
+		claudeBin = path
+	}
+}
+
 // StreamEvent represents an event sent to the client via SSE.
 type StreamEvent struct {
 	Type    string `json:"type"`             // "chunk", "artifact", "done", "error", "tokens"
@@ -58,12 +68,13 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
+		"--include-partial-messages",
 		"--system-prompt", systemPrompt,
 	}
 	if modelID != "" {
 		args = append(args, "--model", modelID)
 	}
-	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd := exec.CommandContext(ctx, claudeBin, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = projectDir
 

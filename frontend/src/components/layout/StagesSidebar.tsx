@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { PipelineState, StageName } from '../../types';
 import { getConfig } from '../../api/config';
+import { StageRobot } from './StageRobot';
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -24,17 +25,10 @@ const stageLabels: Record<StageName, string> = {
   complete: 'Complete',
 };
 
-const statusIcons: Record<string, string> = {
-  locked: '\u{1F512}',
-  active: '\u{25B6}',
-  approved: '\u2705',
-};
-
-export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset, stageTokens }: Props) {
+export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset, stageTokens }: Readonly<Props>) {
   const [confirmStage, setConfirmStage] = useState<StageName | null>(null);
   const [appVersion, setAppVersion] = useState('');
   const [appAuthor, setAppAuthor] = useState('');
-
   useEffect(() => {
     getConfig().then(c => {
       setAppVersion(c.version);
@@ -66,28 +60,33 @@ export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset,
       <nav className="stages-sidebar">
         <h3>Pipeline</h3>
         <ul>
-          {pipeline.stages.map(stage => (
-            <li
-              key={stage.name}
-              className={`stage-item ${stage.status} ${stage.name === selectedStage ? 'selected' : ''}`}
-              onClick={() => stage.status !== 'locked' && onSelectStage(stage.name)}
-            >
-              <span className="stage-icon">{statusIcons[stage.status]}</span>
-              <span className="stage-name">{stageLabels[stage.name]}</span>
-              {(stageTokens?.[stage.name] ?? 0) > 0 && (
-                <span className="stage-token-count">{formatTokens(stageTokens![stage.name]!)}</span>
-              )}
-              {stage.status !== 'locked' && stage.name !== 'complete' && (
-                <button
-                  className="stage-reset-btn"
-                  title={stage.status === 'approved' ? 'Roll back to this stage' : 'Reset this stage'}
-                  onClick={e => handleResetClick(e, stage.name)}
-                >
-                  ↺
-                </button>
-              )}
-            </li>
-          ))}
+          {pipeline.stages.map(stage => {
+            return (
+              <li
+                key={stage.name}
+                className={`stage-item ${stage.status} ${stage.name === selectedStage ? 'selected' : ''}`}
+                onClick={() => stage.status !== 'locked' && onSelectStage(stage.name)}
+              >
+                <div className="stage-item-row">
+                  <StageRobot stage={stage.name} activity={stage.activity} />
+                  <span className="stage-name">{stageLabels[stage.name]}</span>
+                  {(stageTokens?.[stage.name] ?? 0) > 0 && (
+                    <span className="stage-token-count">{formatTokens(stageTokens![stage.name]!)}</span>
+                  )}
+                  {stage.status !== 'locked' && stage.name !== 'complete' && (
+                    <button
+                      className="stage-reset-btn"
+                      title={stage.status === 'approved' ? 'Roll back to this stage' : 'Reset this stage'}
+                      onClick={e => handleResetClick(e, stage.name)}
+                    >
+                      ↺
+                    </button>
+                  )}
+                </div>
+
+              </li>
+            );
+          })}
         </ul>
         <div className="sidebar-branding">
           <pre className="sidebar-ascii">

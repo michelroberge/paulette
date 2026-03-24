@@ -14,6 +14,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/handler"
 	"github.com/michelroberge/paulette/backend/internal/repository"
+	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
@@ -22,6 +23,7 @@ type Server struct {
 	registry     repository.RegistryRepo
 	projectRepo  repository.ProjectRepo
 	artifactRepo repository.ArtifactRepo
+	activityRepo repository.ActivityRepo
 	chatRepo     repository.ChatRepo
 	runs         *stream.Manager
 	staticFS     fs.FS
@@ -41,6 +43,7 @@ func New(
 		registry:     registry,
 		projectRepo:  projectRepo,
 		artifactRepo: artifactRepo,
+		activityRepo: fsrepo.NewActivityRepo(),
 		chatRepo:     chatRepo,
 		runs:         stream.NewManager(),
 		staticFS:     staticFS,
@@ -74,21 +77,21 @@ func (s *Server) Router() http.Handler {
 	gitSvc := git.NewService()
 
 	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
-	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc)
+	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, gitSvc)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
-	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.runs)
-	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.runs)
-	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs)
+	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs)
+	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
+	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
-	acth := handler.NewActivityHandler(s.runs)
+	acth := handler.NewActivityHandler(s.runs, s.activityRepo, s.registry)
 	gh := handler.NewGitHandler(s.registry, s.projectRepo, gitSvc)
 	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath)
 
 	// Wire orchestrator (created once, reused across Router calls)
 	if s.orchestrator == nil {
 		s.orchestrator = autopilot.NewOrchestrator(
-			s.registry, s.artifactRepo, s.runs,
+			s.registry, s.artifactRepo, s.activityRepo, s.runs,
 			ch, mh, bh, plh, eh,
 		)
 	}
@@ -98,6 +101,7 @@ func (s *Server) Router() http.Handler {
 	r.Get("/api/config", cfgH.GetInfo)
 
 	r.Route("/api/projects", func(r chi.Router) {
+		r.Get("/activity", acth.Summary)
 		r.Post("/", ph.Create)
 		r.Post("/import", ih.Import)
 		r.Get("/", ph.List)
@@ -135,7 +139,10 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/{id}/import/watch", ih.WatchImport)
 
+		r.Get("/{id}/pipeline/watch", plh.WatchPipeline)
+
 		r.Get("/{id}/activity", acth.List)
+		r.Post("/{id}/activity/{runId}/btw", acth.SendBtw)
 		r.Get("/{id}/activity/{runId}/stream", acth.Stream)
 
 		r.Get("/{id}/git/log", gh.Log)

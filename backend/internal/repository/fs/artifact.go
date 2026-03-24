@@ -10,6 +10,8 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
+const summaryFile = "summary.md"
+
 type ArtifactRepo struct{}
 
 func NewArtifactRepo() *ArtifactRepo {
@@ -79,6 +81,33 @@ func WriteStageDoc(hostDir, version string, stage model.StageName, content strin
 		return fmt.Errorf("create docs stage dir: %w", err)
 	}
 	return os.WriteFile(p, []byte(content), 0644)
+}
+
+// WriteSummaryDoc writes the iteration summary to docs/{version}/summary.md.
+func WriteSummaryDoc(hostDir, version, content string) error {
+	p := filepath.Join(hostDir, "docs", version, summaryFile)
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("create docs version dir: %w", err)
+	}
+	return os.WriteFile(p, []byte(content), 0644)
+}
+
+// ReadSummaryDoc reads the iteration summary from docs/{version}/summary.md,
+// falling back to .paulette/summary.md for backward compatibility.
+func ReadSummaryDoc(hostDir, version string) (string, error) {
+	docsPath := filepath.Join(hostDir, "docs", version, summaryFile)
+	if b, err := os.ReadFile(docsPath); err == nil {
+		return string(b), nil
+	}
+	fallbackPath := filepath.Join(hostDir, ".paulette", summaryFile)
+	b, err := os.ReadFile(fallbackPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read summary: %w", err)
+	}
+	return string(b), nil
 }
 
 // WriteMockDoc copies the UX mock HTML to docs/{version}/ux/mock.html.

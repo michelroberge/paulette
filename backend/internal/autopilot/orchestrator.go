@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +37,7 @@ type Orchestrator struct {
 
 	registry     repository.RegistryRepo
 	artifactRepo repository.ArtifactRepo
+	activityRepo repository.ActivityRepo
 	runs         *stream.Manager
 	chatH        *handler.ChatHandler
 	mockH        *handler.MockHandler
@@ -47,6 +49,7 @@ type Orchestrator struct {
 func NewOrchestrator(
 	registry repository.RegistryRepo,
 	artifactRepo repository.ArtifactRepo,
+	activityRepo repository.ActivityRepo,
 	runs *stream.Manager,
 	chatH *handler.ChatHandler,
 	mockH *handler.MockHandler,
@@ -61,6 +64,7 @@ func NewOrchestrator(
 		active:       make(map[string]context.CancelFunc),
 		registry:     registry,
 		artifactRepo: artifactRepo,
+		activityRepo: activityRepo,
 		runs:         runs,
 		chatH:        chatH,
 		mockH:        mockH,
@@ -71,6 +75,7 @@ func NewOrchestrator(
 }
 
 // StartAll resumes autonomous goroutines for all in-progress autonomous projects.
+// Also marks any stale "running" activities as failed (the process died mid-run).
 // Call once at server startup in a goroutine.
 func (o *Orchestrator) StartAll() {
 	projects, err := o.registry.List()
@@ -79,8 +84,28 @@ func (o *Orchestrator) StartAll() {
 		return
 	}
 	for _, p := range projects {
+		o.clearStaleActivities(&p)
 		if p.Autonomous {
 			o.Ensure(p.ID)
+		}
+	}
+}
+
+// clearStaleActivities marks any "running" activity entries as failed.
+// Called at startup because the process that set them is no longer alive.
+func (o *Orchestrator) clearStaleActivities(p *model.Project) {
+	activities, err := o.activityRepo.ReadActivity(p.HostDir)
+	if err != nil || len(activities) == 0 {
+		return
+	}
+	for stage, a := range activities {
+		if a.Status == "running" {
+			updated := *a
+			updated.Status = "failed"
+			updated.Error = "server restarted while this operation was running"
+			if setErr := o.activityRepo.SetActivity(p.HostDir, stage, &updated); setErr != nil {
+				log.Printf("orchestrator: clearStaleActivities(%s/%s): %v", p.ID, stage, setErr)
+			}
 		}
 	}
 }
@@ -184,14 +209,8 @@ func (o *Orchestrator) handleSimpleStage(ctx context.Context, project *model.Pro
 		if stage == model.StageVision && project.EnhancementVision != "" {
 			msg = "This is an enhancement iteration. Here's what I want to improve: " + project.EnhancementVision
 		}
-		run, err := o.startOrJoinChatRun(ctx, project, stage, msg)
-		if err != nil {
+		if err := o.runChatWithBtw(ctx, project, stage, msg); err != nil {
 			return fmt.Errorf("chat run: %w", err)
-		}
-		if run != nil {
-			if err := o.waitForRunDone(ctx, run); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -211,14 +230,8 @@ func (o *Orchestrator) handleUXStage(ctx context.Context, project *model.Project
 		if project.EnhancementVision != "" {
 			msg = "This is an enhancement iteration. Here's what I want to improve: " + project.EnhancementVision
 		}
-		run, err := o.startOrJoinChatRun(ctx, project, model.StageUX, msg)
-		if err != nil {
+		if err := o.runChatWithBtw(ctx, project, model.StageUX, msg); err != nil {
 			return fmt.Errorf("ux chat run: %w", err)
-		}
-		if run != nil {
-			if err := o.waitForRunDone(ctx, run); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -254,14 +267,8 @@ func (o *Orchestrator) handleBuildStage(ctx context.Context, project *model.Proj
 		if project.EnhancementVision != "" {
 			msg = "This is an enhancement iteration. Here's what I want to improve: " + project.EnhancementVision
 		}
-		run, err := o.startOrJoinChatRun(ctx, project, model.StageBuild, msg)
-		if err != nil {
+		if err := o.runChatWithBtw(ctx, project, model.StageBuild, msg); err != nil {
 			return fmt.Errorf("build chat run: %w", err)
-		}
-		if run != nil {
-			if err := o.waitForRunDone(ctx, run); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -352,6 +359,70 @@ func (o *Orchestrator) handleCompleteStage(ctx context.Context, project *model.P
 
 	_, err = o.enhanceH.EnhanceInternal(project.ID, suggestions, "minor")
 	return err
+}
+
+// runChatWithBtw starts (or joins) a chat run and, after it finishes, processes any
+// queued /btw messages as follow-up runs in the same stage context.
+// Messages received within 10 seconds of each other are combined into one prompt.
+func (o *Orchestrator) runChatWithBtw(ctx context.Context, project *model.Project, stage model.StageName, message string) error {
+	run, err := o.startOrJoinChatRun(ctx, project, stage, message)
+	if err != nil {
+		return err
+	}
+	if run != nil {
+		if err := o.waitForRunDone(ctx, run); err != nil {
+			return err
+		}
+	}
+
+	// Process pending btw bursts until the queue is empty.
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		msgs, err := o.activityRepo.ClearBtw(project.HostDir, stage)
+		if err != nil || len(msgs) == 0 {
+			break
+		}
+		for _, combined := range combineBtwBurst(msgs, 10*time.Second) {
+			run, err := o.startOrJoinChatRun(ctx, project, stage, combined)
+			if err != nil {
+				return err
+			}
+			if run != nil {
+				if err := o.waitForRunDone(ctx, run); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// combineBtwBurst groups btw messages by temporal proximity and joins each burst.
+// Messages within `window` of the previous one are combined into one string.
+func combineBtwBurst(msgs []model.BtwMessage, window time.Duration) []string {
+	if len(msgs) == 0 {
+		return nil
+	}
+	sort.Slice(msgs, func(i, j int) bool { return msgs[i].SentAt.Before(msgs[j].SentAt) })
+
+	var bursts []string
+	var current []string
+	last := msgs[0].SentAt
+
+	for _, m := range msgs {
+		if m.SentAt.Sub(last) > window && len(current) > 0 {
+			bursts = append(bursts, strings.Join(current, "\n"))
+			current = current[:0]
+		}
+		current = append(current, m.Message)
+		last = m.SentAt
+	}
+	if len(current) > 0 {
+		bursts = append(bursts, strings.Join(current, "\n"))
+	}
+	return bursts
 }
 
 // startOrJoinChatRun starts a new chat run or attaches to an existing one.

@@ -87,7 +87,7 @@ func (h *ResetHandler) Reset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := pipeline.BuildPipelineState(stage)
+	state := pipeline.BuildPipelineState(stage, nil)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(state)
 }

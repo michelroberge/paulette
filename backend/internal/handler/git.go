@@ -116,7 +116,7 @@ func (h *GitHandler) Reset(w http.ResponseWriter, r *http.Request) {
 		log.Printf("failed to update registry after git reset: %v", err)
 	}
 
-	state := pipeline.BuildPipelineState(project.CurrentStage)
+	state := pipeline.BuildPipelineState(project.CurrentStage, nil)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resetResponse{
 		Project:  project,
@@ -218,7 +218,7 @@ func (h *GitHandler) Pull(w http.ResponseWriter, r *http.Request) {
 		log.Printf("failed to update registry after pull: %v", err)
 	}
 
-	state := pipeline.BuildPipelineState(project.CurrentStage)
+	state := pipeline.BuildPipelineState(project.CurrentStage, nil)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resetResponse{
 		Project:  project,

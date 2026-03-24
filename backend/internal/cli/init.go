@@ -48,11 +48,12 @@ var dependencies = []Dependency{
 	},
 }
 
-// parseReposPath extracts --repos-path=<path> from os.Args (if present).
-func parseReposPath() string {
+// parseFlag extracts --name=<value> from os.Args (if present).
+func parseFlag(name string) string {
+	prefix := "--" + name + "="
 	for _, arg := range os.Args[2:] {
-		if strings.HasPrefix(arg, "--repos-path=") {
-			return strings.TrimPrefix(arg, "--repos-path=")
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix)
 		}
 	}
 	return ""
@@ -66,7 +67,7 @@ func RunInit() int {
 	fmt.Println()
 
 	// Handle optional --repos-path flag
-	if rp := parseReposPath(); rp != "" {
+	if rp := parseFlag("repos-path"); rp != "" {
 		absPath, err := filepath.Abs(rp)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Invalid repos path: %v\n", err)
@@ -79,6 +80,22 @@ func RunInit() int {
 			return 1
 		}
 		fmt.Printf("Repos path set to: %s\n\n", absPath)
+	}
+
+	// Handle optional --claude-path flag
+	if cp := parseFlag("claude-path"); cp != "" {
+		absPath, err := filepath.Abs(cp)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid claude path: %v\n", err)
+			return 1
+		}
+		settings := config.LoadSettings()
+		settings.ClaudePath = absPath
+		if err := config.SaveSettings(settings); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to save settings: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Claude path set to: %s\n\n", absPath)
 	}
 
 	reader := bufio.NewReader(os.Stdin)

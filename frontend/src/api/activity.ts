@@ -15,6 +15,18 @@ export function getActiveRuns(projectId: string): Promise<ActiveRun[]> {
   return apiFetch<ActiveRun[]>(`/projects/${projectId}/activity`);
 }
 
+export function getProjectsActivity(): Promise<Record<string, number>> {
+  return apiFetch<Record<string, number>>('/projects/activity');
+}
+
+export function sendBtw(projectId: string, runId: string, message: string): Promise<void> {
+  return apiFetch<void>(`/projects/${projectId}/activity/${runId}/btw`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  });
+}
+
 export async function reconnectToRun(
   projectId: string,
   runId: string,

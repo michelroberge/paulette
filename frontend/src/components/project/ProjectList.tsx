@@ -2,15 +2,17 @@ import { useState, useEffect } from 'react';
 import { listProjects, createProject, deleteProject } from '../../api/projects';
 import { importProject } from '../../api/import';
 import { getConfig } from '../../api/config';
-import type { Project } from '../../types';
+import { getProjectsActivity } from '../../api/activity';
+import { StageRobot } from '../layout/StageRobot';
+import type { Project, StageName } from '../../types';
 
-const STAGE_ORDER = ['vision', 'ux', 'architecture', 'build', 'complete'];
+const STAGE_ORDER: StageName[] = ['vision', 'ux', 'architecture', 'build', 'complete'];
 const STAGE_LABELS: Record<string, string> = {
   vision: 'Vision', ux: 'UX', architecture: 'Arch', build: 'Build', complete: 'Done',
 };
 
 function StageProgress({ currentStage }: { currentStage: string }) {
-  const current = STAGE_ORDER.indexOf(currentStage);
+  const current = STAGE_ORDER.indexOf(currentStage as StageName);
   return (
     <div className="stage-progress">
       {STAGE_ORDER.slice(0, -1).map((s, i) => (
@@ -18,7 +20,9 @@ function StageProgress({ currentStage }: { currentStage: string }) {
           key={s}
           className={`stage-pip ${i < current ? 'done' : i === current ? 'active' : ''}`}
           title={STAGE_LABELS[s]}
-        />
+        >
+          <StageRobot stage={s} size="small" />
+        </div>
       ))}
       <span className="stage-label">{STAGE_LABELS[currentStage] ?? currentStage}</span>
     </div>
@@ -47,6 +51,7 @@ export function ProjectList({ onSelect }: Props) {
   const [reposPath, setReposPath] = useState('');
   const [appVersion, setAppVersion] = useState('');
   const [appAuthor, setAppAuthor] = useState('');
+  const [activityCounts, setActivityCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
     listProjects().then(setProjects).catch(console.error);
@@ -55,6 +60,14 @@ export function ProjectList({ onSelect }: Props) {
       setAppVersion(c.version);
       setAppAuthor(c.author);
     }).catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => getProjectsActivity().then(counts => { if (!cancelled) setActivityCounts(counts); }).catch(() => {});
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -150,6 +163,12 @@ export function ProjectList({ onSelect }: Props) {
               </button>
             </div>
             <StageProgress currentStage={p.currentStage} />
+            {(activityCounts[p.id] ?? 0) > 0 && (
+              <div className="project-card-activity">
+                <span className="activity-pulse" />
+                <span>{activityCounts[p.id]} agent{activityCounts[p.id] > 1 ? 's' : ''} running</span>
+              </div>
+            )}
             <div className="project-meta">
               <span>{p.author}</span>
               <span>v{p.version} · {new Date(p.updatedAt).toLocaleDateString()}</span>

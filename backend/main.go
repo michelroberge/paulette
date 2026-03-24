@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/cli"
 	"github.com/michelroberge/paulette/backend/internal/config"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
@@ -29,6 +30,7 @@ func main() {
 	}
 
 	cfg := config.Load()
+	agent.SetClaudePath(cfg.ClaudePath)
 
 	registry, err := fsrepo.NewRegistryRepo(cfg.RegistryPath)
 	if err != nil {

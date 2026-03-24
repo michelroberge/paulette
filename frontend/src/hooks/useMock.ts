@@ -9,6 +9,7 @@ export function useMock(projectId: string | null) {
   const [tokenCount, setTokenCount] = useState(0);
   const [streamingText, setStreamingText] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
@@ -79,6 +80,7 @@ export function useMock(projectId: string | null) {
 
   const generate = useCallback(async (refinement = '') => {
     if (!projectId || generating) return;
+    setError(null);
     setGenerating(true);
     setTokenCount(0);
     setStreamingText('');
@@ -97,17 +99,22 @@ export function useMock(projectId: string | null) {
             setStreamingText(t => t + event.content);
             break;
           case 'tokens':
-            setTokenCount(parseInt(event.content, 10));
+            setTokenCount(Number.parseInt(event.content, 10));
             break;
           case 'done':
-            setHtml(event.content);
+            setHtml(event.content || null);
+            break;
+          case 'error':
+            setError(event.content);
             break;
         }
       }, controller.signal);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Generation failed');
     } finally {
       setGenerating(false);
     }
   }, [projectId, generating]);
 
-  return { html, generating, tokenCount, streamingText, loaded, load, generate, stop };
+  return { html, generating, tokenCount, streamingText, loaded, error, load, generate, stop };
 }

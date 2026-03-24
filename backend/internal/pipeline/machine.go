@@ -43,7 +43,8 @@ func NextStage(current model.StageName) (model.StageName, error) {
 }
 
 // BuildPipelineState returns the full pipeline state for a project.
-func BuildPipelineState(currentStage model.StageName) model.PipelineState {
+// activities maps stage names to their current or last-known activity (may be nil).
+func BuildPipelineState(currentStage model.StageName, activities map[model.StageName]*model.StageActivity) model.PipelineState {
 	currentIdx := stageIndex(currentStage)
 	stages := make([]model.StageInfo, len(StageOrder))
 
@@ -61,6 +62,7 @@ func BuildPipelineState(currentStage model.StageName) model.PipelineState {
 			Name:         name,
 			Status:       status,
 			ArtifactPath: ArtifactPaths[name],
+			Activity:     activities[name],
 		}
 	}
 

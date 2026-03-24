@@ -94,7 +94,7 @@ func ParseBuildPlan(ctx context.Context, buildMdContent, archContent string) (<-
 	}
 	prompt.WriteString("Extract all milestones and tasks from this build plan into the required JSON format. Include tags and targetFiles for each task.")
 
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
@@ -244,10 +244,11 @@ Your approach MUST be:
 		userMsg.WriteString("\n\nREMEMBER: This project has existing code from a prior iteration. Read existing files before modifying them. Use Edit for changes to existing files, Write only for new files.")
 	}
 
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
+		"--include-partial-messages",
 		"--model", beadExecutionModel(bead.Tags),
 		"--allowedTools", "Write,Edit,Bash",
 		"--permission-mode", "acceptEdits",
@@ -366,10 +367,11 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 	}
 	userMsg.WriteString("\nUse Bash to inspect the project files, then assess whether this task was implemented correctly and completely.")
 
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
+		"--include-partial-messages",
 		"--model", "claude-sonnet-4-6",
 		"--allowedTools", "Bash",
 		"--permission-mode", "acceptEdits",

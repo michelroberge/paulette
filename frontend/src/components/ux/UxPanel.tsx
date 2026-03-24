@@ -23,7 +23,7 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
   const [refinement, setRefinement] = useState('');
 
   const streamRef = useRef<HTMLDivElement>(null);
-  const { html, generating, tokenCount, streamingText, loaded, load, generate, stop } = useMock(projectId);
+  const { html, generating, tokenCount, streamingText, loaded, error, load, generate, stop } = useMock(projectId);
 
   // Report final token count when a generation completes
   const prevGenerating = useRef(false);
@@ -143,7 +143,13 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
         {mode === 'mock' && (
           <div className="mock-split-layout">
             <div className="mock-main-column">
-              {!html && !generating && loaded && (
+              {error && !generating && (
+                <div className="artifact-preview empty">
+                  <p style={{ color: '#f87171' }}>Generation failed: {error}</p>
+                </div>
+              )}
+
+              {!html && !generating && !error && loaded && (
                 <div className="artifact-preview empty">
                   <p>No mock preview yet.</p>
                   <p>Click <strong>Generate Mock Preview</strong> to create wireframes from the UX artifact.</p>
@@ -173,7 +179,7 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
                 )}
               </div>
               <div className="mock-activity-content" ref={streamRef}>
-                {streamingText || html || ''}
+                {streamingText || html || (generating ? 'Generating wireframes…\n\nThis may take up to 30 seconds.' : '')}
               </div>
             </div>
           </div>
