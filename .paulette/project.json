@@ -4,11 +4,11 @@
   "author": "Michel Roberge",
   "version": "0.1.0",
   "hostDir": "/Users/michelroberge/dev/paulette",
-  "currentStage": "vision",
+  "currentStage": "ux",
   "iteration": 1,
   "imported": true,
   "summaryReady": false,
   "autonomous": false,
   "createdAt": "2026-03-24T17:42:00.958887-04:00",
-  "updatedAt": "2026-03-24T17:42:00.958887-04:00"
+  "updatedAt": "2026-03-24T17:42:08.359403-04:00"
 }
