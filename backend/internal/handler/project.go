@@ -17,12 +17,19 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/repository"
 )
 
+// OrchestratorI is the subset of autopilot.Orchestrator used by ProjectHandler.
+type OrchestratorI interface {
+	Ensure(projectID string)
+	Cancel(projectID string)
+}
+
 type ProjectHandler struct {
 	registry     repository.RegistryRepo
 	projectRepo  repository.ProjectRepo
 	artifactRepo repository.ArtifactRepo
 	git          *git.Service
 	reposPath    string
+	orchestrator OrchestratorI // may be nil before wired
 }
 
 func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service, reposPath string) *ProjectHandler {
@@ -33,6 +40,10 @@ func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.
 		git:          gitSvc,
 		reposPath:    reposPath,
 	}
+}
+
+func (h *ProjectHandler) SetOrchestrator(o OrchestratorI) {
+	h.orchestrator = o
 }
 
 type createProjectRequest struct {
@@ -139,6 +150,11 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Self-heal: if autonomous and pipeline is not complete, ensure orchestrator is running
+	if project.Autonomous && project.CurrentStage != model.StageComplete && h.orchestrator != nil {
+		h.orchestrator.Ensure(project.ID)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(project)
 }
@@ -163,6 +179,13 @@ func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
 
 	if req.Autonomous != nil {
 		project.Autonomous = *req.Autonomous
+		if h.orchestrator != nil {
+			if *req.Autonomous {
+				h.orchestrator.Ensure(project.ID)
+			} else {
+				h.orchestrator.Cancel(project.ID)
+			}
+		}
 	}
 
 	project.UpdatedAt = time.Now()

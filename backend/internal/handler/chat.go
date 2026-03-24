@@ -91,15 +91,31 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	run, err := h.StartChatRun(project, stage, req.Message)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if run == nil {
+		http.Error(w, "an agent is already running for this stage", http.StatusConflict)
+		return
+	}
+
+	// Stream to this client (blocks until run finishes or client disconnects)
+	run.StreamTo(w, r, 0)
+}
+
+// StartChatRun starts a chat run without HTTP plumbing. The caller is responsible for
+// checking whether a run is already active before calling this. Returns (nil, nil) on race.
+func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName, message string) (*stream.Run, error) {
 	// Save user message
 	userMsg := model.Message{
 		Role:      model.RoleUser,
-		Content:   req.Message,
+		Content:   message,
 		Timestamp: time.Now(),
 	}
 	if err := h.chatRepo.AppendMessage(project.HostDir, stage, userMsg); err != nil {
-		http.Error(w, "failed to save message: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to save message: %w", err)
 	}
 
 	// Load previous artifacts for system prompt
@@ -123,12 +139,10 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	var enhCtx *agent.EnhancementContext
 	if project.EnhancementVision != "" {
 		enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-		// Load summary from current .paulette (it was archived but also kept)
 		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 		if data, err := os.ReadFile(summaryPath); err == nil {
 			enhCtx.Summary = string(data)
 		}
-		// Load prior iteration's artifact for this stage
 		prevVersion := findPriorIterationVersion(project.HostDir)
 		if prevVersion != "" {
 			priorArtifactPath := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
@@ -143,8 +157,7 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	// Get chat history for context
 	history, err := h.chatRepo.GetHistory(project.HostDir, stage)
 	if err != nil {
-		http.Error(w, "failed to get chat history: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to get chat history: %w", err)
 	}
 	// Remove the last message (the one we just appended) since we pass it separately
 	if len(history) > 0 {
@@ -152,18 +165,16 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Start a managed run
-	run := h.runs.Start(id, string(stage), "chat")
+	run := h.runs.Start(project.ID, string(stage), "chat")
 	if run == nil {
-		http.Error(w, "an agent is already running for this stage", http.StatusConflict)
-		return
+		return nil, nil // race: already started
 	}
 
 	// Start Claude CLI subprocess using the run's context (survives client disconnect)
-	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, req.Message, project.HostDir)
+	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, message, project.HostDir)
 	if err != nil {
 		run.Finish(h.runs)
-		http.Error(w, "failed to start agent: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to start agent: %w", err)
 	}
 
 	// Background goroutine: process agent events, emit through run
@@ -210,8 +221,7 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Stream to this client (blocks until run finishes or client disconnects)
-	run.StreamTo(w, r, 0)
+	return run, nil
 }
 
 func sseWrite(w http.ResponseWriter, flusher http.Flusher, event agent.StreamEvent) {

@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/cors"
 
+	"github.com/michelroberge/paulette/backend/internal/autopilot"
 	"github.com/michelroberge/paulette/backend/internal/config"
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/handler"
@@ -24,6 +25,7 @@ type Server struct {
 	chatRepo     repository.ChatRepo
 	runs         *stream.Manager
 	staticFS     fs.FS
+	orchestrator *autopilot.Orchestrator
 }
 
 func New(
@@ -48,6 +50,11 @@ func New(
 // Runs returns the stream manager so callers can cancel active runs on shutdown.
 func (s *Server) Runs() *stream.Manager {
 	return s.runs
+}
+
+// Orchestrator returns the autopilot orchestrator.
+func (s *Server) Orchestrator() *autopilot.Orchestrator {
+	return s.orchestrator
 }
 
 func (s *Server) Router() http.Handler {
@@ -77,6 +84,15 @@ func (s *Server) Router() http.Handler {
 	acth := handler.NewActivityHandler(s.runs)
 	gh := handler.NewGitHandler(s.registry, s.projectRepo, gitSvc)
 	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath)
+
+	// Wire orchestrator (created once, reused across Router calls)
+	if s.orchestrator == nil {
+		s.orchestrator = autopilot.NewOrchestrator(
+			s.registry, s.artifactRepo, s.runs,
+			ch, mh, bh, plh, eh,
+		)
+	}
+	ph.SetOrchestrator(s.orchestrator)
 
 	cfgH := handler.NewConfigHandler(s.cfg)
 	r.Get("/api/config", cfgH.GetInfo)

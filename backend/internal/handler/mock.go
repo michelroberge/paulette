@@ -87,33 +87,44 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	var req generateMockRequest
 	json.NewDecoder(r.Body).Decode(&req) // optional body — ignore decode errors
 
+	run, err := h.StartMockRun(project, req.Refinement)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if run == nil {
+		http.Error(w, "mock generation is already running", http.StatusConflict)
+		return
+	}
+
+	run.StreamTo(w, r, 0)
+}
+
+// StartMockRun starts a mock generation run without HTTP plumbing.
+// Returns (nil, nil) on race condition.
+func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*stream.Run, error) {
 	// Use UX artifact if available, fall back to vision artifact
 	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
 	if uxContent == "" {
 		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
 	}
 	if uxContent == "" {
-		http.Error(w, "no artifact available — chat with the agent to generate content first", http.StatusBadRequest)
-		return
+		return nil, fmt.Errorf("no artifact available — chat with the agent to generate content first")
 	}
 
 	frameworkCfg, _ := fsrepo.ReadFramework(project.HostDir)
 
-	// Start a managed run
-	run := h.runs.Start(id, "ux", "mock")
+	run := h.runs.Start(project.ID, "ux", "mock")
 	if run == nil {
-		http.Error(w, "mock generation is already running", http.StatusConflict)
-		return
+		return nil, nil // race: already started
 	}
 
-	events, err := agent.GenerateMock(run.Context(), uxContent, req.Refinement, frameworkCfg)
+	events, err := agent.GenerateMock(run.Context(), uxContent, refinement, frameworkCfg)
 	if err != nil {
 		run.Finish(h.runs)
-		http.Error(w, "failed to start mock generation: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to start mock generation: %w", err)
 	}
 
-	// Background goroutine: process events, save result
 	go func() {
 		defer run.Finish(h.runs)
 
@@ -133,7 +144,6 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			}
 			if event.Type == "done" {
 				html := agent.ExtractHTML(event.Content)
-				// Save to disk
 				p := filepath.Join(project.HostDir, mockRelPath)
 				if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
 					os.WriteFile(p, []byte(html), 0644)
@@ -145,7 +155,7 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	run.StreamTo(w, r, 0)
+	return run, nil
 }
 
 // --- Framework endpoints ---

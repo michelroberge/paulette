@@ -61,13 +61,17 @@ func main() {
 		}
 	}()
 
+	// Resume autonomous pipelines for any projects that were running before restart
+	go srv.Orchestrator().StartAll()
+
 	// Wait for SIGINT or SIGTERM
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
 	log.Printf("received %s, shutting down...", sig)
 
-	// Cancel all active Claude processes
+	// Cancel autonomous orchestrators, then active Claude processes
+	srv.Orchestrator().CancelAll()
 	srv.Runs().CancelAll()
 	log.Println("cancelled all active agent runs")
 

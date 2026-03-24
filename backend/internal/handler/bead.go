@@ -221,22 +221,34 @@ func (h *BeadHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
-	if buildContent == "" {
-		http.Error(w, "no build artifact — complete the Build stage first", http.StatusBadRequest)
+	run, err := h.StartGenerateRun(project)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	archContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
-
-	// Start a managed run
-	run := h.runs.Start(id, "build", "beads-generate")
 	if run == nil {
 		http.Error(w, "bead generation is already running", http.StatusConflict)
 		return
 	}
 
-	// Background goroutine does all the work
+	run.StreamTo(w, r, 0)
+}
+
+// StartGenerateRun starts the beads generation run without HTTP plumbing.
+// Returns (nil, nil) on race condition.
+func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, error) {
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+	if buildContent == "" {
+		return nil, fmt.Errorf("no build artifact — complete the Build stage first")
+	}
+
+	archContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
+
+	run := h.runs.Start(project.ID, "build", "beads-generate")
+	if run == nil {
+		return nil, nil // race: already started
+	}
+
 	go func() {
 		defer run.Finish(h.runs)
 
@@ -402,7 +414,7 @@ func (h *BeadHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		run.Emit(agent.StreamEvent{Type: "done", Content: summary})
 	}()
 
-	run.StreamTo(w, r, 0)
+	return run, nil
 }
 
 type executeBeadsRequest struct {
@@ -434,14 +446,34 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 		req.MaxParallel = 10
 	}
 
-	// Start a managed run
-	run := h.runs.Start(id, "build", "beads-execute")
+	run, err := h.StartExecuteRun(project, req.MaxParallel)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if run == nil {
 		http.Error(w, "bead execution is already running", http.StatusConflict)
 		return
 	}
 
-	// Background goroutine does all the work
+	run.StreamTo(w, r, 0)
+}
+
+// StartExecuteRun starts the beads execution run without HTTP plumbing.
+// Returns (nil, nil) on race condition.
+func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (*stream.Run, error) {
+	if maxParallel < 1 {
+		maxParallel = 2
+	}
+	if maxParallel > 10 {
+		maxParallel = 10
+	}
+
+	run := h.runs.Start(project.ID, "build", "beads-execute")
+	if run == nil {
+		return nil, nil // race: already started
+	}
+
 	go func() {
 		defer run.Finish(h.runs)
 
@@ -480,7 +512,7 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var wg sync.WaitGroup
-		sem := make(chan struct{}, req.MaxParallel)
+		sem := make(chan struct{}, maxParallel)
 		mu := beadGraphLock(project.HostDir)
 
 		for {
@@ -740,7 +772,7 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 		run.Emit(agent.StreamEvent{Type: "done", Content: "Execution complete"})
 	}()
 
-	run.StreamTo(w, r, 0)
+	return run, nil
 }
 
 // --- bd CLI helpers ---

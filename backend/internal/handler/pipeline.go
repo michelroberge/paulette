@@ -65,16 +65,39 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "project not found", http.StatusNotFound)
 		return
 	}
+	previousStage := project.CurrentStage
+
+	if err := h.ApproveInternal(id); err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "failed to") {
+			status = http.StatusInternalServerError
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	project, _ = h.registry.Get(id)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(approveResponse{
+		PreviousStage: string(previousStage),
+		CurrentStage:  string(project.CurrentStage),
+	})
+}
+
+// ApproveInternal advances the pipeline without HTTP plumbing.
+func (h *PipelineHandler) ApproveInternal(projectID string) error {
+	project, err := h.registry.Get(projectID)
+	if err != nil {
+		return fmt.Errorf("project not found: %w", err)
+	}
 
 	// Check artifact exists for current stage (check both .paulette and docs/)
 	artifactContent, err := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, project.CurrentStage)
 	if err != nil {
-		http.Error(w, "failed to check artifact: "+err.Error(), http.StatusInternalServerError)
-		return
+		return fmt.Errorf("failed to check artifact: %w", err)
 	}
 	if strings.TrimSpace(artifactContent) == "" {
-		http.Error(w, "cannot approve: no artifact for current stage", http.StatusBadRequest)
-		return
+		return fmt.Errorf("cannot approve: no artifact for current stage")
 	}
 
 	// Extract validation commands when approving architecture
@@ -85,12 +108,10 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		project.RunCommands = run
 	}
 
-	// Advance to next stage
 	previousStage := project.CurrentStage
 	nextStage, err := pipeline.NextStage(project.CurrentStage)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return err
 	}
 
 	project.CurrentStage = nextStage
@@ -99,22 +120,18 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		project.SummaryReady = false
 	}
 
-	// Update both registry and project file
 	if err := h.registry.Update(project); err != nil {
-		http.Error(w, "failed to update registry: "+err.Error(), http.StatusInternalServerError)
-		return
+		return fmt.Errorf("failed to update registry: %w", err)
 	}
 	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
-		http.Error(w, "failed to save project: "+err.Error(), http.StatusInternalServerError)
-		return
+		return fmt.Errorf("failed to save project: %w", err)
 	}
 
-	// Promote artifact from .paulette to docs and remove from .paulette
+	// Promote artifact from .paulette to docs
 	if artifact, readErr := h.artifactRepo.Read(project.HostDir, previousStage); readErr == nil && artifact != "" {
 		if docErr := fsrepo.WriteStageDoc(project.HostDir, project.Version, previousStage, artifact); docErr != nil {
 			log.Printf("docs promotion failed for %s: %v", previousStage, docErr)
 		} else {
-			// Remove the artifact from .paulette now that it lives in docs
 			aiFactoryPath := filepath.Join(project.HostDir, ".paulette", string(previousStage), string(previousStage)+".md")
 			if rmErr := os.Remove(aiFactoryPath); rmErr != nil {
 				log.Printf("failed to remove .paulette artifact %s: %v", aiFactoryPath, rmErr)
@@ -122,7 +139,7 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Promote UX mock.html to docs alongside ux.md
+	// Promote UX mock.html to docs
 	if previousStage == model.StageUX {
 		mockPath := filepath.Join(project.HostDir, ".paulette", "ux", "mock.html")
 		if mockBytes, readErr := os.ReadFile(mockPath); readErr == nil && len(mockBytes) > 0 {
@@ -132,22 +149,16 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Git commit the promoted artifact and the removal from .paulette
 	commitMsg := fmt.Sprintf("approve(%s): promote artifact to docs", previousStage)
 	if err := h.git.AddAllAndCommit(project.HostDir, commitMsg); err != nil {
 		log.Printf("git commit failed for %s: %v", previousStage, err)
 	}
 
-	// Generate summary when transitioning to complete
 	if nextStage == model.StageComplete {
 		h.startSummaryRun(project)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(approveResponse{
-		PreviousStage: string(previousStage),
-		CurrentStage:  string(nextStage),
-	})
+	return nil
 }
 
 // startSummaryRun creates a managed run for summary generation and kicks it off in a goroutine.
