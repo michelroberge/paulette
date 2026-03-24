@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>paulette — AI Product Factory</title>
+<style>
+:root {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #18181b;
+  --border: #27272a;
+  --primary: #fafafa;
+  --muted: #71717a;
+  --accent: #3b82f6;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --radius: 6px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--background); color:var(--foreground); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; font-size:14px; line-height:1.5; }
+a { color:var(--accent); text-decoration:none; }
+a:hover { text-decoration:underline; }
+
+/* Top Tab Bar */
+.screen-tabs { display:flex; gap:0; background:#111113; border-bottom:1px solid var(--border); position:sticky; top:0; z-index:1000; overflow-x:auto; }
+.screen-tab { padding:10px 18px; cursor:pointer; color:var(--muted); font-size:13px; font-weight:500; border-bottom:2px solid transparent; white-space:nowrap; transition:all .15s; }
+.screen-tab:hover { color:var(--foreground); background:#18181b; }
+.screen-tab.active { color:var(--foreground); border-bottom-color:var(--accent); }
+
+.screen { display:none; }
+.screen.active { display:block; }
+
+/* Shared */
+.container { max-width:1024px; margin:0 auto; padding:32px 24px; }
+.wide-container { max-width:1280px; margin:0 auto; }
+.btn { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:var(--radius); font-size:13px; font-weight:500; cursor:pointer; border:1px solid var(--border); background:var(--card); color:var(--foreground); transition:all .15s; }
+.btn:hover { background:#27272a; }
+.btn-primary { background:var(--foreground); color:var(--background); border-color:var(--foreground); }
+.btn-primary:hover { background:#e4e4e7; }
+.btn-success { background:var(--success); color:#000; border-color:var(--success); }
+.btn-success:hover { background:#16a34a; }
+.btn-danger { background:var(--danger); color:#fff; border-color:var(--danger); }
+.btn-danger:hover { background:#dc2626; }
+.btn-accent { background:var(--accent); color:#fff; border-color:var(--accent); }
+.btn-accent:hover { background:#2563eb; }
+.btn-ghost { background:transparent; border-color:transparent; }
+.btn-ghost:hover { background:#27272a; }
+.btn:disabled { opacity:.5; cursor:not-allowed; }
+.btn-sm { padding:5px 10px; font-size:12px; }
+
+input[type="text"], input[type="number"], textarea, select {
+  background:var(--background); border:1px solid var(--border); color:var(--foreground);
+  padding:8px 12px; border-radius:var(--radius); font-size:14px; width:100%;
+  outline:none; transition:border-color .15s;
+}
+input:focus, textarea:focus, select:focus { border-color:var(--accent); box-shadow:0 0 0 2px rgba(59,130,246,.15); }
+select { cursor:pointer; }
+
+.badge { display:inline-flex; align-items:center; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+.badge-blue { background:rgba(59,130,246,.15); color:#60a5fa; }
+.badge-green { background:rgba(34,197,94,.15); color:#4ade80; }
+.badge-amber { background:rgba(245,158,11,.15); color:#fbbf24; }
+.badge-red { background:rgba(239,68,68,.15); color:#f87171; }
+.badge-muted { background:#27272a; color:var(--muted); }
+
+.card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); }
+
+/* Modal overlay */
+.modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); backdrop-filter:blur(4px); display:flex; align-items:center; justify-content:center; z-index:900; }
+.modal { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:24px; width:440px; max-width:90vw; box-shadow:0 25px 50px rgba(0,0,0,.5); }
+.modal h2 { font-size:18px; margin-bottom:16px; }
+.modal .form-group { margin-bottom:14px; }
+.modal label { display:block; font-size:13px; color:var(--muted); margin-bottom:4px; }
+.modal .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; }
+
+/* Workspace Layout */
+.workspace { display:flex; height:calc(100vh - 41px); overflow:hidden; }
+.workspace-header { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--border); background:#111113; }
+.workspace-sidebar { width:220px; min-width:220px; border-right:1px solid var(--border); background:#111113; display:flex; flex-direction:column; overflow-y:auto; }
+.workspace-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+.workspace-content { flex:1; overflow-y:auto; }
+
+/* Sidebar stages */
+.stage-item { display:flex; align-items:center; gap:10px; padding:10px 14px; cursor:pointer; border-left:3px solid transparent; transition:all .15s; position:relative; }
+.stage-item:hover { background:rgba(255,255,255,.03); }
+.stage-item.active { background:rgba(59,130,246,.08); border-left-color:var(--accent); }
+.stage-item .stage-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+.stage-dot.locked { background:#3f3f46; }
+.stage-dot.active { background:var(--accent); box-shadow:0 0 6px var(--accent); }
+.stage-dot.approved { background:var(--success); }
+.stage-item .stage-name { flex:1; font-size:13px; }
+.stage-item .stage-tokens { font-size:11px; color:var(--muted); }
+.stage-item .stage-reset { position:absolute; right:8px; top:50%; transform:translateY(-50%); opacity:0; font-size:14px; color:var(--muted); cursor:pointer; }
+.stage-item:hover .stage-reset { opacity:1; }
+
+/* Stage tabs */
+.stage-tabs { display:flex; gap:0; border-bottom:1px solid var(--border); padding:0 16px; background:var(--card); }
+.stage-tab { padding:10px 16px; font-size:13px; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; transition:all .15s; }
+.stage-tab:hover { color:var(--foreground); }
+.stage-tab.active { color:var(--foreground); border-bottom-color:var(--accent); }
+
+/* Chat */
+.chat-container { display:flex; flex-direction:column; height:100%; }
+.chat-messages { flex:1; overflow-y:auto; padding:16px; }
+.chat-msg { display:flex; gap:10px; margin-bottom:16px; }
+.chat-avatar { width:32px; height:32px; border-radius:var(--radius); display:flex; align-items:center; justify-content:center; font-size:14px; flex-shrink:0; font-weight:600; }
+.chat-avatar.ai { background:rgba(59,130,246,.15); color:#60a5fa; }
+.chat-avatar.user { background:rgba(34,197,94,.15); color:#4ade80; }
+.chat-bubble { flex:1; }
+.chat-bubble .chat-role { font-size:12px; color:var(--muted); margin-bottom:4px; font-weight:600; }
+.chat-bubble .chat-text { font-size:14px; line-height:1.6; color:#d4d4d8; }
+.chat-input-bar { display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--border); background:var(--card); }
+.chat-input-bar input { flex:1; }
+
+/* Approve bar */
+.approve-bar { display:flex; align-items:center; justify-content:space-between; padding:10px 16px; border-top:1px solid var(--border); background:var(--card); }
+.approve-bar .approve-info { font-size:13px; color:var(--muted); }
+
+/* Artifact viewer */
+.artifact-viewer { padding:24px; max-width:720px; }
+.artifact-viewer h1 { font-size:24px; margin-bottom:16px; }
+.artifact-viewer h2 { font-size:18px; margin:20px 0 8px; color:#e4e4e7; }
+.artifact-viewer h3 { font-size:15px; margin:16px 0 6px; color:#d4d4d8; }
+.artifact-viewer p { color:#a1a1aa; margin-bottom:10px; line-height:1.7; }
+.artifact-viewer ul { margin:0 0 12px 20px; color:#a1a1aa; }
+.artifact-viewer li { margin-bottom:4px; }
+.artifact-viewer code { background:#27272a; padding:2px 6px; border-radius:3px; font-size:13px; }
+
+/* Progress pips */
+.progress-pips { display:flex; gap:4px; }
+.pip { width:10px; height:10px; border-radius:50%; }
+.pip.grey { background:#3f3f46; }
+.pip.blue { background:var(--accent); }
+.pip.green { background:var(--success); }
+
+/* Import progress */
+.import-step { display:flex; align-items:center; gap:12px; padding:10px 0; }
+.import-step .step-indicator { width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; }
+.step-pending { background:#27272a; color:var(--muted); }
+.step-active { background:var(--accent); color:#fff; animation:pulse 1.5s infinite; }
+.step-done { background:var(--success); color:#000; }
+.step-error { background:var(--danger); color:#fff; }
+@keyframes pulse { 0%,100%{ opacity:1; } 50%{ opacity:.5; } }
+
+.log-output { background:var(--background); border:1px solid var(--border); border-radius:var(--radius); padding:12px; font-family:'SF Mono',Consolas,monospace; font-size:12px; color:#a1a1aa; height:200px; overflow-y:auto; margin-top:16px; }
+
+/* DAG graph */
+.dag-container { padding:16px; }
+.dag-graph { background:var(--background); border:1px solid var(--border); border-radius:var(--radius); min-height:300px; padding:20px; position:relative; }
+.dag-node { display:inline-flex; align-items:center; gap:6px; padding:8px 14px; border-radius:var(--radius); font-size:12px; font-weight:500; border:1px solid var(--border); position:absolute; }
+.dag-node.ready { background:rgba(245,158,11,.12); border-color:rgba(245,158,11,.3); color:#fbbf24; }
+.dag-node.progress { background:rgba(59,130,246,.12); border-color:rgba(59,130,246,.3); color:#60a5fa; }
+.dag-node.done { background:rgba(34,197,94,.12); border-color:rgba(34,197,94,.3); color:#4ade80; }
+.dag-node.blocked { background:#1a1a1e; border-color:#27272a; color:#52525b; }
+.dag-legend { display:flex; gap:16px; padding:10px 0; align-items:center; }
+.dag-legend-item { display:flex; align-items:center; gap:5px; font-size:12px; color:var(--muted); }
+.dag-legend-dot { width:10px; height:10px; border-radius:50%; }
+
+/* Completion */
+.completion-layout { display:flex; gap:24px; padding:24px; min-height:100%; }
+.completion-left { flex:0 0 400px; }
+.completion-right { flex:1; }
+
+/* ASCII banner */
+.ascii-banner { font-family:'SF Mono',Consolas,monospace; text-align:center; padding:32px 0 16px; }
+.ascii-title { font-size:28px; font-weight:800; background:linear-gradient(135deg,#60a5fa,#a78bfa,#f472b6); -webkit-background-clip:text; -webkit-text-fill-color:transparent; letter-spacing:2px; }
+.ascii-sub { color:var(--muted); font-size:13px; margin-top:4px; }
+
+/* Project grid */
+.project-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; margin-top:24px; }
+.project-card { padding:16px; cursor:pointer; transition:all .15s; position:relative; }
+.project-card:hover { border-color:#3f3f46; background:#1f1f23; }
+.project-card .card-title { font-size:15px; font-weight:600; margin-bottom:8px; }
+.project-card .card-meta { font-size:12px; color:var(--muted); }
+.project-card .card-delete { position:absolute; top:10px; right:10px; color:var(--muted); cursor:pointer; font-size:16px; opacity:0; transition:opacity .15s; }
+.project-card:hover .card-delete { opacity:1; }
+.dashed-card { border-style:dashed; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:120px; gap:8px; color:var(--muted); cursor:pointer; }
+.dashed-card:hover { border-color:var(--accent); color:var(--foreground); }
+.dashed-card .plus-icon { font-size:28px; }
+
+/* Version history */
+.commit-item { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
+.commit-hash { font-family:monospace; font-size:12px; background:#27272a; padding:2px 8px; border-radius:4px; color:#a1a1aa; }
+.commit-msg { flex:1; font-size:13px; }
+.commit-meta { font-size:11px; color:var(--muted); }
+
+/* Toggle */
+.toggle { width:40px; height:22px; border-radius:11px; background:#27272a; position:relative; cursor:pointer; border:1px solid var(--border); transition:all .15s; }
+.toggle.on { background:var(--accent); border-color:var(--accent); }
+.toggle .toggle-knob { width:16px; height:16px; border-radius:50%; background:#fff; position:absolute; top:2px; left:2px; transition:left .15s; }
+.toggle.on .toggle-knob { left:20px; }
+
+/* Progress bar */
+.progress-bar { height:6px; background:#27272a; border-radius:3px; overflow:hidden; }
+.progress-bar-fill { height:100%; background:var(--accent); border-radius:3px; transition:width .3s; }
+
+/* Info banner */
+.info-banner { background:rgba(59,130,246,.08); border:1px solid rgba(59,130,246,.2); border-radius:var(--radius); padding:10px 14px; font-size:13px; color:#93c5fd; margin:12px 16px; }
+
+/* Thinking dots */
+.thinking { display:inline-flex; gap:3px; }
+.thinking span { width:6px; height:6px; border-radius:50%; background:var(--muted); animation:bounce .6s infinite alternate; }
+.thinking span:nth-child(2) { animation-delay:.2s; }
+.thinking span:nth-child(3) { animation-delay:.4s; }
+@keyframes bounce { to { opacity:.3; transform:translateY(-3px); } }
+
+/* Footer */
+.footer { text-align:center; padding:24px; color:#3f3f46; font-size:12px; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width:6px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:#27272a; border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background:#3f3f46; }
+
+/* Mock activity panel */
+.mock-panel { width:300px; min-width:300px; border-left:1px solid var(--border); background:#111113; display:flex; flex-direction:column; }
+.mock-panel-header { padding:10px 14px; border-bottom:1px solid var(--border); font-size:13px; font-weight:600; color:var(--muted); }
+.mock-panel-content { flex:1; overflow-y:auto; padding:10px 14px; font-family:monospace; font-size:12px; color:#71717a; line-height:1.8; }
+
+/* Enhancement form */
+.enhance-form { margin-top:20px; }
+.enhance-form textarea { min-height:80px; resize:vertical; margin-bottom:10px; }
+.radio-group { display:flex; gap:16px; margin:10px 0; }
+.radio-group label { display:flex; align-items:center; gap:5px; font-size:13px; color:var(--muted); cursor:pointer; }
+.radio-group input[type="radio"] { accent-color:var(--accent); }
+
+/* Remote section */
+.remote-section { margin-top:16px; border:1px solid var(--border); border-radius:var(--radius); }
+.remote-header { padding:10px 14px; cursor:pointer; display:flex; align-items:center; justify-content:space-between; font-size:13px; color:var(--muted); }
+.remote-body { padding:0 14px 14px; display:flex; flex-direction:column; gap:8px; }
+
+/* Framework selector bar */
+.mock-toolbar { display:flex; align-items:center; gap:8px; padding:8px 16px; border-bottom:1px solid var(--border); background:var(--card); }
+.mock-toolbar select { width:160px; }
+.mock-toolbar input { flex:1; }
+
+/* Iframe */
+.mock-iframe { flex:1; background:#fff; border:none; width:100%; }
+
+.flex-col { display:flex; flex-direction:column; }
+.flex-1 { flex:1; }
+.gap-8 { gap:8px; }
+.overflow-auto { overflow:auto; }
+</style>
+</head>
+<body>
+
+<!-- Top Screen Tabs -->
+<div class="screen-tabs" id="screenTabs">
+  <div class="screen-tab active" onclick="showScreen('home')">Home</div>
+  <div class="screen-tab" onclick="showScreen('create-modal')">Create Modal</div>
+  <div class="screen-tab" onclick="showScreen('import-modal')">Import Modal</div>
+  <div class="screen-tab" onclick="showScreen('delete-modal')">Delete Modal</div>
+  <div class="screen-tab" onclick="showScreen('import-progress')">Import Progress</div>
+  <div class="screen-tab" onclick="showScreen('ws-vision')">Workspace: Vision</div>
+  <div class="screen-tab" onclick="showScreen('ws-ux')">Workspace: UX</div>
+  <div class="screen-tab" onclick="showScreen('ws-arch')">Workspace: Architecture</div>
+  <div class="screen-tab" onclick="showScreen('ws-build')">Workspace: Build</div>
+  <div class="screen-tab" onclick="showScreen('ws-complete')">Workspace: Complete</div>
+  <div class="screen-tab" onclick="showScreen('version-history')">Version History</div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: HOME -->
+<!-- ============================================ -->
+<div class="screen active" id="screen-home">
+  <div class="container">
+    <div class="ascii-banner">
+      <div class="ascii-title">✦ paulette</div>
+      <div class="ascii-sub">AI Product Factory — Build products from vision to code</div>
+      <div style="font-size:11px;color:#3f3f46;margin-top:4px;">v0.1.0</div>
+    </div>
+
+    <div class="project-grid">
+      <!-- Existing projects -->
+      <div class="card project-card">
+        <span class="card-delete">✕</span>
+        <div class="card-title">SaaS Dashboard</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <div class="progress-pips">
+            <div class="pip green"></div>
+            <div class="pip green"></div>
+            <div class="pip blue"></div>
+            <div class="pip grey"></div>
+            <div class="pip grey"></div>
+          </div>
+          <span class="badge badge-blue">Architecture</span>
+        </div>
+        <div class="card-meta">Updated 2 hours ago · 847k tokens</div>
+      </div>
+
+      <div class="card project-card">
+        <span class="card-delete">✕</span>
+        <div class="card-title">Mobile Fitness App</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <div class="progress-pips">
+            <div class="pip green"></div>
+            <div class="pip green"></div>
+            <div class="pip green"></div>
+            <div class="pip green"></div>
+            <div class="pip green"></div>
+          </div>
+          <span class="badge badge-green">Complete</span>
+        </div>
+        <div class="card-meta">Updated yesterday · 2.14M tokens</div>
+      </div>
+
+      <div class="card project-card">
+        <span class="card-delete">✕</span>
+        <div class="card-title">E-Commerce Platform</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <div class="progress-pips">
+            <div class="pip green"></div>
+            <div class="pip blue"></div>
+            <div class="pip grey"></div>
+            <div class="pip grey"></div>
+            <div class="pip grey"></div>
+          </div>
+          <span class="badge badge-blue">UX</span>
+        </div>
+        <div class="card-meta">Updated 3 days ago · 312k tokens</div>
+      </div>
+
+      <div class="card project-card">
+        <span class="card-delete">✕</span>
+        <div class="card-title">Internal Wiki Tool</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <div class="progress-pips">
+            <div class="pip green"></div>
+            <div class="pip green"></div>
+            <div class="pip green"></div>
+            <div class="pip blue"></div>
+            <div class="pip grey"></div>
+          </div>
+          <span class="badge badge-blue">Build</span>
+        </div>
+        <div class="card-meta">Updated 5 mins ago · 1.53M tokens</div>
+      </div>
+
+      <!-- New Project -->
+      <div class="card dashed-card">
+        <span class="plus-icon">+</span>
+        <span style="font-size:13px;font-weight:500;">New Project</span>
+      </div>
+
+      <!-- Import Repo -->
+      <div class="card dashed-card">
+        <span class="plus-icon">↓</span>
+        <span style="font-size:13px;font-weight:500;">Import Repo</span>
+      </div>
+    </div>
+
+    <div class="footer">© 2026 paulette · AI Product Factory</div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: CREATE MODAL -->
+<!-- ============================================ -->
+<div class="screen" id="screen-create-modal">
+  <div class="modal-overlay" style="position:relative;min-height:80vh;">
+    <div class="modal">
+      <h2>Create New Project</h2>
+      <div class="form-group">
+        <label>Project Name</label>
+        <input type="text" placeholder="e.g. My SaaS Dashboard">
+      </div>
+      <div class="form-group">
+        <label>Host Directory</label>
+        <input type="text" placeholder="/home/user/projects/my-saas">
+      </div>
+      <div class="modal-actions">
+        <button class="btn">Cancel</button>
+        <button class="btn btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: IMPORT MODAL -->
+<!-- ============================================ -->
+<div class="screen" id="screen-import-modal">
+  <div class="modal-overlay" style="position:relative;min-height:80vh;">
+    <div class="modal">
+      <h2>Import Repository</h2>
+      <div class="form-group">
+        <label>Repository Path or Git URL</label>
+        <input type="text" placeholder="/path/to/repo or https://github.com/user/repo.git">
+      </div>
+      <div class="modal-actions">
+        <button class="btn">Cancel</button>
+        <button class="btn btn-primary">Import</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: DELETE MODAL -->
+<!-- ============================================ -->
+<div class="screen" id="screen-delete-modal">
+  <div class="modal-overlay" style="position:relative;min-height:80vh;">
+    <div class="modal">
+      <h2>Delete Project</h2>
+      <p style="color:var(--muted);margin-bottom:16px;">Are you sure you want to delete <strong style="color:var(--foreground);">SaaS Dashboard</strong>? This action cannot be undone.</p>
+      <div class="modal-actions">
+        <button class="btn">Cancel</button>
+        <button class="btn btn-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: IMPORT PROGRESS -->
+<!-- ============================================ -->
+<div class="screen" id="screen-import-progress">
+  <div class="container" style="max-width:640px;padding-top:60px;">
+    <div class="ascii-banner" style="padding-bottom:24px;">
+      <div class="ascii-title">✦ paulette</div>
+      <div class="ascii-sub">Importing repository…</div>
+    </div>
+
+    <div class="card" style="padding:24px;">
+      <h3 style="font-size:15px;margin-bottom:16px;">Import Progress</h3>
+
+      <div class="import-step">
+        <div class="step-indicator step-done">✓</div>
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:500;">Architecture Analysis</div>
+          <div style="font-size:12px;color:var(--muted);">Scanning project structure and dependencies</div>
+        </div>
+        <span class="badge badge-green">Done</span>
+      </div>
+
+      <div class="import-step">
+        <div class="step-indicator step-done">✓</div>
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:500;">UX Reverse-Engineering</div>
+          <div style="font-size:12px;color:var(--muted);">Analyzing UI components and user flows</div>
+        </div>
+        <span class="badge badge-green">Done</span>
+      </div>
+
+      <div class="import-step">
+        <div class="step-indicator step-active">●</div>
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:500;">Architecture Cross-Reference</div>
+          <div style="font-size:12px;color:var(--muted);">Linking UX to architecture components</div>
+        </div>
+        <span class="badge badge-blue">In Progress</span>
+      </div>
+
+      <div class="import-step">
+        <div class="step-indicator step-pending">4</div>
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:500;">Vision Synthesis</div>
+          <div style="font-size:12px;color:var(--muted);">Generating product vision from code</div>
+        </div>
+        <span class="badge badge-muted">Pending</span>
+      </div>
+
+      <div class="import-step">
+        <div class="step-indicator step-pending">5</div>
+        <div style="flex:1;">
+          <div style="font-size:13px;font-weight:500;">Build Plan Synthesis</div>
+          <div style="font-size:12px;color:var(--muted);">Creating build plan from analysis</div>
+        </div>
+        <span class="badge badge-muted">Pending</span>
+      </div>
+
+      <div class="log-output">
+<span style="color:#4ade80;">✓ Found 142 source files across 23 directories</span>
+<br><span style="color:#4ade80;">✓ Detected framework: Next.js + TypeScript</span>
+<br><span style="color:#4ade80;">✓ Identified 8 API routes and 12 page components</span>
+<br><span style="color:#4ade80;">✓ UX analysis complete: 6 user journeys mapped</span>
+<br><span style="color:#60a5fa;">⟳ Cross-referencing architecture with UX artifacts…</span>
+<br><span style="color:#71717a;">  Mapping API routes to user flows…</span>
+<br><span style="color:#71717a;">  Resolving component dependencies…</span>
+      </div>
+
+      <div style="margin-top:16px;text-align:right;">
+        <button class="btn btn-primary" disabled>Start Review</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: WORKSPACE — VISION -->
+<!-- ============================================ -->
+<div class="screen" id="screen-ws-vision">
+  <!-- Header -->
+  <div class="workspace-header">
+    <button class="btn btn-ghost btn-sm">← Back</button>
+    <div style="font-weight:600;font-size:15px;">SaaS Dashboard</div>
+    <span class="badge badge-muted">v0.1.0</span>
+    <span style="font-size:12px;color:var(--muted);">by paul</span>
+    <div style="flex:1;"></div>
+    <span style="font-size:12px;color:var(--muted);">847k tokens</span>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span style="font-size:12px;color:var(--muted);">Auto</span>
+      <div class="toggle"><div class="toggle-knob"></div></div>
+    </div>
+    <button class="btn btn-sm">🕑 History</button>
+  </div>
+
+  <div class="workspace">
+    <!-- Sidebar -->
+    <div class="workspace-sidebar">
+      <div style="padding:10px 14px 6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:600;">Stages</div>
+      <div class="stage-item active">
+        <div class="stage-dot active"></div>
+        <div class="stage-name">Vision</div>
+        <div class="stage-tokens">124k</div>
+        <span class="stage-reset">⟳</span>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot locked"></div>
+        <div class="stage-name" style="color:var(--muted);">UX</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot locked"></div>
+        <div class="stage-name" style="color:var(--muted);">Architecture</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot locked"></div>
+        <div class="stage-name" style="color:var(--muted);">Build</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot locked"></div>
+        <div class="stage-name" style="color:var(--muted);">Complete</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div style="flex:1;"></div>
+      <div style="padding:12px 14px;font-family:monospace;font-size:11px;color:#27272a;text-align:center;">✦ paulette v0.1.0</div>
+    </div>
+
+    <!-- Main -->
+    <div class="workspace-main">
+      <div class="stage-tabs">
+        <div class="stage-tab active" onclick="toggleVisionTab(this,'vision-chat')">Chat</div>
+        <div class="stage-tab" onclick="toggleVisionTab(this,'vision-artifact')">Artifact</div>
+      </div>
+
+      <!-- Chat tab -->
+      <div id="vision-chat" class="flex-col flex-1" style="display:flex;overflow:hidden;">
+        <div class="chat-messages" style="flex:1;overflow-y:auto;">
+          <div class="chat-msg">
+            <div class="chat-avatar ai">AI</div>
+            <div class="chat-bubble">
+              <div class="chat-role">Vision Advisor</div>
+              <div class="chat-text">Let's start building your product vision. Tell me about the problem you're solving — who are your users, and what pain points are you addressing?</div>
+            </div>
+          </div>
+          <div class="chat-msg">
+            <div class="chat-avatar user">P</div>
+            <div class="chat-bubble">
+              <div class="chat-role">You</div>
+              <div class="chat-text">I want to build a SaaS analytics dashboard that helps small business owners track their key metrics in one place. They're currently juggling multiple tools — Stripe, Google Analytics, Mailchimp — and have no unified view.</div>
+            </div>
+          </div>
+          <div class="chat-msg">
+            <div class="chat-avatar ai">AI</div>
+            <div class="chat-bubble">
+              <div class="chat-role">Vision Advisor</div>
+              <div class="chat-text">That's a great starting point. Let me draft a vision document based on what you've shared. Here's what I'm thinking:<br><br><strong>Problem Statement:</strong> Small business owners waste 3–5 hours per week switching between disconnected analytics tools, leading to missed insights and delayed decisions.<br><br><strong>Target Users:</strong> Non-technical founders and operations managers at companies with 1–50 employees.<br><br><strong>Core Value Proposition:</strong> A single dashboard that aggregates revenue, traffic, and engagement metrics from popular SaaS tools, surfacing actionable insights automatically.<br><br>Shall I expand on the competitive landscape and key differentiators?</div>
+            </div>
+          </div>
+          <div class="chat-msg">
+            <div class="chat-avatar user">P</div>
+            <div class="chat-bubble">
+              <div class="chat-role">You</div>
+              <div class="chat-text">Yes, and also include a section on the MVP scope — what integrations we'll support in v1.</div>
+            </div>
+          </div>
+          <div class="chat-msg">
+            <div class="chat-avatar ai">AI</div>
+            <div class="chat-bubble">
+              <div class="chat-role">Vision Advisor <span class="thinking"><span></span><span></span><span></span></span></div>
+              <div class="chat-text" style="color:var(--muted);font-style:italic;">Drafting expanded vision with MVP scope…</div>
+            </div>
+          </div>
+        </div>
+        <div class="chat-input-bar">
+          <input type="text" placeholder="Type your message…">
+          <button class="btn btn-danger btn-sm">■ Stop</button>
+        </div>
+      </div>
+
+      <!-- Artifact tab (hidden by default) -->
+      <div id="vision-artifact" class="flex-1 overflow-auto" style="display:none;">
+        <div class="artifact-viewer">
+          <h1>Product Vision: SaaS Dashboard</h1>
+          <h2>Problem Statement</h2>
+          <p>Small business owners waste 3–5 hours per week switching between disconnected analytics tools, leading to missed insights and delayed decisions. There is no affordable, unified dashboard tailored to non-technical users.</p>
+          <h2>Target Users</h2>
+          <ul>
+            <li>Non-technical founders at companies with 1–50 employees</li>
+            <li>Operations managers responsible for reporting</li>
+            <li>Freelancers tracking client project metrics</li>
+          </ul>
+          <h2>Core Value Proposition</h2>
+          <p>A single dashboard aggregating revenue, traffic, and engagement metrics from popular SaaS tools, with AI-powered insight summaries delivered weekly.</p>
+          <h2>Competitive Landscape</h2>
+          <p>Existing solutions (Databox, Geckoboard, Klipfolio) target mid-market teams with complex setup. Our differentiation: zero-config onboarding via OAuth, opinionated default dashboards, and AI-generated weekly digests.</p>
+          <h2>MVP Scope (v1.0)</h2>
+          <ul>
+            <li>Integrations: Stripe, Google Analytics, Mailchimp</li>
+            <li>Dashboard with 3 default widgets: Revenue, Traffic, Email Engagement</li>
+            <li>Weekly AI-generated insight email</li>
+            <li>OAuth-based onboarding (no manual API keys)</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Approve bar -->
+      <div class="approve-bar">
+        <div class="approve-info">Vision document ready for review</div>
+        <button class="btn btn-success" disabled>✓ Approve</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: WORKSPACE — UX -->
+<!-- ============================================ -->
+<div class="screen" id="screen-ws-ux">
+  <div class="workspace-header">
+    <button class="btn btn-ghost btn-sm">← Back</button>
+    <div style="font-weight:600;font-size:15px;">SaaS Dashboard</div>
+    <span class="badge badge-muted">v0.1.0</span>
+    <span style="font-size:12px;color:var(--muted);">by paul</span>
+    <div style="flex:1;"></div>
+    <span style="font-size:12px;color:var(--muted);">1.02M tokens</span>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span style="font-size:12px;color:var(--muted);">Auto</span>
+      <div class="toggle"><div class="toggle-knob"></div></div>
+    </div>
+    <button class="btn btn-sm">🕑 History</button>
+  </div>
+
+  <div class="workspace">
+    <div class="workspace-sidebar">
+      <div style="padding:10px 14px 6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:600;">Stages</div>
+      <div class="stage-item">
+        <div class="stage-dot approved"></div>
+        <div class="stage-name">Vision</div>
+        <div class="stage-tokens">124k</div>
+        <span class="stage-reset">⟳</span>
+      </div>
+      <div class="stage-item active">
+        <div class="stage-dot active"></div>
+        <div class="stage-name">UX</div>
+        <div class="stage-tokens">198k</div>
+        <span class="stage-reset">⟳</span>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot locked"></div>
+        <div class="stage-name" style="color:var(--muted);">Architecture</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot locked"></div>
+        <div class="stage-name" style="color:var(--muted);">Build</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot locked"></div>
+        <div class="stage-name" style="color:var(--muted);">Complete</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div style="flex:1;"></div>
+      <div style="padding:12px 14px;font-family:monospace;font-size:11px;color:#27272a;text-align:center;">✦ paulette v0.1.0</div>
+    </div>
+
+    <div class="workspace-main" style="display:flex;flex-direction:column;">
+      <div class="stage-tabs">
+        <div class="stage-tab" onclick="toggleUxTab(this,'ux-chat')">Chat</div>
+        <div class="stage-tab" onclick="toggleUxTab(this,'ux-design')">UX Design</div>
+        <div class="stage-tab active" onclick="toggleUxTab(this,'ux-mock')">Mock Preview</div>
+      </div>
+
+      <div style="display:flex;flex:1;overflow:hidden;">
+        <!-- Chat (hidden) -->
+        <div id="ux-chat" class="flex-col flex-1" style="display:none;">
+          <div class="chat-messages" style="flex:1;overflow-y:auto;">
+            <div class="chat-msg">
+              <div class="chat-avatar ai">AI</div>
+              <div class="chat-bubble">
+                <div class="chat-role">UX Advisor</div>
+                <div class="chat-text">Let's design the user experience for your SaaS Dashboard. I've reviewed the vision document — shall we start with the main dashboard layout and the onboarding flow?</div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-input-bar">
+            <input type="text" placeholder="Type your message…">
+            <button class="btn btn-primary btn-sm">Send</button>
+          </div>
+        </div>
+
+        <!-- UX Design (hidden) -->
+        <div id="ux-design" class="flex-1 overflow-auto" style="display:none;">
+          <div class="artifact-viewer">
+            <h1>UX Design: SaaS Dashboard</h1>
+            <h2>Screen: Dashboard Home</h2>
+            <p>A grid of metric cards showing revenue (Stripe), traffic (GA), and engagement (Mailchimp). Each card has a sparkline chart, current value, and % change badge.</p>
+            <h2>Screen: Onboarding</h2>
+            <p>3-step wizard: Connect Stripe → Connect Google Analytics → Connect Mailchimp. Each step uses OAuth popup. Progress bar at top.</p>
+            <h2>Screen: Settings</h2>
+            <p>Manage connected integrations, notification preferences, and account details.</p>
+          </div>
+        </div>
+
+        <!-- Mock Preview (visible) -->
+        <div id="ux-mock" class="flex-col flex-1" style="display:flex;">
+          <div class="mock-toolbar">
+            <select>
+              <option>Shadcn/UI</option>
+              <option>Tailwind CSS</option>
+              <option>Bootstrap 5</option>
+              <option>Material UI</option>
+              <option>Vanilla CSS</option>
+              <option>Other…</option>
+            </select>
+            <input type="text" placeholder="Refinement: e.g. 'make the sidebar collapsible'">
+            <button class="btn btn-accent btn-sm">Generate Mock</button>
+            <button class="btn btn-sm" disabled>■ Stop</button>
+          </div>
+          <div style="flex:1;display:flex;">
+            <div style="flex:1;background:#1a1a2e;display:flex;align-items:center;justify-content:center;position:relative;">
+              <!-- Simulated iframe content -->
+              <div style="width:90%;max-width:800px;background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.3);overflow:hidden;">
+                <div style="background:#f8fafc;padding:12px 16px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:10px;">
+                  <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;"></div>
+                  <span style="font-size:13px;color:#334155;font-weight:600;">SaaS Dashboard</span>
+                  <div style="flex:1;"></div>
+                  <span style="font-size:12px;color:#94a3b8;">paul@acme.io</span>
+                </div>
+                <div style="padding:20px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:14px;">
+                    <div style="font-size:11px;color:#64748b;margin-bottom:4px;">Monthly Revenue</div>
+                    <div style="font-size:22px;font-weight:700;color:#0f172a;">$12,847</div>
+                    <div style="font-size:11px;color:#22c55e;margin-top:2px;">↑ 12.3%</div>
+                  </div>
+                  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:14px;">
+                    <div style="font-size:11px;color:#64748b;margin-bottom:4px;">Page Views</div>
+                    <div style="font-size:22px;font-weight:700;color:#0f172a;">48.2k</div>
+                    <div style="font-size:11px;color:#22c55e;margin-top:2px;">↑ 8.1%</div>
+                  </div>
+                  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:14px;">
+                    <div style="font-size:11px;color:#64748b;margin-bottom:4px;">Email Open Rate</div>
+                    <div style="font-size:22px;font-weight:700;color:#0f172a;">34.7%</div>
+                    <div style="font-size:11px;color:#ef4444;margin-top:2px;">↓ 2.1%</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Activity panel -->
+            <div class="mock-panel">
+              <div class="mock-panel-header">⚡ Agent Activity</div>
+              <div class="mock-panel-content">
+<span style="color:#4ade80;">✓ Analyzing UX design document…</span><br>
+<span style="color:#4ade80;">✓ Identified 3 screens to generate</span><br>
+<span style="color:#4ade80;">✓ Selected framework: Shadcn/UI</span><br>
+<span style="color:#60a5fa;">⟳ Generating Dashboard Home screen…</span><br>
+<span style="color:#71717a;">  Creating metric card components</span><br>
+<span style="color:#71717a;">  Adding responsive grid layout</span><br>
+<span style="color:#71717a;">  Rendering sparkline placeholders</span><br>
+<span style="color:#4ade80;">✓ Dashboard Home complete (847 tokens)</span><br>
+<span style="color:#60a5fa;">⟳ Generating navigation and sidebar…</span><br>
+<span style="color:#71717a;">  Building nav items</span><br>
+<span style="color:#71717a;">  Adding user avatar dropdown</span><br>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="approve-bar">
+        <div class="approve-info">Review the mock preview, refine if needed, then approve</div>
+        <button class="btn btn-success">✓ Approve</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: WORKSPACE — ARCHITECTURE -->
+<!-- ============================================ -->
+<div class="screen" id="screen-ws-arch">
+  <div class="workspace-header">
+    <button class="btn btn-ghost btn-sm">← Back</button>
+    <div style="font-weight:600;font-size:15px;">SaaS Dashboard</div>
+    <span class="badge badge-muted">v0.1.0</span>
+    <span style="font-size:12px;color:var(--muted);">by paul</span>
+    <div style="flex:1;"></div>
+    <span style="font-size:12px;color:var(--muted);">1.38M tokens</span>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span style="font-size:12px;color:var(--muted);">Auto</span>
+      <div class="toggle"><div class="toggle-knob"></div></div>
+    </div>
+    <button class="btn btn-sm">🕑 History</button>
+  </div>
+
+  <div class="workspace">
+    <div class="workspace-sidebar">
+      <div style="padding:10px 14px 6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:600;">Stages</div>
+      <div class="stage-item">
+        <div class="stage-dot approved"></div>
+        <div class="stage-name">Vision</div>
+        <div class="stage-tokens">124k</div>
+        <span class="stage-reset">⟳</span>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot approved"></div>
+        <div class="stage-name">UX</div>
+        <div class="stage-tokens">198k</div>
+        <span class="stage-reset">⟳</span>
+      </div>
+      <div class="stage-item active">
+        <div class="stage-dot active"></div>
+        <div class="stage-name">Architecture</div>
+        <div class="stage-tokens">356k</div>
+        <span class="stage-reset">⟳</span>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot locked"></div>
+        <div class="stage-name" style="color:var(--muted);">Build</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot locked"></div>
+        <div class="stage-name" style="color:var(--muted);">Complete</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div style="flex:1;"></div>
+      <div style="padding:12px 14px;font-family:monospace;font-size:11px;color:#27272a;text-align:center;">✦ paulette v0.1.0</div>
+    </div>
+
+    <div class="workspace-main">
+      <div class="stage-tabs">
+        <div class="stage-tab" onclick="toggleArchTab(this,'arch-chat')">Chat</div>
+        <div class="stage-tab active" onclick="toggleArchTab(this,'arch-artifact')">Artifact</div>
+      </div>
+
+      <div id="arch-chat" class="flex-col flex-1" style="display:none;overflow:hidden;">
+        <div class="chat-messages" style="flex:1;overflow-y:auto;">
+          <div class="chat-msg">
+            <div class="chat-avatar ai">AI</div>
+            <div class="chat-bubble">
+              <div class="chat-role">Architect (Opus)</div>
+              <div class="chat-text">Based on the vision and UX documents, I recommend a Next.js 14 monorepo with a PostgreSQL database and a separate integration microservice. Let me outline the full architecture…</div>
+            </div>
+          </div>
+        </div>
+        <div class="chat-input-bar">
+          <input type="text" placeholder="Type your message…">
+          <button class="btn btn-primary btn-sm">Send</button>
+        </div>
+      </div>
+
+      <div id="arch-artifact" class="flex-1 overflow-auto" style="display:block;">
+        <div class="info-banner" style="margin-top:12px;">This artifact was auto-generated from your codebase. Review and refine via chat, then approve.</div>
+        <div class="artifact-viewer">
+          <h1>Architecture: SaaS Dashboard</h1>
+          <h2>System Overview</h2>
+          <p>Monorepo using Turborepo with three packages: <code>web</code> (Next.js 14 app router), <code>api</code> (tRPC server), and <code>integrations</code> (background worker service).</p>
+          <h2>Tech Stack</h2>
+          <ul>
+            <li><strong>Frontend:</strong> Next.js 14, TypeScript, Tailwind CSS, Shadcn/UI</li>
+            <li><strong>Backend:</strong> tRPC, Drizzle ORM, PostgreSQL 16</li>
+            <li><strong>Auth:</strong> NextAuth.js with OAuth providers</li>
+            <li><strong>Integrations:</strong> Bull MQ worker for Stripe/GA/Mailchimp sync</li>
+            <li><strong>Infrastructure:</strong> Vercel (web), Railway (API + DB + worker)</li>
+          </ul>
+          <h2>Data Model</h2>
+          <p>Core entities: <code>User</code>, <code>Organization</code>, <code>Integration</code>, <code>MetricSnapshot</code>, <code>Dashboard</code>, <code>Widget</code>.</p>
+          <h3>Key Relations</h3>
+          <ul>
+            <li>User → belongs to Organization (many-to-one)</li>
+            <li>Organization → has many Integrations</li>
+            <li>Integration → generates MetricSnapshots (time-series)</li>
+            <li>Dashboard → contains ordered Widgets</li>
+          </ul>
+          <h2>API Design</h2>
+          <p>tRPC router with namespaced procedures: <code>dashboard.get</code>, <code>dashboard.update</code>, <code>integration.connect</code>, <code>integration.sync</code>, <code>metrics.query</code>.</p>
+          <h2>Security</h2>
+          <ul>
+            <li>OAuth tokens encrypted at rest (AES-256)</li>
+            <li>Row-level security via organization scoping</li>
+            <li>Rate limiting: 100 req/min per user</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="approve-bar">
+        <div class="approve-info">Architecture document ready for approval</div>
+        <button class="btn btn-success">✓ Approve</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: WORKSPACE — BUILD -->
+<!-- ============================================ -->
+<div class="screen" id="screen-ws-build">
+  <div class="workspace-header">
+    <button class="btn btn-ghost btn-sm">← Back</button>
+    <div style="font-weight:600;font-size:15px;">SaaS Dashboard</div>
+    <span class="badge badge-muted">v0.1.0</span>
+    <span style="font-size:12px;color:var(--muted);">by paul</span>
+    <div style="flex:1;"></div>
+    <span style="font-size:12px;color:var(--muted);">1.89M tokens</span>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span style="font-size:12px;color:var(--muted);">Auto</span>
+      <div class="toggle"><div class="toggle-knob"></div></div>
+    </div>
+    <button class="btn btn-sm">🕑 History</button>
+  </div>
+
+  <div class="workspace">
+    <div class="workspace-sidebar">
+      <div style="padding:10px 14px 6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:600;">Stages</div>
+      <div class="stage-item">
+        <div class="stage-dot approved"></div>
+        <div class="stage-name">Vision</div>
+        <div class="stage-tokens">124k</div>
+        <span class="stage-reset">⟳</span>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot approved"></div>
+        <div class="stage-name">UX</div>
+        <div class="stage-tokens">198k</div>
+        <span class="stage-reset">⟳</span>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot approved"></div>
+        <div class="stage-name">Architecture</div>
+        <div class="stage-tokens">356k</div>
+        <span class="stage-reset">⟳</span>
+      </div>
+      <div class="stage-item active">
+        <div class="stage-dot active"></div>
+        <div class="stage-name">Build</div>
+        <div class="stage-tokens">512k</div>
+        <span class="stage-reset">⟳</span>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot locked"></div>
+        <div class="stage-name" style="color:var(--muted);">Complete</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div style="flex:1;"></div>
+      <div style="padding:12px 14px;font-family:monospace;font-size:11px;color:#27272a;text-align:center;">✦ paulette v0.1.0</div>
+    </div>
+
+    <div class="workspace-main">
+      <div class="stage-tabs">
+        <div class="stage-tab" onclick="toggleBuildTab(this,'build-chat')">Chat</div>
+        <div class="stage-tab" onclick="toggleBuildTab(this,'build-plan')">Build Plan</div>
+        <div class="stage-tab active" onclick="toggleBuildTab(this,'build-execute')">Execute</div>
+      </div>
+
+      <!-- Chat (hidden) -->
+      <div id="build-chat" class="flex-col flex-1" style="display:none;overflow:hidden;">
+        <div class="chat-messages" style="flex:1;overflow-y:auto;">
+          <div class="chat-msg">
+            <div class="chat-avatar ai">AI</div>
+            <div class="chat-bubble">
+              <div class="chat-role">Build Advisor</div>
+              <div class="chat-text">I've created a build plan with 14 tasks organized into 4 phases. Ready to generate beads when you are.</div>
+            </div>
+          </div>
+        </div>
+        <div class="chat-input-bar">
+          <input type="text" placeholder="Type your message…">
+          <button class="btn btn-primary btn-sm">Send</button>
+        </div>
+      </div>
+
+      <!-- Build Plan (hidden) -->
+      <div id="build-plan" class="flex-1 overflow-auto" style="display:none;">
+        <div style="padding:12px 16px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border);background:var(--card);">
+          <button class="btn btn-accent btn-sm">⚡ Generate Beads</button>
+          <span style="font-size:12px;color:var(--muted);">Parse plan into executable tasks</span>
+        </div>
+        <div class="artifact-viewer">
+          <h1>Build Plan</h1>
+          <h2>Phase 1: Foundation</h2>
+          <ul>
+            <li>Initialize Turborepo monorepo structure</li>
+            <li>Set up PostgreSQL with Drizzle schema</li>
+            <li>Configure NextAuth.js with OAuth</li>
+          </ul>
+          <h2>Phase 2: Core Features</h2>
+          <ul>
+            <li>Build dashboard layout and widget grid</li>
+            <li>Implement Stripe integration connector</li>
+            <li>Implement Google Analytics connector</li>
+            <li>Implement Mailchimp connector</li>
+          </ul>
+          <h2>Phase 3: Polish</h2>
+          <ul>
+            <li>Add metric sparkline charts</li>
+            <li>Build settings page</li>
+            <li>Implement weekly digest email</li>
+          </ul>
+          <h2>Phase 4: Testing & Deploy</h2>
+          <ul>
+            <li>Write integration tests</li>
+            <li>Set up CI/CD pipeline</li>
+            <li>Deploy to Vercel + Railway</li>
+            <li>End-to-end smoke tests</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Execute (visible) -->
+      <div id="build-execute" class="flex-col flex-1" style="display:flex;overflow:hidden;">
+        <!-- Config bar -->
+        <div style="padding:10px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border);background:var(--card);">
+          <span style="font-size:13px;color:var(--muted);">Max Parallel Agents:</span>
+          <input type="number" value="3" style="width:60px;">
+          <button class="btn btn-accent btn-sm">▶ Execute Beads</button>
+          <button class="btn btn-sm" disabled>■ Stop</button>
+          <div style="flex:1;"></div>
+          <span class="badge badge-blue">🤖 3 agents active</span>
+          <span style="font-size:13px;color:var(--muted);">8 / 14 complete</span>
+        </div>
+
+        <!-- Progress bar -->
+        <div style="padding:6px 16px;background:var(--card);">
+          <div class="progress-bar" style="width:100%;">
+            <div class="progress-bar-fill" style="width:57%;"></div>
+          </div>
+        </div>
+
+        <div style="flex:1;overflow-y:auto;padding:16px;">
+          <!-- DAG Visualization -->
+          <div class="dag-graph" style="min-height:320px;">
+            <!-- Row 1 -->
+            <div class="dag-node done" style="top:15px;left:20px;">✓ Init monorepo</div>
+            <div class="dag-node done" style="top:15px;left:180px;">✓ DB schema</div>
+            <div class="dag-node done" style="top:15px;left:320px;">✓ Auth setup</div>
+
+            <!-- Row 2 -->
+            <div class="dag-node done" style="top:70px;left:20px;">✓ Dashboard layout</div>
+            <div class="dag-node done" style="top:70px;left:200px;">✓ Stripe connector</div>
+            <div class="dag-node done" style="top:70px;left:380px;">✓ GA connector</div>
+            <div class="dag-node done" style="top:70px;left:530px;">✓ Mailchimp conn.</div>
+
+            <!-- Row 3 -->
+            <div class="dag-node done" style="top:125px;left:20px;">✓ Sparkline charts</div>
+            <div class="dag-node progress" style="top:125px;left:200px;">⟳ Settings page</div>
+            <div class="dag-node progress" style="top:125px;left:370px;">⟳ Weekly digest</div>
+
+            <!-- Row 4 -->
+            <div class="dag-node progress" style="top:180px;left:20px;">⟳ Integration tests</div>
+            <div class="dag-node ready" style="top:180px;left:200px;">● CI/CD pipeline</div>
+            <div class="dag-node blocked" style="top:180px;left:370px;">○ Deploy</div>
+            <div class="dag-node blocked" style="top:180px;left:500px;">○ E2E tests</div>
+
+            <!-- Connection lines would be SVG in production -->
+          </div>
+
+          <!-- Legend -->
+          <div class="dag-legend">
+            <div class="dag-legend-item"><div class="dag-legend-dot" style="background:#fbbf24;"></div> Ready</div>
+            <div class="dag-legend-item"><div class="dag-legend-dot" style="background:#3b82f6;"></div> In Progress</div>
+            <div class="dag-legend-item"><div class="dag-legend-dot" style="background:#22c55e;"></div> Done</div>
+            <div class="dag-legend-item"><div class="dag-legend-dot" style="background:#3f3f46;"></div> Blocked</div>
+            <div style="flex:1;"></div>
+            <span class="badge badge-blue" style="animation:pulse 2s infinite;">⚡ Agents executing…</span>
+          </div>
+
+          <!-- Execution Log -->
+          <div style="margin-top:12px;">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600;">Execution Log</div>
+            <div class="log-output" style="height:140px;">
+<span style="color:#71717a;">[14:23:01]</span> <span style="color:#60a5fa;">Agent-1</span> claimed "Settings page"<br>
+<span style="color:#71717a;">[14:23:01]</span> <span style="color:#a78bfa;">Agent-2</span> claimed "Weekly digest"<br>
+<span style="color:#71717a;">[14:23:02]</span> <span style="color:#f472b6;">Agent-3</span> claimed "Integration tests"<br>
+<span style="color:#71717a;">[14:22:58]</span> <span style="color:#60a5fa;">Agent-1</span> <span style="color:#4ade80;">completed</span> "Sparkline charts" ✓<br>
+<span style="color:#71717a;">[14:22:44]</span> <span style="color:#a78bfa;">Agent-2</span> <span style="color:#4ade80;">completed</span> "Mailchimp connector" ✓<br>
+<span style="color:#71717a;">[14:22:30]</span> <span style="color:#f472b6;">Agent-3</span> <span style="color:#4ade80;">completed</span> "GA connector" ✓<br>
+<span style="color:#71717a;">[14:22:15]</span> <span style="color:#60a5fa;">Agent-1</span> Writing settings page components…<br>
+<span style="color:#71717a;">[14:22:16]</span> <span style="color:#a78bfa;">Agent-2</span> Setting up email template with Resend…<br>
+<span style="color:#71717a;">[14:22:17]</span> <span style="color:#f472b6;">Agent-3</span> Writing test fixtures for Stripe API…<br>
+            </div>
+          </div>
+        </div>
+
+        <div class="approve-bar">
+          <div class="approve-info">Build in progress — 8 of 14 beads complete</div>
+          <button class="btn btn-success" disabled>✓ Approve</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: WORKSPACE — COMPLETE -->
+<!-- ============================================ -->
+<div class="screen" id="screen-ws-complete">
+  <div class="workspace-header">
+    <button class="btn btn-ghost btn-sm">← Back</button>
+    <div style="font-weight:600;font-size:15px;">SaaS Dashboard</div>
+    <span class="badge badge-green">v0.1.0</span>
+    <span style="font-size:12px;color:var(--muted);">by paul</span>
+    <div style="flex:1;"></div>
+    <span style="font-size:12px;color:var(--muted);">2.14M tokens</span>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span style="font-size:12px;color:var(--muted);">Auto</span>
+      <div class="toggle"><div class="toggle-knob"></div></div>
+    </div>
+    <button class="btn btn-sm">🕑 History</button>
+  </div>
+
+  <div class="workspace">
+    <div class="workspace-sidebar">
+      <div style="padding:10px 14px 6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:600;">Stages</div>
+      <div class="stage-item">
+        <div class="stage-dot approved"></div>
+        <div class="stage-name">Vision</div>
+        <div class="stage-tokens">124k</div>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot approved"></div>
+        <div class="stage-name">UX</div>
+        <div class="stage-tokens">198k</div>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot approved"></div>
+        <div class="stage-name">Architecture</div>
+        <div class="stage-tokens">356k</div>
+      </div>
+      <div class="stage-item">
+        <div class="stage-dot approved"></div>
+        <div class="stage-name">Build</div>
+        <div class="stage-tokens">512k</div>
+      </div>
+      <div class="stage-item active">
+        <div class="stage-dot approved" style="box-shadow:0 0 6px var(--success);"></div>
+        <div class="stage-name">Complete</div>
+        <div class="stage-tokens">—</div>
+      </div>
+      <div style="flex:1;"></div>
+      <div style="padding:12px 14px;font-family:monospace;font-size:11px;color:#27272a;text-align:center;">✦ paulette v0.1.0</div>
+    </div>
+
+    <div class="workspace-main" style="overflow-y:auto;">
+      <div class="completion-layout">
+        <!-- Left Panel -->
+        <div class="completion-left">
+          <div style="text-align:center;margin-bottom:24px;">
+            <div style="font-size:48px;margin-bottom:8px;">✅</div>
+            <h2 style="font-size:22px;font-weight:700;">Build Complete!</h2>
+            <p style="color:var(--muted);font-size:14px;margin-top:4px;">All 14 beads executed successfully</p>
+          </div>
+
+          <div class="card" style="padding:16px;margin-bottom:16px;">
+            <div style="font-size:13px;color:var(--muted);margin-bottom:10px;font-weight:600;">Approved Artifacts</div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <a href="#" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius);border:1px solid var(--border);font-size:13px;">
+                <span class="badge badge-green">✓</span> Vision Document
+              </a>
+              <a href="#" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius);border:1px solid var(--border);font-size:13px;">
+                <span class="badge badge-green">✓</span> UX Design
+              </a>
+              <a href="#" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius);border:1px solid var(--border);font-size:13px;">
+                <span class="badge badge-green">✓</span> Architecture
+              </a>
+              <a href="#" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius);border:1px solid var(--border);font-size:13px;">
+                <span class="badge badge-green">✓</span> Build Plan
+              </a>
+            </div>
+          </div>
+
+          <div class="card" style="padding:16px;margin-bottom:16px;">
+            <div style="font-size:13px;color:var(--muted);margin-bottom:10px;font-weight:600;">Enhancement Cycle</div>
+            <div class="enhance-form">
+              <textarea placeholder="Describe the enhancement or new feature you'd like to add…">Add a real-time notifications system with WebSocket support so users get alerted immediately when metrics cross threshold values.</textarea>
+              <div class="radio-group">
+                <label><input type="radio" name="bump" value="patch" checked> Patch</label>
+                <label><input type="radio" name="bump" value="minor"> Minor</label>
+                <label><input type="radio" name="bump" value="major"> Major</label>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:8px;">
+                <button class="btn btn-accent" style="flex:1;">Start Enhancement</button>
+                <button class="btn" style="flex:1;">⚡ Quick Enhance</button>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn" style="width:100%;">← Start New Project</button>
+        </div>
+
+        <!-- Right Panel -->
+        <div class="completion-right">
+          <div class="card" style="padding:20px;height:100%;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+              <div style="font-size:15px;font-weight:600;">Project Summary</div>
+              <button class="btn btn-ghost btn-sm">↻ Retry</button>
+            </div>
+            <div style="color:#a1a1aa;line-height:1.8;font-size:14px;">
+              <p style="margin-bottom:12px;"><strong style="color:var(--foreground);">SaaS Dashboard v0.1.0</strong> is a unified analytics dashboard for small business owners, built with Next.js 14, tRPC, and PostgreSQL.</p>
+              <p style="margin-bottom:12px;"><strong style="color:#d4d4d8;">Key Features Delivered:</strong></p>
+              <ul style="margin:0 0 12px 18px;">
+                <li>OAuth-based onboarding with Stripe, Google Analytics, and Mailchimp</li>
+                <li>Real-time metric cards with sparkline charts</li>
+                <li>AI-generated weekly insight digest via email</li>
+                <li>Settings page for managing integrations and preferences</li>
+              </ul>
+              <p style="margin-bottom:12px;"><strong style="color:#d4d4d8;">Architecture:</strong> Turborepo monorepo with three packages (web, api, integrations). Deployed on Vercel (frontend) and Railway (API, DB, worker). Background job processing via BullMQ.</p>
+              <p style="margin-bottom:12px;"><strong style="color:#d4d4d8;">Build Stats:</strong> 14 beads executed across 4 phases with 3 parallel agents. Total build time: 8 minutes 42 seconds. Zero failures.</p>
+              <p style="margin-bottom:12px;"><strong style="color:#d4d4d8;">Suggested Enhancements:</strong></p>
+              <ul style="margin:0 0 12px 18px;">
+                <li>Real-time WebSocket notifications for threshold alerts</li>
+                <li>Custom widget builder for advanced users</li>
+                <li>Team collaboration features (shared dashboards, comments)</li>
+                <li>Additional integrations: Shopify, HubSpot, Slack</li>
+              </ul>
+              <p><strong style="color:#d4d4d8;">Token Usage:</strong> 2.14M total — Vision: 124k, UX: 198k, Architecture: 356k, Build: 512k, Summary: 48k.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ -->
+<!-- SCREEN: VERSION HISTORY MODAL -->
+<!-- ============================================ -->
+<div class="screen" id="screen-version-history">
+  <div class="modal-overlay" style="position:relative;min-height:90vh;align-items:flex-start;padding-top:40px;">
+    <div class="modal" style="width:640px;max-height:80vh;overflow-y:auto;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+        <h2 style="margin:0;">Version History</h2>
+        <button class="btn btn-ghost btn-sm" style="font-size:18px;">✕</button>
+      </div>
+
+      <!-- Dirty indicator -->
+      <div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.25);border-radius:var(--radius);padding:10px 14px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:13px;color:#fbbf24;">⚠ You have uncommitted changes (3 files modified)</span>
+        <button class="btn btn-sm" style="border-color:rgba(245,158,11,.3);color:#fbbf24;">Discard</button>
+      </div>
+
+      <!-- Commit list -->
+      <div style="display:flex;flex-direction:column;">
+        <div class="commit-item">
+          <span class="commit-hash">a3f8d2c</span>
+          <div style="flex:1;">
+            <div class="commit-msg">Complete build phase — all 14 beads executed</div>
+            <div class="commit-meta">paul · 5 minutes ago</div>
+          </div>
+          <span class="badge badge-blue" style="margin-right:6px;">build-approved</span>
+          <button class="btn btn-sm">Reset to</button>
+        </div>
+
+        <div class="commit-item">
+          <span class="commit-hash">e7b1f09</span>
+          <div style="flex:1;">
+            <div class="commit-msg">Approve architecture document</div>
+            <div class="commit-meta">paul · 32 minutes ago</div>
+          </div>
+          <span class="badge badge-blue" style="margin-right:6px;">arch-approved</span>
+          <button class="btn btn-sm">Reset to</button>
+        </div>
+
+        <div class="commit-item">
+          <span class="commit-hash">c42a8bb</span>
+          <div style="flex:1;">
+            <div class="commit-msg">Approve UX design with mock preview</div>
+            <div class="commit-meta">paul · 1 hour ago</div>
+          </div>
+          <span class="badge badge-blue" style="margin-right:6px;">ux-approved</span>
+          <button class="btn btn-sm">Reset to</button>
+        </div>
+
+        <div class="commit-item">
+          <span class="commit-hash">8f3e21a</span>
+          <div style="flex:1;">
+            <div class="commit-msg">Approve vision document v0.1.0</div>
+            <div class="commit-meta">paul · 2 hours ago</div>
+          </div>
+          <span class="badge badge-blue" style="margin-right:6px;">vision-approved</span>
+          <button class="btn btn-sm">Reset to</button>
+        </div>
+
+        <div class="commit-item">
+          <span class="commit-hash">1a0bc7d</span>
+          <div style="flex:1;">
+            <div class="commit-msg">Initialize project: SaaS Dashboard</div>
+            <div class="commit-meta">paulette · 2 hours ago</div>
+          </div>
+          <button class="btn btn-sm">Reset to</button>
+        </div>
+      </div>
+
+      <!-- Remote section -->
+      <div class="remote-section" style="margin-top:16px;">
+        <div class="remote-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'flex':'none';">
+          <span>Remote Settings</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="badge badge-green" style="font-size:10px;">remote set</span>
+            <span>▾</span>
+          </div>
+        </div>
+        <div class="remote-body" style="display:none;">
+          <div style="display:flex;gap:8px;">
+            <input type="text" value="https://github.com/paul/saas-dashboard.git" style="flex:1;font-size:12px;">
+            <button class="btn btn-sm">Set</button>
+            <button class="btn btn-sm" style="color:var(--danger);">Remove</button>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm" style="flex:1;">↑ Push</button>
+            <button class="btn btn-sm" style="flex:1;">↓ Pull</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.screen-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+  // Highlight tab
+  const tabs = document.querySelectorAll('.screen-tab');
+  const names = ['home','create-modal','import-modal','delete-modal','import-progress','ws-vision','ws-ux','ws-arch','ws-build','ws-complete','version-history'];
+  const idx = names.indexOf(id);
+  if (idx >= 0) tabs[idx].classList.add('active');
+}
+
+function toggleVisionTab(el, panelId) {
+  el.parentElement.querySelectorAll('.stage-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('vision-chat').style.display = 'none';
+  document.getElementById('vision-artifact').style.display = 'none';
+  document.getElementById(panelId).style.display = 'flex';
+  if (panelId === 'vision-artifact') document.getElementById(panelId).style.display = 'block';
+}
+
+function toggleUxTab(el, panelId) {
+  el.parentElement.querySelectorAll('.stage-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('ux-chat').style.display = 'none';
+  document.getElementById('ux-design').style.display = 'none';
+  document.getElementById('ux-mock').style.display = 'none';
+  document.getElementById(panelId).style.display = 'flex';
+  if (panelId === 'ux-design') document.getElementById(panelId).style.display = 'block';
+}
+
+function toggleArchTab(el, panelId) {
+  el.parentElement.querySelectorAll('.stage-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('arch-chat').style.display = 'none';
+  document.getElementById('arch-artifact').style.display = 'none';
+  document.getElementById(panelId).style.display = panelId.includes('artifact') ? 'block' : 'flex';
+}
+
+function toggleBuildTab(el, panelId) {
+  el.parentElement.querySelectorAll('.stage-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('build-chat').style.display = 'none';
+  document.getElementById('build-plan').style.display = 'none';
+  document.getElementById('build-execute').style.display = 'none';
+  document.getElementById(panelId).style.display = panelId === 'build-plan' ? 'block' : 'flex';
+}
+</script>
+</body>
+</html>
