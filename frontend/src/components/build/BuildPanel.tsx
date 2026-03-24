@@ -103,11 +103,11 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
     <div className="build-panel" style={{ display: hidden ? 'none' : 'flex' }}>
       {mode === 'execute' && (
         <div className="build-tab-actions" style={{ padding: '0.4rem 1rem', borderBottom: '1px solid #334155', background: '#1e293b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          {(isGenerating || isExecuting) && (
+          {isGenerating && (
             <>
               <span className="execute-status-dot" />
               <span className="execute-status-label">
-                {isGenerating ? `Generating… ${graph.beads.length > 0 ? `(${graph.beads.length} beads)` : ''}` : `Executing… ${activeCount > 0 ? `${activeCount} agent${activeCount !== 1 ? 's' : ''} active` : ''}`}
+                {`Generating… ${graph.beads.length > 0 ? `(${graph.beads.length} beads)` : ''}`}
               </span>
               <button className="stop-button" style={{ marginLeft: 'auto' }} onClick={stop}>
                 Stop
@@ -224,6 +224,9 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
                         {activeCount > 0 && (
                           <span className="execute-agent-badge">{activeCount} agent{activeCount !== 1 ? 's' : ''}</span>
                         )}
+                        <button className="stop-button" style={{ marginLeft: 'auto' }} onClick={stop}>
+                          Stop
+                        </button>
                       </div>
                       {totalCount > 0 && (
                         <div className="execute-progress-row">
@@ -300,6 +303,8 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
             projectId={projectId}
             beadId={selectedBeadId}
             bead={selectedBead}
+            allBeads={graph.beads}
+            onBeadSelect={setSelectedBeadId}
             onClose={() => setSelectedBeadId(null)}
           />
         ) : null;
