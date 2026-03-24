@@ -104,7 +104,7 @@ export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset,
 <span className="bead bead-purple">◉</span>
 <span className="bead bead-green">●</span>
           </pre>
-          <div className="sidebar-brand-name">Claudette {appVersion && <span>v{appVersion}</span>}</div>
+          <div className="sidebar-brand-name">Claudine {appVersion && <span>v{appVersion}</span>}</div>
           <div className="sidebar-copyright">&copy; {new Date().getFullYear()} {appAuthor || 'Michel Roberge'}</div>
         </div>
       </nav>

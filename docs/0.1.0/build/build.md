@@ -1,4 +1,4 @@
-# Build Plan: Claudette
+# Build Plan: Claudine
 
 ## Milestones
 

@@ -101,8 +101,8 @@ export function ProjectList({ onSelect }: Props) {
 
   return (
     <div className="project-list">
-      <div className="claudette-banner">
-        <pre className="claudette-ascii">
+      <div className="Claudine-banner">
+        <pre className="Claudine-ascii">
 {"        ♥\n"}
 {"       ╱│╲\n"}
 {"    ┌──────────┐\n"}
@@ -128,10 +128,10 @@ export function ProjectList({ onSelect }: Props) {
 {"       │    │\n"}
 {"      ═╧═  ═╧═"}
         </pre>
-        <div className="claudette-title-block">
-          <h1>Claudette</h1>
-          <span className="claudette-subtitle">AI App Factory</span>
-          <span className="claudette-version">{appVersion ? `v${appVersion}` : ''}</span>
+        <div className="Claudine-title-block">
+          <h1>Claudine</h1>
+          <span className="Claudine-subtitle">AI App Factory</span>
+          <span className="Claudine-version">{appVersion ? `v${appVersion}` : ''}</span>
         </div>
       </div>
       <p>Select a project or create a new one.</p>

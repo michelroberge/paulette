@@ -47,7 +47,7 @@ var dependencies = []Dependency{
 // RunInit checks all dependencies and helps install missing ones.
 // Returns an exit code: 0 for success, 1 for failure.
 func RunInit() int {
-	fmt.Println("claudette init - checking dependencies...")
+	fmt.Println("Claudine init - checking dependencies...")
 	fmt.Println()
 
 	reader := bufio.NewReader(os.Stdin)
@@ -70,7 +70,7 @@ func RunInit() int {
 		fmt.Println(" not found")
 
 		if dep.Required {
-			fmt.Printf("  %s is %s for claudette.\n", dep.Name, label)
+			fmt.Printf("  %s is %s for Claudine.\n", dep.Name, label)
 		} else {
 			fmt.Printf("  %s is %s but recommended.\n", dep.Name, label)
 		}
@@ -80,7 +80,7 @@ func RunInit() int {
 		choice := promptChoice(reader, dep.InstallOpts)
 		if choice < 0 {
 			if dep.Required {
-				fmt.Printf("  %s is required. claudette cannot run without it.\n\n", dep.Name)
+				fmt.Printf("  %s is required. Claudine cannot run without it.\n\n", dep.Name)
 				allOK = false
 			} else {
 				fmt.Printf("  Skipping %s (optional).\n\n", dep.Name)
@@ -101,7 +101,7 @@ func RunInit() int {
 			fmt.Printf("  %s is still not found in PATH.\n", dep.Binary)
 			fmt.Println("  You may need to restart your shell or add it to your PATH.")
 			if dep.Required {
-				fmt.Printf("  %s is required. claudette cannot run without it.\n\n", dep.Name)
+				fmt.Printf("  %s is required. Claudine cannot run without it.\n\n", dep.Name)
 				allOK = false
 			} else {
 				fmt.Printf("  Skipping %s (optional).\n\n", dep.Name)
@@ -126,10 +126,10 @@ func RunInit() int {
 	fmt.Println()
 
 	if !allOK {
-		fmt.Println("Some required dependencies are missing. Please install them and run 'claudette init' again.")
+		fmt.Println("Some required dependencies are missing. Please install them and run 'Claudine init' again.")
 		return 1
 	}
 
-	fmt.Println("All dependencies satisfied. You're ready to run claudette!")
+	fmt.Println("All dependencies satisfied. You're ready to run Claudine!")
 	return 0
 }

@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/michelroberge/claudette/backend/internal/model"
+	"github.com/michelroberge/Claudine/backend/internal/model"
 )
 
 var beadJSONRe = regexp.MustCompile(`(?s)<!-- JSON:START -->\s*(.*?)\s*<!-- JSON:END -->`)

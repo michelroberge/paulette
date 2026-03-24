@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/michelroberge/claudette/backend/internal/model"
+	"github.com/michelroberge/Claudine/backend/internal/model"
 )
 
 const factoryDir = ".ai-factory"

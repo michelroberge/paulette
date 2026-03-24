@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/michelroberge/claudette/backend/internal/agent"
+	"github.com/michelroberge/Claudine/backend/internal/agent"
 )
 
 // Run represents a managed agent operation whose events are buffered for reconnection.
@@ -30,13 +30,13 @@ type Run struct {
 
 // RunInfo is the JSON-serializable subset of Run for the activity endpoint.
 type RunInfo struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"projectId"`
-	Stage     string `json:"stage"`
-	Operation string `json:"operation"`
-	StartedAt string `json:"startedAt"`
-	EventCount int   `json:"eventCount"`
-	Done      bool   `json:"done"`
+	ID         string `json:"id"`
+	ProjectID  string `json:"projectId"`
+	Stage      string `json:"stage"`
+	Operation  string `json:"operation"`
+	StartedAt  string `json:"startedAt"`
+	EventCount int    `json:"eventCount"`
+	Done       bool   `json:"done"`
 }
 
 // Manager tracks active and recently-finished runs.

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/michelroberge/claudette/backend/internal/model"
+	"github.com/michelroberge/Claudine/backend/internal/model"
 )
 
 var systemPrompts = map[model.StageName]string{
@@ -182,7 +182,6 @@ When the plan is ready, produce it wrapped in these exact delimiters:
 
 Always wrap the document in exactly those delimiters.
 **CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.`,
-
 }
 
 // buildFrameworkPromptNote returns the framework instruction snippet for injection into the UX system prompt.
@@ -356,7 +355,6 @@ You are creating a build plan for CHANGES ONLY, not a full rebuild.
 4. Reference existing code/files that the new tasks will modify or extend.
 5. Each task should clearly state whether it is creating a new file/component or modifying an existing one.
 6. Include a "Pre-existing Code Context" section at the top listing what the previous iteration already built.`,
-
 }
 
 func applyEnhancementContext(stage model.StageName, basePrompt string, enhancement []*EnhancementContext) string {

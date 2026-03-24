@@ -8,9 +8,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudette/backend/internal/git"
-	"github.com/michelroberge/claudette/backend/internal/pipeline"
-	"github.com/michelroberge/claudette/backend/internal/repository"
+	"github.com/michelroberge/Claudine/backend/internal/git"
+	"github.com/michelroberge/Claudine/backend/internal/pipeline"
+	"github.com/michelroberge/Claudine/backend/internal/repository"
 )
 
 type GitHandler struct {

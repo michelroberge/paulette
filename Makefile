@@ -4,10 +4,10 @@ build:
 	cd frontend && npm ci && npm run build
 	rm -rf backend/static
 	cp -r frontend/dist backend/static
-	cd backend && go build -o ../claudette .
+	cd backend && go build -o ../Claudine .
 
 clean:
-	rm -f claudette
+	rm -f Claudine
 	rm -rf backend/static
 
 dev:

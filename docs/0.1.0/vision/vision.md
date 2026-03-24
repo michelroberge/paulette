@@ -1,10 +1,10 @@
-# Product Vision: Claudette
+# Product Vision: Claudine
 
 ## Problem Statement
 
 Building software from scratch is a fragmented, high-friction process. Product ideas get lost in translation between vision, design, architecture, and implementation. Developers spend enormous effort context-switching between tools, tracking decisions, and maintaining traceability from requirements to code. Existing AI coding assistants help with isolated tasks but do not guide the end-to-end journey from idea to deployed application — leaving teams to stitch together their own workflows with no guarantees of coherence, auditability, or repeatability.
 
-This matters because the cost of misalignment between intent and implementation compounds at every stage. A weak vision produces a flawed UX design; a flawed UX produces a broken architecture; a broken architecture produces unmaintainable code. Claudette enforces structure and traceability at every step, ensuring that what gets built is what was actually intended.
+This matters because the cost of misalignment between intent and implementation compounds at every stage. A weak vision produces a flawed UX design; a flawed UX produces a broken architecture; a broken architecture produces unmaintainable code. Claudine enforces structure and traceability at every step, ensuring that what gets built is what was actually intended.
 
 ## Target Users
 
@@ -99,7 +99,7 @@ The compiled React SPA is embedded into the Go binary via `embed.FS`. The entire
 - **Claude CLI dependency**: The system invokes the `claude` binary as a subprocess rather than calling the Anthropic API directly. This constrains deployment (the host must have the CLI installed and authenticated) and limits concurrency control.
 - **Beads CLI dependency**: The `bd` CLI and its Dolt-backed database must be installed on the host. Bead execution is tightly coupled to this tool.
 - **File-system persistence**: All state (projects, artifacts, chat histories) is stored as JSON/Markdown files. There is no relational database. This is intentional for Git-friendliness but limits query capability and multi-user access.
-- **Single-user, local-first**: The default `REGISTRY_PATH` (`~/.claudette`) and single-binary model assume a single developer running the tool locally. There is no authentication, multi-tenancy, or user isolation.
+- **Single-user, local-first**: The default `REGISTRY_PATH` (`~/.Claudine`) and single-binary model assume a single developer running the tool locally. There is no authentication, multi-tenancy, or user isolation.
 - **Sequential stage advancement**: The pipeline does not support concurrent stage work or branching pipelines; stages must be approved in order.
 - **Model selection is fixed per stage**: Vision/UX use Claude Sonnet; Architecture/Build use Claude Opus. Users cannot currently override model selection per project.
 - **CORS allows localhost only**: The server allows origins `localhost:5173` and `localhost:8080`, confirming the local-first assumption.

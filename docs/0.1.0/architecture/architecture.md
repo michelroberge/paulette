@@ -1,4 +1,4 @@
-# System Architecture: Claudette
+# System Architecture: Claudine
 
 ## Tech Stack
 
@@ -47,7 +47,7 @@
 ### [ARCH-v0.1.0-004] Configuration
 > Journeys: JRN-v0.1.0-001, JRN-v0.1.0-002, JRN-v0.1.0-003, JRN-v0.1.0-004, JRN-v0.1.0-005, JRN-v0.1.0-006, JRN-v0.1.0-007, JRN-v0.1.0-008, JRN-v0.1.0-009, JRN-v0.1.0-010, JRN-v0.1.0-011
 
-`backend/internal/config/config.go` — Reads `PORT` (default 8080) and `REGISTRY_PATH` (default `~/.claudette`) from environment variables. Exposes a `Config` struct used throughout the server.
+`backend/internal/config/config.go` — Reads `PORT` (default 8080) and `REGISTRY_PATH` (default `~/.Claudine`) from environment variables. Exposes a `Config` struct used throughout the server.
 
 ---
 

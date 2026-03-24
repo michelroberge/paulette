@@ -24,7 +24,7 @@ func Load() *Config {
 	registryPath := os.Getenv("REGISTRY_PATH")
 	if registryPath == "" {
 		home, _ := os.UserHomeDir()
-		registryPath = filepath.Join(home, ".claudette")
+		registryPath = filepath.Join(home, ".Claudine")
 	}
 
 	reposPath := os.Getenv("REPOS_PATH")

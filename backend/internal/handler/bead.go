@@ -17,12 +17,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudette/backend/internal/agent"
-	"github.com/michelroberge/claudette/backend/internal/model"
-	"github.com/michelroberge/claudette/backend/internal/pipeline"
-	"github.com/michelroberge/claudette/backend/internal/repository"
-	fsrepo "github.com/michelroberge/claudette/backend/internal/repository/fs"
-	"github.com/michelroberge/claudette/backend/internal/stream"
+	"github.com/michelroberge/Claudine/backend/internal/agent"
+	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/Claudine/backend/internal/pipeline"
+	"github.com/michelroberge/Claudine/backend/internal/repository"
+	fsrepo "github.com/michelroberge/Claudine/backend/internal/repository/fs"
+	"github.com/michelroberge/Claudine/backend/internal/stream"
 )
 
 // beadGraphMu serializes writes to beads-graph.json per project host directory.
@@ -556,7 +556,7 @@ func (h *BeadHandler) Execute(w http.ResponseWriter, r *http.Request) {
 					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 😈 Devil's advocate reviewing (attempt %d/%d)...", currentBead.ID, iteration+1, maxReviewIterations)})
 
 					siblings := siblingBeads(project.HostDir, currentBead)
-				findings, reviewTokens, reviewErr := agent.ReviewBead(ctx, project.HostDir, currentBead, artifacts, siblings, enhCtx)
+					findings, reviewTokens, reviewErr := agent.ReviewBead(ctx, project.HostDir, currentBead, artifacts, siblings, enhCtx)
 					if reviewTokens > 0 {
 						currentBead.Tokens += reviewTokens
 						totalBuildTokens.Add(int64(reviewTokens))

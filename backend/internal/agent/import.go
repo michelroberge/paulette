@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/michelroberge/claudette/backend/internal/model"
+	"github.com/michelroberge/Claudine/backend/internal/model"
 )
 
 // importStep describes one stage of the import artifact generation.
@@ -440,4 +440,3 @@ The codebase was imported as-is. A thorough review of the auto-generated artifac
 ## Definition of Done
 All pipeline artifacts reviewed and approved by the user.`, projectName, version)
 }
-

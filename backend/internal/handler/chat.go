@@ -12,12 +12,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudette/backend/internal/agent"
-	"github.com/michelroberge/claudette/backend/internal/model"
-	"github.com/michelroberge/claudette/backend/internal/pipeline"
-	"github.com/michelroberge/claudette/backend/internal/repository"
-	fsrepo "github.com/michelroberge/claudette/backend/internal/repository/fs"
-	"github.com/michelroberge/claudette/backend/internal/stream"
+	"github.com/michelroberge/Claudine/backend/internal/agent"
+	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/Claudine/backend/internal/pipeline"
+	"github.com/michelroberge/Claudine/backend/internal/repository"
+	fsrepo "github.com/michelroberge/Claudine/backend/internal/repository/fs"
+	"github.com/michelroberge/Claudine/backend/internal/stream"
 )
 
 // stageModels maps each pipeline stage to the Claude model to use for chat.

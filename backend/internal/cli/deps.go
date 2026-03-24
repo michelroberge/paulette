@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Dependency describes an external CLI tool that claudette depends on.
+// Dependency describes an external CLI tool that Claudine depends on.
 type Dependency struct {
 	Name        string
 	Binary      string

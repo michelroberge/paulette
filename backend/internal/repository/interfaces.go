@@ -1,6 +1,6 @@
 package repository
 
-import "github.com/michelroberge/claudette/backend/internal/model"
+import "github.com/michelroberge/Claudine/backend/internal/model"
 
 // RegistryRepo manages the central project registry.
 // The registry is an index of all known projects with their metadata.

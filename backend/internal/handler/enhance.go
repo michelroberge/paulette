@@ -12,10 +12,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudette/backend/internal/git"
-	"github.com/michelroberge/claudette/backend/internal/model"
-	"github.com/michelroberge/claudette/backend/internal/pipeline"
-	"github.com/michelroberge/claudette/backend/internal/repository"
+	"github.com/michelroberge/Claudine/backend/internal/git"
+	"github.com/michelroberge/Claudine/backend/internal/model"
+	"github.com/michelroberge/Claudine/backend/internal/pipeline"
+	"github.com/michelroberge/Claudine/backend/internal/repository"
 )
 
 type EnhanceHandler struct {
@@ -35,7 +35,7 @@ func NewEnhanceHandler(registry repository.RegistryRepo, projectRepo repository.
 }
 
 type enhanceRequest struct {
-	Vision     string `json:"vision"`
+	Vision      string `json:"vision"`
 	VersionBump string `json:"versionBump"` // "major", "minor", "patch"
 }
 
