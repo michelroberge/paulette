@@ -98,7 +98,7 @@ cd frontend && npm install && npm run dev
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `8080` | Server listen port |
-| `REGISTRY_PATH` | `~/.Claudine` | Where project data is stored |
+| `REGISTRY_PATH` | `~/.claudine` | Where project data is stored |
 | `ANTHROPIC_API_KEY` | — | Required for AI features |
 
 ## Project Structure

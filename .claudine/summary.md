@@ -17,7 +17,7 @@ Claudine is a local-first, single-binary AI-guided software development pipeline
 - **Backend**: Go 1.26, chi v5 router, rs/cors middleware; single binary via `embed.FS` bundling the compiled React SPA.
 - **Frontend**: React 19 + TypeScript 5.9, built with Vite 8; react-markdown + remark-gfm for rendering; @xyflow/react + @dagrejs/dagre for the bead DAG.
 - **AI Engine**: Anthropic Claude CLI (`claude` subprocess) — not the HTTP API; Vision/UX use Sonnet, Architecture/Build use Opus.
-- **Persistence**: File system only (JSON + Markdown under `~/.Claudine`); Git-backed via `os/exec` for version history and artifact commits.
+- **Persistence**: File system only (JSON + Markdown under `~/.claudine`); Git-backed via `os/exec` for version history and artifact commits.
 - **Real-time**: Server-Sent Events (SSE) for all streaming (chat chunks, artifacts, import progress, build logs, summary).
 - **Build execution**: `bd` CLI + Dolt database for bead (DAG task) management; parallel agent execution configurable per run.
 - **Key API surface**: All routes under `/api/projects`; handlers for project CRUD, import, pipeline state machine, chat, mock generation, bead generation/execution, git operations, and summary.
@@ -41,7 +41,7 @@ v0.1.0 represents an **initial import baseline** — the existing codebase was i
 ## Known Limitations
 - **Claude CLI dependency**: Requires `claude` binary installed and authenticated on the host; no direct API integration; concurrency is subprocess-limited.
 - **Beads CLI dependency**: `bd` CLI and Dolt database must be installed; bead execution is tightly coupled to this toolchain.
-- **Single-user, local-first only**: No authentication, multi-tenancy, or user isolation; `REGISTRY_PATH` defaults to `~/.Claudine`.
+- **Single-user, local-first only**: No authentication, multi-tenancy, or user isolation; `REGISTRY_PATH` defaults to `~/.claudine`.
 - **File-system persistence only**: No relational database; limited query capability and no multi-user concurrent writes.
 - **Sequential stage advancement**: No branching pipelines, parallel stage work, or A/B artifact variants.
 - **CORS locked to localhost**: Only `localhost:5173` and `localhost:8080` are allowed origins, enforcing the local-first constraint.

@@ -29,71 +29,135 @@ type ImportResult struct {
 	Artifacts map[model.StageName]string
 }
 
+// readExistingDoc checks for a pre-existing stage document on disk.
+// Lookup order: docs/{version}/{stage}/{stage}.md → .claudine/{stage}/{stage}.md.
+// Returns the content and true if found, or "" and false otherwise.
+func readExistingDoc(hostDir, version string, stage model.StageName) (string, bool) {
+	// Priority 1: docs/{version}/{stage}/{stage}.md
+	docsPath := filepath.Join(hostDir, "docs", version, string(stage), string(stage)+".md")
+	if b, err := os.ReadFile(docsPath); err == nil && len(strings.TrimSpace(string(b))) > 0 {
+		return string(b), true
+	}
+	// Priority 2: .claudine/{stage}/{stage}.md
+	claudinePath := filepath.Join(hostDir, ".claudine", string(stage), string(stage)+".md")
+	if b, err := os.ReadFile(claudinePath); err == nil && len(strings.TrimSpace(string(b))) > 0 {
+		return string(b), true
+	}
+	return "", false
+}
+
 // StreamImport analyzes an existing codebase and generates all pipeline artifacts.
 // It emits progress events via the emit callback and returns the generated artifacts.
+// Pre-existing docs are used when available (docs/{version} first, then .claudine),
+// falling back to AI generation only for missing stages.
 func StreamImport(ctx context.Context, hostDir, version, projectName string, emit func(StreamEvent)) (*ImportResult, error) {
-	digest, err := buildCodebaseDigest(hostDir)
-	if err != nil {
-		return nil, fmt.Errorf("build codebase digest: %w", err)
+	// Lazy-build codebase digest only when AI generation is needed.
+	var digest string
+	var digestErr error
+	ensureDigest := func() error {
+		if digest == "" && digestErr == nil {
+			digest, digestErr = buildCodebaseDigest(hostDir)
+		}
+		return digestErr
 	}
 
 	artifacts := make(map[model.StageName]string)
+	archFromDisk := false
 
 	// Step 1: Architecture
-	emit(StreamEvent{Type: "log", Content: importSteps[0].label})
-	archPrompt := buildImportArchitecturePrompt(version, digest)
-	archContent, err := runImportAgent(ctx, archPrompt, projectName, hostDir)
-	if err != nil {
-		return nil, fmt.Errorf("architecture agent: %w", err)
-	}
-	if extracted, ok := ExtractArtifact(archContent); ok {
-		archContent = extracted
+	var archContent string
+	if existing, ok := readExistingDoc(hostDir, version, model.StageArchitecture); ok {
+		emit(StreamEvent{Type: "log", Content: "Using existing architecture document from disk."})
+		archContent = existing
+		archFromDisk = true
+	} else {
+		if err := ensureDigest(); err != nil {
+			return nil, fmt.Errorf("build codebase digest: %w", err)
+		}
+		emit(StreamEvent{Type: "log", Content: importSteps[0].label})
+		archPrompt := buildImportArchitecturePrompt(version, digest)
+		var err error
+		archContent, err = runImportAgent(ctx, archPrompt, projectName, hostDir)
+		if err != nil {
+			return nil, fmt.Errorf("architecture agent: %w", err)
+		}
+		if extracted, ok := ExtractArtifact(archContent); ok {
+			archContent = extracted
+		}
 	}
 	artifacts[model.StageArchitecture] = archContent
 	emit(StreamEvent{Type: "artifact", Content: "architecture"})
 
 	// Step 2: UX
-	emit(StreamEvent{Type: "log", Content: importSteps[1].label})
-	uxPrompt := buildImportUXPrompt(version, digest, archContent)
-	uxContent, err := runImportAgent(ctx, uxPrompt, projectName, hostDir)
-	if err != nil {
-		return nil, fmt.Errorf("ux agent: %w", err)
-	}
-	if extracted, ok := ExtractArtifact(uxContent); ok {
-		uxContent = extracted
+	var uxContent string
+	if existing, ok := readExistingDoc(hostDir, version, model.StageUX); ok {
+		emit(StreamEvent{Type: "log", Content: "Using existing UX document from disk."})
+		uxContent = existing
+	} else {
+		if err := ensureDigest(); err != nil {
+			return nil, fmt.Errorf("build codebase digest: %w", err)
+		}
+		emit(StreamEvent{Type: "log", Content: importSteps[1].label})
+		uxPrompt := buildImportUXPrompt(version, digest, archContent)
+		var err error
+		uxContent, err = runImportAgent(ctx, uxPrompt, projectName, hostDir)
+		if err != nil {
+			return nil, fmt.Errorf("ux agent: %w", err)
+		}
+		if extracted, ok := ExtractArtifact(uxContent); ok {
+			uxContent = extracted
+		}
 	}
 	artifacts[model.StageUX] = uxContent
 	emit(StreamEvent{Type: "artifact", Content: "ux"})
 
 	// Step 3: Update architecture with JRN cross-references
-	emit(StreamEvent{Type: "log", Content: importSteps[2].label})
-	archUpdatePrompt := buildImportArchCrossRefPrompt(version, archContent, uxContent)
-	updatedArch, err := runImportAgent(ctx, archUpdatePrompt, projectName, hostDir)
-	if err != nil {
-		return nil, fmt.Errorf("architecture cross-ref agent: %w", err)
+	// Skip if architecture was loaded from disk (already finalized).
+	if archFromDisk {
+		emit(StreamEvent{Type: "log", Content: "Architecture loaded from disk, skipping cross-reference update."})
+	} else {
+		emit(StreamEvent{Type: "log", Content: importSteps[2].label})
+		archUpdatePrompt := buildImportArchCrossRefPrompt(version, archContent, uxContent)
+		updatedArch, err := runImportAgent(ctx, archUpdatePrompt, projectName, hostDir)
+		if err != nil {
+			return nil, fmt.Errorf("architecture cross-ref agent: %w", err)
+		}
+		if extracted, ok := ExtractArtifact(updatedArch); ok {
+			updatedArch = extracted
+		}
+		archContent = updatedArch
+		artifacts[model.StageArchitecture] = updatedArch
 	}
-	if extracted, ok := ExtractArtifact(updatedArch); ok {
-		updatedArch = extracted
-	}
-	artifacts[model.StageArchitecture] = updatedArch
 	emit(StreamEvent{Type: "artifact", Content: "architecture"})
 
 	// Step 4: Vision
-	emit(StreamEvent{Type: "log", Content: importSteps[3].label})
-	visionPrompt := buildImportVisionPrompt(projectName, updatedArch, uxContent)
-	visionContent, err := runImportAgent(ctx, visionPrompt, projectName, hostDir)
-	if err != nil {
-		return nil, fmt.Errorf("vision agent: %w", err)
-	}
-	if extracted, ok := ExtractArtifact(visionContent); ok {
-		visionContent = extracted
+	var visionContent string
+	if existing, ok := readExistingDoc(hostDir, version, model.StageVision); ok {
+		emit(StreamEvent{Type: "log", Content: "Using existing vision document from disk."})
+		visionContent = existing
+	} else {
+		emit(StreamEvent{Type: "log", Content: importSteps[3].label})
+		visionPrompt := buildImportVisionPrompt(projectName, archContent, uxContent)
+		var err error
+		visionContent, err = runImportAgent(ctx, visionPrompt, projectName, hostDir)
+		if err != nil {
+			return nil, fmt.Errorf("vision agent: %w", err)
+		}
+		if extracted, ok := ExtractArtifact(visionContent); ok {
+			visionContent = extracted
+		}
 	}
 	artifacts[model.StageVision] = visionContent
 	emit(StreamEvent{Type: "artifact", Content: "vision"})
 
-	// Step 5: Build (programmatic — single imported milestone)
-	emit(StreamEvent{Type: "log", Content: "Generating build artifact..."})
-	artifacts[model.StageBuild] = buildImportBuildArtifact(projectName, version)
+	// Step 5: Build
+	if existing, ok := readExistingDoc(hostDir, version, model.StageBuild); ok {
+		emit(StreamEvent{Type: "log", Content: "Using existing build plan from disk."})
+		artifacts[model.StageBuild] = existing
+	} else {
+		emit(StreamEvent{Type: "log", Content: "Generating build artifact..."})
+		artifacts[model.StageBuild] = buildImportBuildArtifact(projectName, version)
+	}
 	emit(StreamEvent{Type: "artifact", Content: "build"})
 
 	return &ImportResult{Artifacts: artifacts}, nil

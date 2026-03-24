@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { importWatchUrl } from '../../api/import';
+import { BuildingAnimation } from '../ux/BuildingAnimation';
 import type { Project } from '../../types';
 
 interface ImportStreamEvent {
@@ -82,7 +83,7 @@ export function ImportProgressView({ project, onComplete }: Props) {
 
   return (
     <div className="completion-view" style={{ padding: '2rem' }}>
-      <h2>Importing Project</h2>
+      <h2 style={{ marginBottom: '0.5rem' }}>Importing Project</h2>
       <p style={{ color: '#94a3b8', marginBottom: '2rem' }}>
         Analyzing codebase and generating pipeline artifacts...
       </p>
@@ -113,6 +114,8 @@ export function ImportProgressView({ project, onComplete }: Props) {
           );
         })}
       </div>
+
+      {!done && !error && <BuildingAnimation />}
 
       {error && (
         <div style={{ color: '#ef4444', padding: '1rem', background: '#1e1e2e', borderRadius: '0.5rem', marginBottom: '1rem' }}>

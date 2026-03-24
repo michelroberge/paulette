@@ -1037,7 +1037,7 @@ body {
 }
 
 /* Claudine Banner */
-.Claudine-banner {
+.claudine-banner {
   display: flex;
   align-items: center;
   gap: 2rem;
@@ -1048,7 +1048,7 @@ body {
   border-radius: 12px;
 }
 
-.Claudine-ascii {
+.claudine-ascii {
   font-family: 'Courier New', Courier, monospace;
   font-size: 0.7rem;
   line-height: 1.2;
@@ -1058,13 +1058,13 @@ body {
   flex-shrink: 0;
 }
 
-.Claudine-title-block {
+.claudine-title-block {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
 }
 
-.Claudine-title-block h1 {
+.claudine-title-block h1 {
   font-size: 2.5rem;
   font-weight: 700;
   margin: 0;
@@ -1075,13 +1075,13 @@ body {
   letter-spacing: 0.02em;
 }
 
-.Claudine-subtitle {
+.claudine-subtitle {
   font-size: 0.95rem;
   color: #94a3b8;
   letter-spacing: 0.05em;
 }
 
-.Claudine-version {
+.claudine-version {
   font-size: 0.75rem;
   color: #64748b;
   font-variant-numeric: tabular-nums;
@@ -2268,7 +2268,7 @@ body {
     padding: 1.5rem 1rem;
   }
 
-  .Claudine-banner {
+  .claudine-banner {
     flex-direction: column;
     align-items: center;
     text-align: center;
@@ -2276,11 +2276,11 @@ body {
     padding: 1.25rem 1rem;
   }
 
-  .Claudine-ascii {
+  .claudine-ascii {
     font-size: 0.55rem;
   }
 
-  .Claudine-title-block h1 {
+  .claudine-title-block h1 {
     font-size: 1.75rem;
   }
 

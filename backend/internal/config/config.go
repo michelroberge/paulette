@@ -24,13 +24,13 @@ func Load() *Config {
 	registryPath := os.Getenv("REGISTRY_PATH")
 	if registryPath == "" {
 		home, _ := os.UserHomeDir()
-		registryPath = filepath.Join(home, ".Claudine")
+		registryPath = filepath.Join(home, ".claudine")
 	}
 
 	reposPath := os.Getenv("REPOS_PATH")
 	if reposPath == "" {
-		cwd, _ := os.Getwd()
-		reposPath = filepath.Join(cwd, "repos")
+		home, _ := os.UserHomeDir()
+		reposPath = filepath.Join(home, ".claudine", "repos")
 	}
 
 	version, author := loadProjectMeta()
