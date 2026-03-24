@@ -44,13 +44,21 @@ func (h *MockHandler) Get(w http.ResponseWriter, r *http.Request) {
 	p := filepath.Join(project.HostDir, mockRelPath)
 	b, err := os.ReadFile(p)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if !os.IsNotExist(err) {
+			http.Error(w, "failed to read mock: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Not in .paulette — fall back to docs/{version}/ux/mock.html
+		b, err = fsrepo.ReadMockDoc(project.HostDir, project.Version)
+		if err != nil {
+			http.Error(w, "failed to read mock: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if b == nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(mockGetResponse{Exists: false})
 			return
 		}
-		http.Error(w, "failed to read mock: "+err.Error(), http.StatusInternalServerError)
-		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

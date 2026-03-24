@@ -81,6 +81,28 @@ func WriteStageDoc(hostDir, version string, stage model.StageName, content strin
 	return os.WriteFile(p, []byte(content), 0644)
 }
 
+// WriteMockDoc copies the UX mock HTML to docs/{version}/ux/mock.html.
+func WriteMockDoc(hostDir, version string, content []byte) error {
+	p := filepath.Join(hostDir, "docs", version, "ux", "mock.html")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("create docs ux dir: %w", err)
+	}
+	return os.WriteFile(p, content, 0644)
+}
+
+// ReadMockDoc reads the UX mock HTML from docs/{version}/ux/mock.html.
+func ReadMockDoc(hostDir, version string) ([]byte, error) {
+	p := filepath.Join(hostDir, "docs", version, "ux", "mock.html")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read mock doc: %w", err)
+	}
+	return b, nil
+}
+
 // WriteBeadDoc mirrors a bead execution's full response to docs/{version}/build/execution/{beadID}/execution.md.
 func WriteBeadDoc(hostDir, version, beadID, content string) error {
 	p := filepath.Join(hostDir, "docs", version, "build", "execution", beadID, "execution.md")

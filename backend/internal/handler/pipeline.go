@@ -122,6 +122,16 @@ func (h *PipelineHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Promote UX mock.html to docs alongside ux.md
+	if previousStage == model.StageUX {
+		mockPath := filepath.Join(project.HostDir, ".paulette", "ux", "mock.html")
+		if mockBytes, readErr := os.ReadFile(mockPath); readErr == nil && len(mockBytes) > 0 {
+			if docErr := fsrepo.WriteMockDoc(project.HostDir, project.Version, mockBytes); docErr != nil {
+				log.Printf("mock.html promotion failed: %v", docErr)
+			}
+		}
+	}
+
 	// Git commit the promoted artifact and the removal from .paulette
 	commitMsg := fmt.Sprintf("approve(%s): promote artifact to docs", previousStage)
 	if err := h.git.AddAllAndCommit(project.HostDir, commitMsg); err != nil {
