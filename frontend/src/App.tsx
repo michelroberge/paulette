@@ -34,6 +34,12 @@ const KICKOFF_MESSAGES: Partial<Record<StageName, string>> = {
   build: "I've reviewed all approved artifacts. Let me create a concrete build plan with milestones and tasks.",
 };
 
+const PREV_STAGE: Partial<Record<StageName, StageName>> = {
+  ux: 'vision',
+  architecture: 'ux',
+  build: 'architecture',
+};
+
 interface StageTab {
   id: string;
   label: string;
@@ -214,15 +220,28 @@ function App() {
 
     if (messages.length === 0) {
       // Fresh stage — send the opening kickoff message.
-      let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
-      if (project?.enhancementVision) {
-        if (selectedStage === 'vision') {
-          kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
-        } else if (kickoff) {
-          kickoff = `${kickoff} This is an enhancement iteration — focus on: ${project.enhancementVision}`;
+      const doKickoff = async () => {
+        let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
+        if (project?.enhancementVision) {
+          if (selectedStage === 'vision') {
+            kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
+          } else if (kickoff) {
+            const prevStage = selectedStage ? PREV_STAGE[selectedStage] : undefined;
+            let prevArtifact = '';
+            if (prevStage && project?.id) {
+              try {
+                const artifact = await getArtifact(project.id, prevStage);
+                if (artifact?.content?.trim()) prevArtifact = artifact.content.trim();
+              } catch { /* ignore */ }
+            }
+            kickoff = prevArtifact
+              ? `${kickoff}\n\nThis is an enhancement iteration — focus on: ${project.enhancementVision}\n\nApproved ${prevStage} artifact to build upon:\n\n${prevArtifact}`
+              : `${kickoff} This is an enhancement iteration — focus on: ${project.enhancementVision}`;
+          }
         }
-      }
-      if (kickoff) send(kickoff);
+        if (kickoff) send(kickoff);
+      };
+      doKickoff();
     } else {
       // Unanswered user message (e.g. server restarted mid-generation) — resume.
       resume();

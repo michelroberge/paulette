@@ -12,8 +12,24 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
-// ErrPlanLimit is returned when Claude hits its plan/turn limit.
+// ErrPlanLimit is the sentinel error for Claude usage/plan limit.
 var ErrPlanLimit = errors.New("claude plan limit reached")
+
+// PlanLimitError wraps ErrPlanLimit and carries the raw message from the Claude CLI,
+// which typically includes the reset time (e.g. "Your limit resets at 5:00 PM UTC").
+type PlanLimitError struct {
+	Message string
+}
+
+func (e *PlanLimitError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "claude plan limit reached"
+}
+
+// Is makes errors.Is(err, ErrPlanLimit) return true for PlanLimitError values.
+func (e *PlanLimitError) Is(target error) bool { return target == ErrPlanLimit }
 
 // claudeBin is the path to the claude executable. Defaults to "claude" (PATH lookup).
 var claudeBin = "claude"
