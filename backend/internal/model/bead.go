@@ -21,19 +21,20 @@ const (
 )
 
 type Bead struct {
-	ID          string     `json:"id"`
-	Title       string     `json:"title"`
-	Description string     `json:"description,omitempty"`
-	Type        BeadType   `json:"type"`
-	Status      BeadStatus `json:"status"`
-	Priority    int        `json:"priority"`
-	EpicID      string     `json:"epicId,omitempty"` // parent epic ID (tasks only)
-	Deps        []string   `json:"deps"`
-	Tags        []string   `json:"tags,omitempty"`
-	TargetFiles []string   `json:"targetFiles,omitempty"`
-	JourneyRefs []string   `json:"journeyRefs,omitempty"`
-	ArchRefs    []string   `json:"archRefs,omitempty"`
-	Tokens      int        `json:"tokens,omitempty"`
+	ID                  string     `json:"id"`
+	Title               string     `json:"title"`
+	Description         string     `json:"description,omitempty"`
+	Type                BeadType   `json:"type"`
+	Status              BeadStatus `json:"status"`
+	Priority            int        `json:"priority"`
+	EpicID              string     `json:"epicId,omitempty"` // parent epic ID (tasks only)
+	Deps                []string   `json:"deps"`
+	Tags                []string   `json:"tags,omitempty"`
+	TargetFiles         []string   `json:"targetFiles,omitempty"`
+	JourneyRefs         []string   `json:"journeyRefs,omitempty"`
+	ArchRefs            []string   `json:"archRefs,omitempty"`
+	Tokens              int        `json:"tokens,omitempty"`
+	PreExecutionCommit  string     `json:"preExecutionCommit,omitempty"` // git commit hash before execution started
 }
 
 type BeadGraph struct {

@@ -2,7 +2,9 @@ package git
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -276,4 +278,45 @@ func (s *Service) Pull(dir string) error {
 	defer mu.Unlock()
 	_, err := run(dir, "pull", "origin")
 	return err
+}
+
+// CurrentHash returns the current HEAD commit hash, or empty string if repo has no commits.
+func (s *Service) CurrentHash(dir string) string {
+	out, err := run(dir, "rev-parse", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return out
+}
+
+// FileDiff returns the diff of a single file between fromRef and HEAD.
+// If fromRef is empty, diffs against the index (uncommitted changes).
+// Returns original and modified content.
+func (s *Service) FileDiff(dir, filePath, fromRef string) (original, modified string, err error) {
+	// Read current (modified) content
+	modBytes, readErr := os.ReadFile(filepath.Join(dir, filePath))
+	if readErr != nil {
+		if os.IsNotExist(readErr) {
+			modified = ""
+		} else {
+			return "", "", readErr
+		}
+	} else {
+		modified = string(modBytes)
+	}
+
+	if fromRef == "" {
+		// No ref: original is HEAD version
+		fromRef = "HEAD"
+	}
+
+	origOut, origErr := run(dir, "show", fromRef+":"+filePath)
+	if origErr != nil {
+		// File didn't exist at that ref
+		original = ""
+	} else {
+		original = origOut
+	}
+
+	return original, modified, nil
 }

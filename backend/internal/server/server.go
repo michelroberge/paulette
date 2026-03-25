@@ -83,6 +83,7 @@ func (s *Server) Router() http.Handler {
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
 	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo)
+	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
 	acth := handler.NewActivityHandler(s.runs, s.activityRepo, s.registry)
@@ -134,10 +135,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/stages/build/beads/watch", bh.Watch)
 		r.Post("/{id}/stages/build/beads/generate", bh.Generate)
 		r.Post("/{id}/stages/build/beads/execute", bh.Execute)
+		r.Post("/{id}/stages/build/beads/instruct", instructH.Plan)
+		r.Post("/{id}/stages/build/beads/instruct/apply", instructH.Apply)
 		r.Get("/{id}/stages/build/beads/{beadId}", bh.GetDetail)
 		r.Patch("/{id}/stages/build/beads/{beadId}", bh.UpdateBead)
 		r.Post("/{id}/stages/build/beads/{beadId}/control", bh.ControlBead)
 		r.Post("/{id}/stages/build/beads/{beadId}/chat", bh.BeadChat)
+		r.Get("/{id}/stages/build/beads/{beadId}/files", bh.GetBeadFiles)
+		r.Get("/{id}/stages/build/beads/{beadId}/diff", bh.GetBeadDiff)
 
 		r.Post("/{id}/stages/{stage}/reset", rh.Reset)
 

@@ -56,6 +56,7 @@ Rules:
 const devilAdvocateSystemPrompt = `You are the Devil's Advocate Agent for an AI App Factory. Your role is to critically review code just written by another agent and challenge its quality, completeness, and correctness.
 
 You have read-only access to the project files via Bash. Review what was implemented for the given task.
+Use relative paths in all Bash commands (e.g., ` + "`cat src/app.py`" + `, not ` + "`cat /root/project/src/app.py`" + `). Your working directory is already set to the project root.
 
 Challenge:
 - Is the implementation complete or are there stubs/placeholders?
@@ -86,7 +87,8 @@ When given a task to implement:
 - Create all necessary files using the Write, Edit, and Bash tools
 - Follow the architecture decisions and tech stack from the approved artifacts
 - Make the code work end-to-end for this specific task
-- Run tests or build commands if applicable to verify the implementation`
+- Run tests or build commands if applicable to verify the implementation
+- ALWAYS use relative paths for file operations (e.g., ` + "`src/app.py`" + `, not ` + "`/root/project/src/app.py`" + `). Your working directory is already set to the project root.`
 
 // ParseBuildPlan streams Claude's response while parsing build.md into structured epics/tasks.
 // The caller should collect the full "done" event content and call ExtractBeadJSON on it.
@@ -221,6 +223,7 @@ func ExecuteBead(ctx context.Context, projectDir string, bead model.Bead, artifa
 	}
 
 	systemPrompt.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactContext.String()))
+	systemPrompt.WriteString(fmt.Sprintf("\n\nProject root: `%s`\nALWAYS use relative paths for file operations — never hardcode absolute paths.", projectDir))
 
 	// Inject enhancement context for code writer when iterating on existing code
 	if len(enhancement) > 0 && enhancement[0] != nil {
@@ -404,6 +407,7 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 		userMsg.WriteString("- New functionality was added without breaking existing features\n")
 		userMsg.WriteString("- The implementation is incremental, not a from-scratch rewrite\n")
 	}
+	userMsg.WriteString(fmt.Sprintf("\nProject root: `%s`\nUse relative paths in all Bash commands.\n", projectDir))
 	userMsg.WriteString("\nUse Bash to inspect the project files, then assess whether this task was implemented correctly and completely.")
 
 	cmd := exec.CommandContext(ctx, claudeBin,

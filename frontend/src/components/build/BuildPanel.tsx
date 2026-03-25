@@ -27,7 +27,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
   const [maxParallel, setMaxParallel] = useState(2);
   const [selectedBeadId, setSelectedBeadId] = useState<string | null>(null);
 
-  const { graph, phase, loading, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
+  const { graph, setGraph, phase, loading, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
 
   const logRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
@@ -321,6 +321,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
             allBeads={graph.beads}
             onBeadSelect={setSelectedBeadId}
             onClose={() => setSelectedBeadId(null)}
+            onBeadsUpdated={setGraph}
           />
         ) : null;
       })()}

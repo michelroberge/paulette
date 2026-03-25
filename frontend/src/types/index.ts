@@ -85,6 +85,53 @@ export interface Bead {
   journeyRefs?: string[];
   archRefs?: string[];
   tokens?: number;
+  preExecutionCommit?: string;
+}
+
+export interface BeadFileEntry {
+  path: string;
+  content: string;
+  language: string;
+}
+
+export interface BeadFilesResponse {
+  files: BeadFileEntry[];
+}
+
+export interface BeadDiffEntry {
+  path: string;
+  original: string;
+  modified: string;
+  language: string;
+}
+
+export interface BeadDiffResponse {
+  diffs: BeadDiffEntry[];
+}
+
+export interface InstructBead {
+  title: string;
+  description: string;
+  type: string;
+  epicId?: string;
+  deps?: string[];
+  targetFiles?: string[];
+  tags?: string[];
+  priority: number;
+}
+
+export interface InstructUpdate {
+  id: string;
+  description?: string;
+  title?: string;
+}
+
+export interface InstructionPlan {
+  reasoning: string;
+  buildPlanChanges?: string;
+  architectureChanges?: string;
+  newBeads?: InstructBead[];
+  updatedBeads?: InstructUpdate[];
 }
 
 export interface BeadGraph {
