@@ -1,7 +1,7 @@
 {
   "build": {
-    "operation": "beads-generate",
+    "operation": "beads-execute",
     "status": "running",
-    "startedAt": "2026-03-25T23:23:22.19269113Z"
+    "startedAt": "2026-03-25T23:55:27.119800905Z"
   }
 }

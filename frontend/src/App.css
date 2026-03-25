@@ -1701,7 +1701,7 @@ body {
   flex-direction: column;
   border-left: 1px solid #334155;
   background: #0f172a;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .execute-paulette {

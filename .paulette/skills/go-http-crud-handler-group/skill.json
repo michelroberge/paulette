@@ -1,0 +1,46 @@
+{
+  "id": "go-http-crud-handler-group",
+  "name": "Go HTTP CRUD Handler Group",
+  "description": "Generates a Go handler struct with a full set of HTTP handler methods for CRUD operations on an entity, plus optional action endpoints (test, list-sub-resources). Follows chi router conventions with structured JSON responses.",
+  "category": "backend",
+  "tags": [
+    "go",
+    "http",
+    "chi",
+    "rest",
+    "crud",
+    "handler",
+    "api"
+  ],
+  "version": 1,
+  "parameters": [
+    {
+      "name": "entityName",
+      "description": "Name of the entity (e.g. Connection, Project)"
+    },
+    {
+      "name": "packageName",
+      "description": "Go package name",
+      "default": "handler"
+    },
+    {
+      "name": "storeName",
+      "description": "Name of the injected store/repository type (e.g. *provider.ConnectionStore)"
+    },
+    {
+      "name": "routePrefix",
+      "description": "URL prefix for this group (e.g. /api/connections)"
+    },
+    {
+      "name": "responseType",
+      "description": "Response struct name if different from entity (for credential redaction, etc.). Leave same as entityName if not needed."
+    },
+    {
+      "name": "extraActions",
+      "description": "Comma-separated list of extra action endpoints beyond CRUD (e.g. Test,TestNew,ListModels)"
+    }
+  ],
+  "createdAt": "2026-03-25T22:50:12.38682269Z",
+  "updatedAt": "2026-03-25T22:50:12.38682269Z",
+  "createdBy": "paulette"
+}

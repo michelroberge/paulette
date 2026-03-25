@@ -12,6 +12,7 @@ export function useBeads(projectId: string | null) {
   const [executionLog, setExecutionLog] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState('');
   const [planLimitReached, setPlanLimitReached] = useState(false);
+  const [generateTokens, setGenerateTokens] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
   const loadGraph = useCallback(async () => {
@@ -63,6 +64,9 @@ export function useBeads(projectId: string | null) {
         } catch { /* ignore */ }
         break;
       }
+      case 'tokens':
+        setGenerateTokens(t => t + (Number.parseInt(event.content) || 0));
+        break;
       case 'chunk':
         setStreamingText(t => t + event.content);
         break;
@@ -181,6 +185,7 @@ export function useBeads(projectId: string | null) {
     setGraph({ generatedAt: '', projectId, beads: [] });
     setExecutionLog([]);
     setStreamingText('');
+    setGenerateTokens(0);
     setPlanLimitReached(false);
 
     const controller = new AbortController();
@@ -234,5 +239,5 @@ export function useBeads(projectId: string | null) {
   const clearLog = useCallback(() => setExecutionLog([]), []);
   const clearPlanLimit = useCallback(() => setPlanLimitReached(false), []);
 
-  return { graph, setGraph, phase, loading, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit };
+  return { graph, setGraph, phase, loading, executionLog, streamingText, generateTokens, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit };
 }

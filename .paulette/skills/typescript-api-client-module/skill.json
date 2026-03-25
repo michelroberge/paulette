@@ -1,0 +1,42 @@
+{
+  "id": "typescript-api-client-module",
+  "name": "TypeScript API Client Module",
+  "description": "Creates a typed TypeScript API client module with functions for each endpoint, using a shared fetch helper. Follows a consistent pattern: function per endpoint, typed request/response, error propagation.",
+  "category": "frontend",
+  "tags": [
+    "typescript",
+    "api",
+    "fetch",
+    "client",
+    "rest",
+    "frontend"
+  ],
+  "version": 1,
+  "parameters": [
+    {
+      "name": "moduleName",
+      "description": "Name of the module/file (e.g. connections, stageConfig)"
+    },
+    {
+      "name": "baseRoute",
+      "description": "Base API route prefix (e.g. /api/connections, /api/config)"
+    },
+    {
+      "name": "fetchHelper",
+      "description": "Name of the existing fetch helper function to use (e.g. apiFetch)",
+      "default": "apiFetch"
+    },
+    {
+      "name": "endpoints",
+      "description": "JSON array of endpoint descriptors: [{name, method, path, requestType, responseType, description}]",
+      "default": "[]"
+    },
+    {
+      "name": "importTypes",
+      "description": "Comma-separated list of types to import from types module (e.g. Connection, ConnectionInput, TestResult)"
+    }
+  ],
+  "createdAt": "2026-03-25T22:50:12.387876797Z",
+  "updatedAt": "2026-03-25T22:50:12.387876797Z",
+  "createdBy": "paulette"
+}

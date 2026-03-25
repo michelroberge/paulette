@@ -149,7 +149,7 @@ export interface BeadDetail extends Bead {
 }
 
 export interface BuildStreamEvent {
-  type: 'chunk' | 'bead_created' | 'bead_update' | 'log' | 'done' | 'error' | 'plan_limit';
+  type: 'chunk' | 'bead_created' | 'bead_update' | 'log' | 'done' | 'error' | 'plan_limit' | 'tokens';
   content: string;
 }
 

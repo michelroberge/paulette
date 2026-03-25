@@ -1,0 +1,1048 @@
+{
+  "generatedAt": "2026-03-25T23:46:45.860952035Z",
+  "projectId": "9287a19a-3bba-447e-a22b-7abdf79511de",
+  "beads": [
+    {
+      "id": "paulette-6hc",
+      "title": "Provider Interface \u0026 Core Infrastructure",
+      "description": "Establish the Provider interface, connection store, and stage config store in the backend as the foundation for all subsequent work",
+      "type": "epic",
+      "status": "open",
+      "priority": 2,
+      "deps": []
+    },
+    {
+      "id": "paulette-nq0",
+      "title": "Create provider/provider.go — Provider interface and Registry",
+      "description": "Define Provider interface (Chat, TestConnection, ListModels), ChatRequest, ModelInfo, StreamEvent re-export, ErrModelListUnsupported, and Registry struct with ForConnection() and ResolveForStage() methods. ResolveForStage implements 3-level fallback (project override → global default → Claude CLI hardcoded).",
+      "type": "task",
+      "status": "in_progress",
+      "priority": 0,
+      "epicId": "paulette-6hc",
+      "deps": [],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/provider.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-005",
+        "JRN-v0.2.0-008"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-010"
+      ],
+      "preExecutionCommit": "f0a8dc84f12edd3986fd731f30e651edb11752a4"
+    },
+    {
+      "id": "paulette-54w",
+      "title": "Create provider/connection.go — Connection model and ProviderType constants",
+      "description": "Define Connection, ConnectionResponse, ProviderType constants for all 7 provider types. ConnectionResponse redacts APIKey into HasCredentials bool.",
+      "type": "task",
+      "status": "reviewing",
+      "priority": 0,
+      "epicId": "paulette-6hc",
+      "deps": [],
+      "tags": [
+        "backend",
+        "database"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/connection.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-018"
+      ],
+      "preExecutionCommit": "f0a8dc84f12edd3986fd731f30e651edb11752a4"
+    },
+    {
+      "id": "paulette-mnv",
+      "title": "Create provider/connection_store.go — Connection CRUD with file persistence",
+      "description": "Implement CRUD for connections with ~/.paulette/connections.json persistence, atomic writes, chmod 600. Methods: List, Get, Create, Update, Delete. UUID assigned on create. Delete returns affected stage assignments.",
+      "type": "task",
+      "status": "open",
+      "priority": 0,
+      "epicId": "paulette-6hc",
+      "deps": [
+        "paulette-54w"
+      ],
+      "tags": [
+        "backend",
+        "database"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/connection_store.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-003",
+        "JRN-v0.2.0-004"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-018"
+      ]
+    },
+    {
+      "id": "paulette-kuo",
+      "title": "Create provider/stage_config.go — Global defaults and per-project overrides",
+      "description": "Implement global defaults (~/.paulette/config.json) and per-project overrides (\u003chostDir\u003e/.paulette/stage_config.json). Methods: GetGlobalDefaults, SetGlobalStageDefault, GetProjectOverrides, SetProjectStageOverride, ResetProjectOverrides, ClearConnectionReferences. Files written atomically.",
+      "type": "task",
+      "status": "open",
+      "priority": 0,
+      "epicId": "paulette-6hc",
+      "deps": [
+        "paulette-54w"
+      ],
+      "tags": [
+        "backend",
+        "database"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/stage_config.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-006",
+        "JRN-v0.2.0-007"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-019"
+      ]
+    },
+    {
+      "id": "paulette-3uw",
+      "title": "Create provider/claude_cli.go — Claude CLI Provider adapter",
+      "description": "Wrap existing agent.Chat() behind the Provider interface. Chat delegates to agent.Chat(). TestConnection runs claude --version. ListModels returns ErrModelListUnsupported.",
+      "type": "task",
+      "status": "open",
+      "priority": 0,
+      "epicId": "paulette-6hc",
+      "deps": [
+        "paulette-nq0"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/claude_cli.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.1.0-002",
+        "JRN-v0.2.0-001"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-011"
+      ]
+    },
+    {
+      "id": "paulette-8qp",
+      "title": "LLM Provider Implementations",
+      "description": "Implement all P1 and P2 provider backends, each converting its native streaming format into the shared StreamEvent channel",
+      "type": "epic",
+      "status": "open",
+      "priority": 2,
+      "deps": []
+    },
+    {
+      "id": "paulette-09e",
+      "title": "Create provider/openai_compat.go — Shared OpenAI-compatible implementation",
+      "description": "Implement openAICompatChat(), openAICompatListModels(), openAICompatTestConnection(), SSE line parsing (data: {...} → StreamEvent), message format conversion. Handle data: [DONE] sentinel, parse choices[0].delta.content, support optional auth header and base URL. 30s test timeout, 10min chat timeout.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-8qp",
+      "deps": [
+        "paulette-nq0"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/openai_compat.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-005"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-017"
+      ]
+    },
+    {
+      "id": "paulette-g3n",
+      "title": "Create provider/ollama.go — Ollama provider",
+      "description": "Implement Ollama provider using POST /api/chat (NDJSON streaming) and GET /api/tags (model list). Stream NDJSON, convert {message:{content:...}, done:false} to StreamEvent. ListModels parses /api/tags response. No auth headers sent.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-8qp",
+      "deps": [
+        "paulette-nq0"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/ollama.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-005"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-012"
+      ]
+    },
+    {
+      "id": "paulette-xfq",
+      "title": "Create provider/lmstudio.go — LM Studio provider",
+      "description": "Implement LM Studio provider delegating to openai_compat functions with no auth. All three interface methods delegate to openAICompat* functions. Base URL required, no auth header.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-8qp",
+      "deps": [
+        "paulette-09e"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/lmstudio.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-005"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-013"
+      ]
+    },
+    {
+      "id": "paulette-cu1",
+      "title": "Create provider/openai.go — OpenAI provider",
+      "description": "Implement OpenAI provider delegating to openai_compat functions with Authorization: Bearer {key} header, optional org/project headers. Default base URL https://api.openai.com.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-8qp",
+      "deps": [
+        "paulette-09e"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/openai.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-005"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-014"
+      ]
+    },
+    {
+      "id": "paulette-e6h",
+      "title": "Create provider/anthropic.go — Anthropic API provider",
+      "description": "Implement Anthropic API provider using POST /v1/messages with typed SSE events (content_block_delta, message_stop). Set x-api-key and anthropic-version headers. ListModels returns hardcoded list. TestConnection sends minimal 1-token request.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-8qp",
+      "deps": [
+        "paulette-nq0"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/anthropic.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-005"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-015"
+      ]
+    },
+    {
+      "id": "paulette-9jo",
+      "title": "Create provider/gemini.go — Gemini provider",
+      "description": "Implement Gemini provider using streamGenerateContent endpoint with API key as query param. Parse candidates[0].content.parts[0].text from NDJSON array. ListModels uses GET /v1beta/models. Default base URL https://generativelanguage.googleapis.com.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-8qp",
+      "deps": [
+        "paulette-nq0"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/gemini.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-005"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-016"
+      ]
+    },
+    {
+      "id": "paulette-t23",
+      "title": "Wire Registry.ForConnection() — Provider factory method",
+      "description": "Implement the factory method that instantiates the correct provider type based on Connection.ProviderType. All 6 active provider types instantiated correctly. github_copilot returns error 'not yet supported'. Unknown types return error.",
+      "type": "task",
+      "status": "open",
+      "priority": 0,
+      "epicId": "paulette-8qp",
+      "deps": [
+        "paulette-09e",
+        "paulette-g3n",
+        "paulette-xfq",
+        "paulette-cu1",
+        "paulette-e6h",
+        "paulette-9jo",
+        "paulette-3uw"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/provider/provider.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-008"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-010"
+      ]
+    },
+    {
+      "id": "paulette-aza",
+      "title": "Backend API Handlers \u0026 Integration",
+      "description": "Expose connection CRUD, test, model list, and stage config via HTTP API. Modify existing chat/mock handlers to route through the provider layer.",
+      "type": "epic",
+      "status": "open",
+      "priority": 2,
+      "deps": []
+    },
+    {
+      "id": "paulette-d6n",
+      "title": "Create handler/connection.go — Connection CRUD and test handlers",
+      "description": "Implement Connection CRUD handlers (List, Create, Get, Update, Delete), Test/TestNew, ListModels/ListModelsNew. List/Get redact credentials (return ConnectionResponse). Create assigns UUID and timestamps. Delete calls ClearConnectionReferences and returns affected stages. Test/TestNew call provider.TestConnection() and optionally ListModels() in parallel. All errors return structured JSON.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-aza",
+      "deps": [
+        "paulette-mnv",
+        "paulette-t23"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/handler/connection.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-003",
+        "JRN-v0.2.0-004",
+        "JRN-v0.2.0-005"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-020"
+      ]
+    },
+    {
+      "id": "paulette-l1w",
+      "title": "Create handler/config_handler.go — Stage config handlers",
+      "description": "Implement stage config handlers: GetGlobalDefaults, SetGlobalStageDefault, GetProjectOverrides, SetProjectStageOverride, ResetProjectOverrides. PUT .../stages/:stage validates stage name. PUT with null body clears override. POST .../reset clears all project overrides.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-aza",
+      "deps": [
+        "paulette-kuo"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/handler/config_handler.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-006",
+        "JRN-v0.2.0-007"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-021"
+      ]
+    },
+    {
+      "id": "paulette-hkl",
+      "title": "Mount new routes in server/server.go",
+      "description": "Add /api/connections/* and /api/config/* route groups. All new endpoints reachable. Existing routes unchanged. Server struct accepts connStore, providerRegistry, stageConfig.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-aza",
+      "deps": [
+        "paulette-d6n",
+        "paulette-l1w"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/server/server.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-003",
+        "JRN-v0.2.0-004",
+        "JRN-v0.2.0-005",
+        "JRN-v0.2.0-006",
+        "JRN-v0.2.0-007"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-002"
+      ]
+    },
+    {
+      "id": "paulette-tlq",
+      "title": "Modify main.go — Initialize provider stores and registry",
+      "description": "Initialize ConnectionStore, Registry, StageConfigStore on startup and pass to server constructor. connections.json and config.json loaded at boot. Missing files handled gracefully with empty defaults.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-aza",
+      "deps": [
+        "paulette-hkl"
+      ],
+      "tags": [
+        "backend",
+        "config"
+      ],
+      "targetFiles": [
+        "backend/main.go"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-001"
+      ]
+    },
+    {
+      "id": "paulette-msz",
+      "title": "Modify handler/chat.go — Route through provider layer",
+      "description": "Replace direct agent.Chat() call with registry.ResolveForStage() → provider.Chat(). Emit structured error StreamEvent on provider failure. stageModels map remains as fallback. StartChatRun resolves provider + model via registry. Connection errors produce StreamEvent{Type: error} with connection name and reason. Existing Claude CLI path still works when no config exists.",
+      "type": "task",
+      "status": "open",
+      "priority": 0,
+      "epicId": "paulette-aza",
+      "deps": [
+        "paulette-t23",
+        "paulette-kuo"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/handler/chat.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.1.0-002",
+        "JRN-v0.2.0-008"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-006"
+      ]
+    },
+    {
+      "id": "paulette-1yw",
+      "title": "Modify handler/mock.go — Route through provider layer",
+      "description": "Same provider-resolution refactor as chat handler. Mock generation uses resolved provider. Error handling matches chat handler pattern.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-aza",
+      "deps": [
+        "paulette-msz"
+      ],
+      "tags": [
+        "backend",
+        "api"
+      ],
+      "targetFiles": [
+        "backend/internal/handler/mock.go"
+      ],
+      "journeyRefs": [
+        "JRN-v0.1.0-005",
+        "JRN-v0.2.0-008"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-007"
+      ]
+    },
+    {
+      "id": "paulette-59p",
+      "title": "Frontend Foundation \u0026 Routing",
+      "description": "Add React Router, TypeScript types, API client functions, and the Configure Paulette page shell",
+      "type": "epic",
+      "status": "open",
+      "priority": 2,
+      "deps": []
+    },
+    {
+      "id": "paulette-kh9",
+      "title": "Install react-router-dom and set up client-side routing",
+      "description": "Install react-router-dom and set up client-side routing in App.tsx. Routes: / (home), /projects/:id (project detail), /configure (configure page). Existing project list and project detail views function identically. URL reflects current view. Back/forward navigation works. ?tab= and ?highlight= query params parsed on /configure.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-59p",
+      "deps": [],
+      "tags": [
+        "frontend",
+        "config"
+      ],
+      "targetFiles": [
+        "frontend/src/App.tsx",
+        "frontend/package.json"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-008"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-032"
+      ]
+    },
+    {
+      "id": "paulette-1sk",
+      "title": "Create types/provider.ts — TypeScript provider types",
+      "description": "Define TypeScript types for ProviderType, Connection, ConnectionInput, ModelInfo, TestResult, DeleteResult, StageAssignment, GlobalStageConfig, ProjectStageConfig. All types match backend API contract. Connection has hasCredentials (not apiKey). ConnectionInput has apiKey for create/update only.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-59p",
+      "deps": [],
+      "tags": [
+        "frontend"
+      ],
+      "targetFiles": [
+        "frontend/src/types/provider.ts"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-003",
+        "JRN-v0.2.0-004",
+        "JRN-v0.2.0-005",
+        "JRN-v0.2.0-006",
+        "JRN-v0.2.0-007"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-031"
+      ]
+    },
+    {
+      "id": "paulette-77p",
+      "title": "Create api/connections.ts — Connection API client functions",
+      "description": "Implement all 8 functions (listConnections, createConnection, updateConnection, deleteConnection, testConnection, testNewConnection, listModels, listModelsForNew) using existing apiFetch helper.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-59p",
+      "deps": [
+        "paulette-1sk"
+      ],
+      "tags": [
+        "frontend",
+        "api"
+      ],
+      "targetFiles": [
+        "frontend/src/api/connections.ts"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-003",
+        "JRN-v0.2.0-004",
+        "JRN-v0.2.0-005"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-029"
+      ]
+    },
+    {
+      "id": "paulette-p13",
+      "title": "Create api/stageConfig.ts — Stage config API client functions",
+      "description": "Implement all 5 functions (getGlobalDefaults, setGlobalStageDefault, getProjectOverrides, setProjectStageOverride, resetProjectOverrides). setProjectStageOverride sends null to clear override.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-59p",
+      "deps": [
+        "paulette-1sk"
+      ],
+      "tags": [
+        "frontend",
+        "api"
+      ],
+      "targetFiles": [
+        "frontend/src/api/stageConfig.ts"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-006",
+        "JRN-v0.2.0-007"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-030"
+      ]
+    },
+    {
+      "id": "paulette-dkz",
+      "title": "Add Configure Paulette button to home page",
+      "description": "Add 'Configure Paulette' button alongside 'New Project' and 'Import Project'. Button styled as secondary (bg-white border border-gray-300). Navigates to /configure. Appears alongside existing action buttons.",
+      "type": "task",
+      "status": "open",
+      "priority": 2,
+      "epicId": "paulette-59p",
+      "deps": [
+        "paulette-kh9"
+      ],
+      "tags": [
+        "frontend",
+        "styling"
+      ],
+      "targetFiles": [
+        "frontend/src/App.tsx"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-033"
+      ]
+    },
+    {
+      "id": "paulette-1kh",
+      "title": "Frontend Configure Page \u0026 Components",
+      "description": "Build the full Configure Paulette UI — Connections tab, Connection form, Stage Defaults tab, Project Stage Settings panel, and error/toast components",
+      "type": "epic",
+      "status": "open",
+      "priority": 2,
+      "deps": []
+    },
+    {
+      "id": "paulette-g1c",
+      "title": "Create ConfigurePage.tsx — Two-tab layout",
+      "description": "Create two-tab layout (Connections, Stage Defaults) with breadcrumb, query param support for ?tab= and ?highlight=. Tabs switch content. ← Home breadcrumb navigates back. max-w-4xl centered layout.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-1kh",
+      "deps": [
+        "paulette-kh9",
+        "paulette-77p",
+        "paulette-p13"
+      ],
+      "tags": [
+        "frontend",
+        "styling"
+      ],
+      "targetFiles": [
+        "frontend/src/components/configure/ConfigurePage.tsx"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-006"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-022"
+      ]
+    },
+    {
+      "id": "paulette-hlr",
+      "title": "Create ConnectionsTab.tsx — Connection list with actions",
+      "description": "Connection list with provider badges, Add/Edit/Delete/Test actions, empty state. Connections fetched on mount. Provider badges colour-coded. Add Connection opens form. Edit pre-fills form. Delete shows confirmation with affected stages. ?highlight= causes matching card to pulse with ring-2 ring-red-400. Empty state with plug icon.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-1kh",
+      "deps": [
+        "paulette-g1c"
+      ],
+      "tags": [
+        "frontend",
+        "styling"
+      ],
+      "targetFiles": [
+        "frontend/src/components/configure/ConnectionsTab.tsx"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001",
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-003",
+        "JRN-v0.2.0-004"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-023"
+      ]
+    },
+    {
+      "id": "paulette-dbm",
+      "title": "Create ConnectionForm.tsx — Slide-over connection form",
+      "description": "Slide-over form with provider-type-driven fields, Test Connection, model discovery, credential warning. Provider type selection dynamically shows/hides fields. GitHub Copilot disabled with Coming Soon badge. Test Connection shows spinner → ✓/✗ inline. Model dropdown populated on successful discovery, free-text fallback otherwise. Credential warning banner. Save/Cancel footer.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-1kh",
+      "deps": [
+        "paulette-hlr"
+      ],
+      "tags": [
+        "frontend",
+        "styling"
+      ],
+      "targetFiles": [
+        "frontend/src/components/configure/ConnectionForm.tsx"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-003",
+        "JRN-v0.2.0-005"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-024"
+      ]
+    },
+    {
+      "id": "paulette-4z5",
+      "title": "Create StageDefaultsTab.tsx — Five-stage configuration table",
+      "description": "Five-stage table with connection picker and model field, auto-save per row. Each row shows stage pip + label, connection dropdown (all connections + Claude CLI default), model field (dropdown or free-text). Changes auto-save on blur/change. Saved ✓ fades in/out per row. Note about global vs project scope at bottom.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-1kh",
+      "deps": [
+        "paulette-g1c"
+      ],
+      "tags": [
+        "frontend",
+        "styling"
+      ],
+      "targetFiles": [
+        "frontend/src/components/configure/StageDefaultsTab.tsx"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-006"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-025"
+      ]
+    },
+    {
+      "id": "paulette-bxp",
+      "title": "Create ProjectStageSettings.tsx — Project override panel",
+      "description": "Slide-over panel with Inherit toggles, per-stage connection/model override, Reset all action. Inherit toggle ON → read-only muted values. OFF → editable pickers pre-populated from global. Override rows have bg-yellow-50 tint. Reset all with confirmation dialog. Auto-save per row.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-1kh",
+      "deps": [
+        "paulette-p13",
+        "paulette-77p"
+      ],
+      "tags": [
+        "frontend",
+        "styling"
+      ],
+      "targetFiles": [
+        "frontend/src/components/configure/ProjectStageSettings.tsx"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-007"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-026"
+      ]
+    },
+    {
+      "id": "paulette-peh",
+      "title": "Modify project header — Add gear icon and override indicators",
+      "description": "Add ⚙ gear icon button to project header. Show ring-2 ring-yellow-400 accent on pips with overrides. Gear icon opens ProjectStageSettings panel. Tooltip 'Stage connection settings'.",
+      "type": "task",
+      "status": "open",
+      "priority": 2,
+      "epicId": "paulette-1kh",
+      "deps": [
+        "paulette-bxp"
+      ],
+      "tags": [
+        "frontend",
+        "styling"
+      ],
+      "targetFiles": [
+        "frontend/src/App.tsx"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-007"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-034"
+      ]
+    },
+    {
+      "id": "paulette-3gw",
+      "title": "Create ConnectionErrorBanner.tsx — Inline error banner",
+      "description": "Inline error banner with 'Go to Configure →' deep-link and 'Change stage connection' shortcut. Renders on StreamEvent{type: error} with connection info. Links to /configure?tab=connections\u0026highlight={id}. Opens ProjectStageSettings. Banner persists until user navigates or retries.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-1kh",
+      "deps": [
+        "paulette-kh9"
+      ],
+      "tags": [
+        "frontend",
+        "styling"
+      ],
+      "targetFiles": [
+        "frontend/src/components/chat/ConnectionErrorBanner.tsx"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-008"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-027"
+      ]
+    },
+    {
+      "id": "paulette-n0i",
+      "title": "Create CredentialWarningToast.tsx — Toast notification",
+      "description": "Toast notification for credential saves, auto-dismiss after 6s. Fixed bottom-right position. Yellow warning styling. Auto-dismisses after 6s with fade-out. Only shown for providers that have credentials (not Ollama/LM Studio/Claude CLI).",
+      "type": "task",
+      "status": "open",
+      "priority": 2,
+      "epicId": "paulette-1kh",
+      "deps": [],
+      "tags": [
+        "frontend",
+        "styling"
+      ],
+      "targetFiles": [
+        "frontend/src/components/configure/CredentialWarningToast.tsx"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-002",
+        "JRN-v0.2.0-003"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-028"
+      ]
+    },
+    {
+      "id": "paulette-rh8",
+      "title": "Integrate ConnectionErrorBanner into chat panel",
+      "description": "Detect connection error events and render banner in ChatPanel. When SSE stream emits an error event with connection failure info, the banner replaces the streaming area. Chat input remains available for retry after fix.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-1kh",
+      "deps": [
+        "paulette-3gw"
+      ],
+      "tags": [
+        "frontend"
+      ],
+      "targetFiles": [
+        "frontend/src/components/chat/ChatPanel.tsx",
+        "frontend/src/hooks/useChat.ts"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-008"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-027"
+      ]
+    },
+    {
+      "id": "paulette-65f",
+      "title": "Integration Testing \u0026 Polish",
+      "description": "End-to-end validation, edge case handling, and regression testing",
+      "type": "epic",
+      "status": "open",
+      "priority": 2,
+      "deps": []
+    },
+    {
+      "id": "paulette-26w",
+      "title": "Verify Claude CLI fallback — Zero regression test",
+      "description": "Confirm that with no connections.json or config.json, the pipeline works identically to v0.1.0. New project → Vision stage fires with Claude Sonnet via CLI; Architecture fires with Claude Opus; no configuration required.",
+      "type": "task",
+      "status": "open",
+      "priority": 0,
+      "epicId": "paulette-65f",
+      "deps": [
+        "paulette-msz",
+        "paulette-1yw",
+        "paulette-tlq"
+      ],
+      "tags": [
+        "testing"
+      ],
+      "journeyRefs": [
+        "JRN-v0.1.0-002",
+        "JRN-v0.1.0-003",
+        "JRN-v0.1.0-004",
+        "JRN-v0.1.0-005"
+      ]
+    },
+    {
+      "id": "paulette-yq8",
+      "title": "Test Ollama end-to-end",
+      "description": "Create Ollama connection, assign to all stages, run full pipeline. User with no Claude CLI can complete a full pipeline using Ollama alone. Connection test passes in \u003c3s for local Ollama.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-65f",
+      "deps": [
+        "paulette-26w"
+      ],
+      "tags": [
+        "testing"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-001"
+      ]
+    },
+    {
+      "id": "paulette-951",
+      "title": "Test mixed provider configuration",
+      "description": "Assign different connections to different stages, verify stage-specific resolution. Vision/UX use Ollama, Architecture/Build use OpenAI; each stage correctly routes to its assigned provider and model.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-65f",
+      "deps": [
+        "paulette-yq8"
+      ],
+      "tags": [
+        "testing"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-006",
+        "JRN-v0.2.0-007"
+      ]
+    },
+    {
+      "id": "paulette-r5f",
+      "title": "Test connection error recovery flow",
+      "description": "Simulate unreachable provider, verify error banner, fix, retry. Error banner appears immediately (no silent hang). 'Go to Configure' deep-links correctly with highlight. After fixing connection, retry works without data loss.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-65f",
+      "deps": [
+        "paulette-rh8",
+        "paulette-yq8"
+      ],
+      "tags": [
+        "testing"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-008"
+      ]
+    },
+    {
+      "id": "paulette-c0r",
+      "title": "Test connection deletion cascade",
+      "description": "Delete a connection used in stage assignments, verify fallback. Affected stages reported in response. Stage assignments cleared. Stages fall back to Claude CLI default.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-65f",
+      "deps": [
+        "paulette-951"
+      ],
+      "tags": [
+        "testing"
+      ],
+      "journeyRefs": [
+        "JRN-v0.2.0-004"
+      ]
+    },
+    {
+      "id": "paulette-isl",
+      "title": "Verify chmod 600 on connections.json",
+      "description": "Confirm file permissions on every save operation. stat ~/.paulette/connections.json shows 0600 permissions after create, update, and delete operations.",
+      "type": "task",
+      "status": "open",
+      "priority": 2,
+      "epicId": "paulette-65f",
+      "deps": [
+        "paulette-d6n"
+      ],
+      "tags": [
+        "testing",
+        "devops"
+      ],
+      "archRefs": [
+        "ARCH-v0.2.0-018"
+      ]
+    },
+    {
+      "id": "paulette-iza",
+      "title": "Verify autonomous mode with custom providers",
+      "description": "Run full autonomous pipeline with non-Claude provider. Autonomous mode drives through all stages using configured provider. Error mid-pipeline surfaces correctly.",
+      "type": "task",
+      "status": "open",
+      "priority": 1,
+      "epicId": "paulette-65f",
+      "deps": [
+        "paulette-951"
+      ],
+      "tags": [
+        "testing"
+      ],
+      "journeyRefs": [
+        "JRN-v0.1.0-004",
+        "JRN-v0.2.0-008"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "id": "go-llm-streaming-provider-adapter",
+  "name": "Go LLM Streaming Provider Adapter",
+  "description": "Implements the Provider interface for a specific LLM API, converting its native streaming format (SSE, NDJSON, typed events) into a shared StreamEvent channel. Covers Chat, TestConnection, and ListModels.",
+  "category": "backend",
+  "tags": [
+    "go",
+    "llm",
+    "streaming",
+    "provider",
+    "sse",
+    "ndjson",
+    "ai",
+    "adapter"
+  ],
+  "version": 1,
+  "parameters": [
+    {
+      "name": "providerName",
+      "description": "Name of the provider (e.g. Ollama, OpenAI, Anthropic, Gemini)"
+    },
+    {
+      "name": "packageName",
+      "description": "Go package name",
+      "default": "provider"
+    },
+    {
+      "name": "chatEndpoint",
+      "description": "HTTP endpoint for chat (e.g. POST /api/chat, POST /v1/chat/completions)"
+    },
+    {
+      "name": "streamingFormat",
+      "description": "Streaming format: 'ndjson' | 'openai_sse' | 'anthropic_sse' | 'gemini_ndjson_array'",
+      "default": "openai_sse"
+    },
+    {
+      "name": "authMechanism",
+      "description": "Auth mechanism: 'none' | 'bearer_header' | 'api_key_header' | 'query_param'",
+      "default": "none"
+    },
+    {
+      "name": "authHeaderOrParam",
+      "description": "Header name or query param name for auth (e.g. Authorization, x-api-key, key)"
+    },
+    {
+      "name": "modelListEndpoint",
+      "description": "Endpoint to list models, or 'hardcoded' if list is static, or 'unsupported'"
+    },
+    {
+      "name": "defaultBaseURL",
+      "description": "Default base URL (e.g. https://api.openai.com, http://localhost:11434)"
+    },
+    {
+      "name": "extraFields",
+      "description": "Additional struct fields beyond baseURL and httpClient (e.g. apiKey string, orgID string)"
+    }
+  ],
+  "createdAt": "2026-03-25T22:50:12.387594279Z",
+  "updatedAt": "2026-03-25T22:50:12.387594279Z",
+  "createdBy": "paulette"
+}

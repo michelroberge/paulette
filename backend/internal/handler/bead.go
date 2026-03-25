@@ -290,6 +290,7 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 				var n int
 				fmt.Sscanf(event.Content, "%d", &n)
 				generateTokens += n
+				run.Emit(event)
 			} else if event.Type == "chunk" {
 				run.Emit(event)
 			}

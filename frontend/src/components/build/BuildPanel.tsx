@@ -28,7 +28,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
   const [maxParallel, setMaxParallel] = useState(2);
   const [selectedBeadId, setSelectedBeadId] = useState<string | null>(null);
 
-  const { graph, setGraph, phase, loading, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
+  const { graph, setGraph, phase, loading, executionLog, streamingText, generateTokens, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
 
   const logRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
@@ -108,6 +108,15 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
       prevBeadTokensRef.current = totalBeadTokens;
     }
   }, [totalBeadTokens]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const prevGenerateTokensRef = useRef(0);
+  useEffect(() => {
+    const delta = generateTokens - prevGenerateTokensRef.current;
+    if (delta > 0) {
+      onBeadTokens?.(delta);
+      prevGenerateTokensRef.current = generateTokens;
+    }
+  }, [generateTokens]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="build-panel" style={{ display: hidden ? 'none' : 'flex' }}>
