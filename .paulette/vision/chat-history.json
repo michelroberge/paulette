@@ -1,0 +1,25 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "I'd like to be able to use different tools than Claude. Therefore, I want to abstract it so we can use different LLM tools. I want to support Ollama, LM Studio, Copilot, open AI, Gemini... I need a place in the home page to click \"Configure Paulette\" which would allow us to setup different connections. Some cases are just Urls (Ollama), others may require some login (Open AI), so let's think in 2 parts: the connections, and then matching a connection with specific tasks, specifying which model to use. If we can retrieve the available models, great, else, the user can type them manually. The goal would be to rely less on claude, and for people who have good inference models, it might be useful to use different tools.",
+      "timestamp": "2026-03-25T20:20:59.343505742Z"
+    },
+    {
+      "role": "assistant",
+      "content": "This is a meaty enhancement — it touches the core execution model of Paulette. Before I lock in the vision, I want to sharpen a few things with you:\n\n**1. Global defaults vs. per-project overrides — or both?**\nRight now the model assignment is global (Sonnet for Vision/UX, Opus for Architecture/Build). With this change, do you want:\n- A **global default** assignment (e.g. \"by default, use Ollama llama3 for all stages\") that any project inherits…\n- …with a **per-project override** so a specific project can say \"use GPT-4o for Architecture\"?\n- Or just one level (global only for now)?\n\n**2. The fate of the Claude CLI subprocess**\nToday Paulette talks to Claude via a local `claude` CLI subprocess. This new abstraction should wrap *all* providers — including Claude itself. Does the Claude CLI become just one more \"provider\" in the list (alongside Anthropic API direct, OpenAI, etc.)? Or should we drop the CLI subprocess entirely and always talk to Anthropic via direct API key like the other providers?\n\n**3. GitHub Copilot — priority level?**\nCopilot uses a GitHub OAuth device-code flow which is meaningfully more complex than \"paste an API key.\" Is this a must-have for V1 of this feature, or a stretch goal? (LM Studio and Ollama are the simplest, OpenAI/Gemini/Anthropic are medium complexity, Copilot is the hardest.)\n\n---\n\nIn the meantime, I have enough signal to produce a solid draft. Here's the updated vision with the multi-provider abstraction integrated. I've marked every changed or new section clearly.",
+      "timestamp": "2026-03-25T20:22:16.521886477Z"
+    },
+    {
+      "role": "user",
+      "content": "1. both. 2. Since it works great, I suggest just one more provider. 3. I really would like to have copilot as this is what we use at work. But perhaps we can mention it as a priority 3, vs 2 for open ai and friends, and 1 for ollama",
+      "timestamp": "2026-03-25T20:26:33.742193479Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Perfect — that gives me everything I need. To summarise the decisions locked in:\n\n- **Two-level assignment**: global defaults (inherited by all projects) + per-project overrides\n- **Claude CLI survives** as just another provider in the list — no forced migration\n- **Provider priorities**:\n  - P1: Ollama, LM Studio (URL-only, no auth)\n  - P2: Anthropic API direct, OpenAI, Gemini (API key auth)\n  - P3: GitHub Copilot (OAuth device-code flow — want it, but it's the hard one)\n\nHere is the full updated vision with all changes marked:",
+      "timestamp": "2026-03-25T20:27:46.484678451Z"
+    }
+  ],
+  "nextTurn": ""
+}

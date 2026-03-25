@@ -1,0 +1,26 @@
+{
+  "sessions": [
+    {
+      "id": "160ed65e-6cb6-4f08-842e-41319a758ead",
+      "stage": "vision",
+      "kind": "chat",
+      "iteration": 2,
+      "startedAt": "2026-03-25T20:20:59.372910637Z",
+      "endedAt": "2026-03-25T20:22:16.537444277Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 3471
+    },
+    {
+      "id": "5d376842-fbad-4ae1-88a0-7bb660a4d2ba",
+      "stage": "vision",
+      "kind": "chat",
+      "iteration": 2,
+      "startedAt": "2026-03-25T20:26:33.775913513Z",
+      "endedAt": "2026-03-25T20:27:46.499702105Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 2999
+    }
+  ]
+}
