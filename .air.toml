@@ -1,0 +1,1 @@
+# Air config lives in backend/.air.toml — that's where air runs from in Docker.

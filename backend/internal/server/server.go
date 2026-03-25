@@ -104,6 +104,12 @@ func (s *Server) Router() http.Handler {
 	cfgH := handler.NewConfigHandler(s.cfg)
 	r.Get("/api/config", cfgH.GetInfo)
 
+	authH := handler.NewAuthHandler(s.cfg.ClaudePath)
+	r.Get("/api/auth/status", authH.Status)
+	r.Get("/api/auth/login", authH.Login)
+	r.Post("/api/auth/login/input", authH.LoginInput)
+	r.Post("/api/auth/logout", authH.Logout)
+
 	r.Route("/api/projects", func(r chi.Router) {
 		r.Get("/activity", acth.Summary)
 		r.Post("/", ph.Create)

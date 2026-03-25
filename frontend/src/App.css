@@ -1109,6 +1109,85 @@ body {
   margin-bottom: 2rem;
 }
 
+/* ── Claude auth banner ─────────────────────────────────────── */
+.auth-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  margin-bottom: 1.2rem;
+}
+.auth-banner.auth-ok  { background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.25); }
+.auth-banner.auth-warn { background: rgba(234, 179, 8, 0.1); border: 1px solid rgba(234, 179, 8, 0.3); }
+.auth-banner.auth-ok  .auth-dot { color: #22c55e; }
+.auth-banner.auth-warn .auth-dot { color: #eab308; }
+.auth-action {
+  margin-left: auto;
+  padding: 0.25rem 0.7rem;
+  border-radius: 5px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: inherit;
+}
+.auth-action:hover { background: rgba(255,255,255,0.14); }
+
+.auth-login-panel {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  font-size: 0.85rem;
+}
+.auth-login-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+.auth-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+}
+.auth-login-output {
+  background: #020817;
+  border-radius: 6px;
+  padding: 0.75rem;
+  min-height: 3rem;
+  max-height: 12rem;
+  overflow-y: auto;
+  font-family: monospace;
+  margin-bottom: 0.6rem;
+}
+.auth-line { color: #cbd5e1; white-space: pre-wrap; word-break: break-all; line-height: 1.5; }
+.auth-url  { color: #38bdf8; text-decoration: underline; }
+.auth-error { color: #f87171; }
+.auth-waiting { color: #64748b; font-style: italic; }
+.auth-hint { color: #64748b; font-size: 0.78rem; margin: 0; }
+
+.auth-code-form { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+.auth-code-input {
+  flex: 1;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #e2e8f0;
+  font-size: 0.82rem;
+  padding: 0.35rem 0.6rem;
+  outline: none;
+}
+.auth-code-input:focus { border-color: #6366f1; }
+
 .copyright {
   margin-top: 3rem;
   padding: 1.5rem 0 0.5rem;

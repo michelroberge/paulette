@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { listProjects, createProject, deleteProject } from '../../api/projects';
 import { importProject } from '../../api/import';
 import { getConfig } from '../../api/config';
 import { getProjectsActivity } from '../../api/activity';
+import { getAuthStatus, startLogin, logout, sendLoginCode } from '../../api/auth';
+import type { AuthStatus } from '../../api/auth';
 import { StageRobot } from '../layout/StageRobot';
 import type { Project, StageName } from '../../types';
 
@@ -52,6 +54,13 @@ export function ProjectList({ onSelect }: Props) {
   const [appVersion, setAppVersion] = useState('');
   const [appAuthor, setAppAuthor] = useState('');
   const [activityCounts, setActivityCounts] = useState<Record<string, number>>({});
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [showLoginPanel, setShowLoginPanel] = useState(false);
+  const [loginLines, setLoginLines] = useState<string[]>([]);
+  const [loginError, setLoginError] = useState('');
+  const [loginCode, setLoginCode] = useState('');
+  const [loginCodeSent, setLoginCodeSent] = useState(false);
+  const loginCleanup = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     listProjects().then(setProjects).catch(console.error);
@@ -60,6 +69,7 @@ export function ProjectList({ onSelect }: Props) {
       setAppVersion(c.version);
       setAppAuthor(c.author);
     }).catch(console.error);
+    getAuthStatus().then(setAuthStatus).catch(console.error);
   }, []);
 
   useEffect(() => {
@@ -112,6 +122,44 @@ export function ProjectList({ onSelect }: Props) {
     setConfirmDelete(null);
   };
 
+  const handleStartLogin = () => {
+    setLoginLines([]);
+    setLoginError('');
+    setLoginCode('');
+    setLoginCodeSent(false);
+    setShowLoginPanel(true);
+    loginCleanup.current = startLogin(
+      (line) => setLoginLines(prev => [...prev, line]),
+      () => { getAuthStatus().then(setAuthStatus).catch(console.error); setShowLoginPanel(false); },
+      (msg) => setLoginError(msg),
+    );
+  };
+
+  const handleLogout = async () => {
+    loginCleanup.current?.();
+    loginCleanup.current = null;
+    await logout().catch(console.error);
+    setAuthStatus({ authenticated: false });
+    setShowLoginPanel(false);
+    setLoginLines([]);
+  };
+
+  const handleSubmitCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginCode.trim()) return;
+    try {
+      await sendLoginCode(loginCode.trim());
+      setLoginCodeSent(true);
+      setLoginCode('');
+    } catch (err) {
+      setLoginError('Failed to send code — try closing and re-opening the login panel.');
+    }
+  };
+
+  const handleSwitchAccount = () => {
+    handleLogout().then(handleStartLogin);
+  };
+
   return (
     <div className="project-list">
       <div className="paulette-banner">
@@ -147,6 +195,71 @@ export function ProjectList({ onSelect }: Props) {
           <span className="paulette-version">{appVersion ? `v${appVersion}` : ''}</span>
         </div>
       </div>
+
+      {authStatus && (
+        <div className={`auth-banner ${authStatus.authenticated ? 'auth-ok' : 'auth-warn'}`}>
+          {authStatus.authenticated ? (
+            <>
+              <span className="auth-dot">●</span>
+              <span>Claude authenticated{authStatus.account && authStatus.account !== 'api-key' ? ` · ${authStatus.account}` : ''}</span>
+              <button className="auth-action" onClick={handleSwitchAccount}>Switch Account</button>
+            </>
+          ) : (
+            <>
+              <span className="auth-dot">●</span>
+              <span>Not authenticated</span>
+              <button className="auth-action" onClick={handleStartLogin}>Login</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {showLoginPanel && (
+        <div className="auth-login-panel">
+          <div className="auth-login-header">
+            <span>Claude Login</span>
+            <button className="auth-close" onClick={() => { loginCleanup.current?.(); setShowLoginPanel(false); }}>×</button>
+          </div>
+          <div className="auth-login-output">
+            {loginLines.length === 0 && !loginError && <span className="auth-waiting">Starting auth flow…</span>}
+            {loginLines.map((line, i) => {
+              const urlMatch = line.match(/https?:\/\/\S+/);
+              if (urlMatch) {
+                const before = line.slice(0, urlMatch.index);
+                const after = line.slice((urlMatch.index ?? 0) + urlMatch[0].length);
+                return (
+                  <div key={i} className="auth-line">
+                    {before}
+                    <a href={urlMatch[0]} target="_blank" rel="noreferrer" className="auth-url">{urlMatch[0]}</a>
+                    {after}
+                  </div>
+                );
+              }
+              return <div key={i} className="auth-line">{line}</div>;
+            })}
+            {loginError && <div className="auth-line auth-error">{loginError}</div>}
+          </div>
+          {loginLines.some(l => /https?:\/\//.test(l)) && !loginCodeSent && (
+            <form className="auth-code-form" onSubmit={handleSubmitCode}>
+              <input
+                className="auth-code-input"
+                placeholder="Paste authorization code here…"
+                value={loginCode}
+                onChange={e => setLoginCode(e.target.value)}
+                autoFocus
+              />
+              <button type="submit" className="auth-action" disabled={!loginCode.trim()}>Submit</button>
+            </form>
+          )}
+          {loginCodeSent && <p className="auth-hint">Code sent — waiting for confirmation…</p>}
+          {!loginCodeSent && (
+            <p className="auth-hint">
+              Open the link above, authorize, then paste the code you receive back here.
+            </p>
+          )}
+        </div>
+      )}
+
       <p>Select a project or create a new one.</p>
 
       <div className="project-grid">
