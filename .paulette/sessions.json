@@ -21,6 +21,28 @@
       "inputTokens": 0,
       "outputTokens": 0,
       "totalTokens": 2999
+    },
+    {
+      "id": "4ce8f930-1472-4d28-9179-d38673f7c736",
+      "stage": "ux",
+      "kind": "chat",
+      "iteration": 2,
+      "startedAt": "2026-03-25T20:29:00.079973379Z",
+      "endedAt": "2026-03-25T20:33:01.875178915Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 13210
+    },
+    {
+      "id": "f6669300-a4ea-4324-b5dd-321044b6e9b6",
+      "stage": "ux",
+      "kind": "mock",
+      "iteration": 2,
+      "startedAt": "2026-03-25T20:34:37.445080271Z",
+      "endedAt": "2026-03-25T20:38:37.345968686Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 20120
     }
   ]
 }

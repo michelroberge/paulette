@@ -215,8 +215,12 @@ function App() {
     if (messages.length === 0) {
       // Fresh stage — send the opening kickoff message.
       let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
-      if (project?.enhancementVision && selectedStage === 'vision') {
-        kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
+      if (project?.enhancementVision) {
+        if (selectedStage === 'vision') {
+          kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
+        } else if (kickoff) {
+          kickoff = `${kickoff} This is an enhancement iteration — focus on: ${project.enhancementVision}`;
+        }
       }
       if (kickoff) send(kickoff);
     } else {

@@ -4,7 +4,7 @@
   "author": "Michel Roberge",
   "version": "0.2.0",
   "hostDir": "/root/repos/paulette",
-  "currentStage": "ux",
+  "currentStage": "architecture",
   "iteration": 2,
   "enhancementVision": "I would like to support different tools than Claude. Not everything makes sense, but in some places, it would. Therefore, I would like to add an abastraction layer in front of the calls to claude, and a way to configure different tools like ollama, open ai, gemini, copilot, and lm studio. We should be able to set the URL, perform the login (or setup credentials), ollama url should be configurable. Then, we'd need a place to be able to setup at each step, which connection to use, and which model. If we can retrieve the model, great, but if we can't it's fine to just let the user enter the model manually. I would like to be able to do this from a setup page, perhaps accessible from the home page. I expect this would write to json file inside the paulette workdir",
   "imported": true,
@@ -12,8 +12,9 @@
   "autonomous": false,
   "baseBranch": "develop",
   "stageTokens": {
+    "ux": 33330,
     "vision": 6470
   },
   "createdAt": "2026-03-25T14:40:10.532830075Z",
-  "updatedAt": "2026-03-25T20:28:34.036463567Z"
+  "updatedAt": "2026-03-25T20:44:16.883700079Z"
 }
