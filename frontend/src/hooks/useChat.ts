@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { getChatHistory, sendMessage } from '../api/chat';
+import { getChatHistory, sendMessage, resumeChat } from '../api/chat';
 import { getActiveRuns, reconnectToRun } from '../api/activity';
 import type { Message, StageName, StreamEvent } from '../types';
 
@@ -132,5 +132,20 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     }, controller.signal);
   }, [projectId, stage, streaming, handleEvent]);
 
-  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send, stop };
+  // Resume re-invokes the agent for an unanswered user message (e.g. after server restart).
+  const resume = useCallback(async () => {
+    if (!projectId || !stage || streaming) return;
+    setStreaming(true);
+    setStreamingContent('');
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const fullContentRef = { current: '' };
+
+    await resumeChat(projectId, stage, (event: StreamEvent) => {
+      handleEvent(event, fullContentRef);
+    }, controller.signal);
+  }, [projectId, stage, streaming, handleEvent]);
+
+  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, loadHistory, send, resume, stop };
 }

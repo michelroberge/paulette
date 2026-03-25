@@ -86,7 +86,7 @@ function App() {
     [stageTokens],
   );
 
-  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send, stop } =
+  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, loadHistory, send, resume, stop } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger, selectedStage ? (n) => addTokens(selectedStage, n) : undefined);
 
   const { active: agentActive, streamingText: agentStreamingText, operation: agentOperation, stage: agentStage } =
@@ -200,19 +200,27 @@ function App() {
     return () => clearInterval(id);
   }, [project?.id, project?.currentStage, project?.summaryReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-kickoff: when entering a stage with no history, send the opening message
-  // Skip for imported projects — artifacts are pre-populated, user reviews manually
-  // Skip for autonomous mode — the backend orchestrator drives chat
+  // Auto-kickoff: when entering a stage, send the opening message or resume if interrupted.
+  // Skip for imported projects — artifacts are pre-populated, user reviews manually.
+  // Skip for autonomous mode — the backend orchestrator drives chat.
   useEffect(() => {
-    if (!historyLoaded || messages.length > 0 || streaming) return;
+    if (!historyLoaded || streaming) return;
     if (project?.imported || project?.autonomous) return;
     const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
     if (currentStageInfo?.status !== 'active') return;
-    let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
-    if (project?.enhancementVision && selectedStage === 'vision') {
-      kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
+    if (nextTurn !== 'agent') return;
+
+    if (messages.length === 0) {
+      // Fresh stage — send the opening kickoff message.
+      let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
+      if (project?.enhancementVision && selectedStage === 'vision') {
+        kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
+      }
+      if (kickoff) send(kickoff);
+    } else {
+      // Unanswered user message (e.g. server restarted mid-generation) — resume.
+      resume();
     }
-    if (kickoff) send(kickoff);
   }, [historyLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleReset = async (stage: StageName) => {

@@ -140,6 +140,7 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/{id}/stages/{stage}/chat", ch.GetHistory)
 		r.Post("/{id}/stages/{stage}/chat", ch.Send)
+		r.Post("/{id}/stages/{stage}/chat/resume", ch.Resume)
 
 		r.Get("/{id}/stages/ux/mock", mh.Get)
 		r.Post("/{id}/stages/ux/mock", mh.Generate)

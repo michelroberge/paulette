@@ -221,7 +221,7 @@ export function ProjectList({ onSelect }: Props) {
         </pre>
         <div className="paulette-title-block">
           <h1>paulette</h1>
-          <span className="paulette-subtitle">AI App Factory 1</span>
+          <span className="paulette-subtitle">Claude's wannabe assistant</span>
           <span className="paulette-version">{appVersion ? `v${appVersion}` : ''}</span>
         </div>
       </div>
