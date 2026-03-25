@@ -12,6 +12,7 @@ export interface Project {
   enhancementVision?: string;
   imported?: boolean;
   summaryReady: boolean;
+  summaryApproved?: boolean;
   autonomous?: boolean;
   devCommands?: string[];
   buildCommands?: string[];
@@ -117,4 +118,65 @@ export interface GitStatus {
   dirty: number;
   hasRemote: boolean;
   remoteUrl: string;
+}
+
+// Session token tracking
+export type SessionKind = 'chat' | 'mock' | 'beads-generate' | 'beads-execute' | 'summary';
+
+export interface Session {
+  id: string;
+  stage: StageName;
+  kind: SessionKind;
+  iteration: number;
+  startedAt: string;
+  endedAt: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface StageSummary {
+  count: number;
+  tokens: number;
+}
+
+export interface SessionSummary {
+  sessions: Session[];
+  byStage: Partial<Record<StageName, StageSummary>>;
+  grandTotal: number;
+}
+
+// Skills
+export interface SkillParam {
+  name: string;
+  description: string;
+  default?: string;
+}
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  version: number;
+  parameters?: SkillParam[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface SkillSuggestion {
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  parameters?: SkillParam[];
+  promptTemplate: string;
+  approved: boolean;
+  sourceBeads?: string[];
+}
+
+export interface SkillSuggestions {
+  suggestions: SkillSuggestion[];
 }

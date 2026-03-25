@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"regexp"
 	"strings"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
@@ -57,7 +56,6 @@ type claudeContent struct {
 	Text string `json:"text"`
 }
 
-var artifactRegex = regexp.MustCompile(`(?s)<!-- ARTIFACT:START -->\s*(.*?)\s*<!-- ARTIFACT:END -->`)
 
 // Chat spawns a Claude CLI subprocess and streams the response.
 // modelID selects the Claude model (e.g. "claude-sonnet-4-6"); empty string uses the CLI default.
@@ -94,6 +92,7 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 		defer cmd.Wait()
 
 		var fullResponse strings.Builder
+		var filter StreamFilter
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -114,7 +113,9 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 					for _, c := range event.Message.Content {
 						if c.Type == "text" && c.Text != "" {
 							fullResponse.WriteString(c.Text)
-							ch <- StreamEvent{Type: "chunk", Content: c.Text}
+							if visible := filter.Feed(c.Text); visible != "" {
+								ch <- StreamEvent{Type: "chunk", Content: visible}
+							}
 						}
 					}
 				}
@@ -130,7 +131,9 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 				// result is the final event; use it if assistant produced nothing
 				if fullResponse.Len() == 0 && event.Result != "" {
 					fullResponse.WriteString(event.Result)
-					ch <- StreamEvent{Type: "chunk", Content: event.Result}
+					if visible := filter.Feed(event.Result); visible != "" {
+						ch <- StreamEvent{Type: "chunk", Content: visible}
+					}
 				}
 			}
 		}
@@ -141,19 +144,19 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 	return ch, nil
 }
 
-// ExtractArtifact extracts content between ARTIFACT:START and ARTIFACT:END markers.
+// ExtractArtifact extracts the artifact section from a Claude XML envelope response.
 func ExtractArtifact(response string) (string, bool) {
-	matches := artifactRegex.FindStringSubmatch(response)
-	if len(matches) < 2 {
+	a := ParseResponse(response).Artifact
+	if a == "" {
 		return "", false
 	}
-	return strings.TrimSpace(matches[1]), true
+	return a, true
 }
 
-// StripArtifact removes the ARTIFACT:START...ARTIFACT:END block from a response string.
+// StripArtifact returns the discussion section of a Claude XML envelope response,
+// omitting the artifact block.
 func StripArtifact(response string) string {
-	stripped := artifactRegex.ReplaceAllString(response, "")
-	return strings.TrimSpace(stripped)
+	return ParseResponse(response).Discussion
 }
 
 func formatConversation(history []model.Message, newMessage string) string {

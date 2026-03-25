@@ -16,9 +16,18 @@ Your approach:
 3. Help identify target users, core problems, key features, and constraints
 4. Iteratively refine the vision based on user feedback
 
-When you believe the vision is sufficiently clear (or when the user asks you to produce the artifact), generate a structured vision document wrapped in delimiters:
+When you believe the vision is sufficiently clear (or when the user asks you to produce the artifact), generate a structured vision document.
 
-<!-- ARTIFACT:START -->
+OUTPUT FORMAT:
+Wrap your entire response in <response>...</response> tags.
+Put discussion, questions, and explanatory text in <discussion>...</discussion>.
+Put the complete document in <artifact>...</artifact>.
+Never write anything outside <response>...</response>.
+
+Example:
+<response>
+<discussion>Here is the updated vision based on your feedback:</discussion>
+<artifact>
 # Product Vision: {Product Name}
 
 ## Problem Statement
@@ -41,9 +50,10 @@ Technical, business, or time constraints. Key assumptions being made.
 
 ## Out of Scope (V1)
 What are we explicitly NOT building in the first version?
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.
+**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact inside <artifact>...</artifact> in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact tags, your changes will be lost.
 
 Be conversational and collaborative. You're a thinking partner, not a form filler.`,
 
@@ -62,9 +72,18 @@ Your approach:
 
 %s
 
-When ready, produce a UX document wrapped in these exact delimiters:
+When ready, produce a UX document using this format:
 
-<!-- ARTIFACT:START -->
+OUTPUT FORMAT:
+Wrap your entire response in <response>...</response> tags.
+Put discussion, questions, and explanatory text in <discussion>...</discussion>.
+Put the complete document in <artifact>...</artifact>.
+Never write anything outside <response>...</response>.
+
+Example:
+<response>
+<discussion>Here is the updated UX design:</discussion>
+<artifact>
 # UX Design: {Product Name}
 
 ## User Journeys
@@ -78,10 +97,10 @@ When ready, produce a UX document wrapped in these exact delimiters:
 
 ## Interaction Patterns
 ...
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters.
-**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.`,
+**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact inside <artifact>...</artifact> in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact tags, your changes will be lost.`,
 
 	model.StageArchitecture: `You are the Architecture Agent for an AI Product Factory. Your role is to define the technical architecture based on the approved vision and UX design.
 
@@ -95,9 +114,18 @@ Here is the approved UX design:
 %s
 ---
 
-Define the stack, APIs, data models, and system components. When ready, produce an architecture document wrapped in these exact delimiters:
+Define the stack, APIs, data models, and system components. When ready, produce an architecture document using this format:
 
-<!-- ARTIFACT:START -->
+OUTPUT FORMAT:
+Wrap your entire response in <response>...</response> tags.
+Put discussion, questions, and explanatory text in <discussion>...</discussion>.
+Put the complete document in <artifact>...</artifact>.
+Never write anything outside <response>...</response>.
+
+Example:
+<response>
+<discussion>Here is the updated architecture:</discussion>
+<artifact>
 # System Architecture: {Product Name}
 
 ## Tech Stack
@@ -129,10 +157,10 @@ Commands that compile or build to completion. Exit code 0 = success.
 ### Run Commands
 Commands that start the built artifact to verify it launches correctly. Each will be started and observed for ~15s.
 - ` + "`command here`" + `
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters.
-**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.`,
+**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact inside <artifact>...</artifact> in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact tags, your changes will be lost.`,
 
 	model.StageBuild: `You are the Build Planner Agent for an AI Product Factory. Your role is to convert the approved vision, UX design, and architecture into a concrete build plan with tasks, milestones, and dependencies.
 
@@ -158,9 +186,18 @@ Your approach:
 4. Flag any risks or unknowns
 5. Iterate with the user until the plan is solid
 
-When the plan is ready, produce it wrapped in these exact delimiters:
+When the plan is ready, produce it using this format:
 
-<!-- ARTIFACT:START -->
+OUTPUT FORMAT:
+Wrap your entire response in <response>...</response> tags.
+Put discussion, questions, and explanatory text in <discussion>...</discussion>.
+Put the complete document in <artifact>...</artifact>.
+Never write anything outside <response>...</response>.
+
+Example:
+<response>
+<discussion>Here is the updated build plan:</discussion>
+<artifact>
 # Build Plan: {Product Name}
 
 ## Milestones
@@ -178,10 +215,10 @@ When the plan is ready, produce it wrapped in these exact delimiters:
 
 ## Definition of Done
 ...
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters.
-**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact wrapped in <!-- ARTIFACT:START --> and <!-- ARTIFACT:END --> delimiters in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact delimiters, your changes will be lost.`,
+**CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact inside <artifact>...</artifact> in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact tags, your changes will be lost.`,
 }
 
 // buildFrameworkPromptNote returns the framework instruction snippet for injection into the UX system prompt.

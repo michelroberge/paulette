@@ -75,18 +75,21 @@ func (s *Server) Router() http.Handler {
 	r.Use(c.Handler)
 
 	gitSvc := git.NewService()
+	skillRepo := fsrepo.NewSkillRepo(s.cfg.RegistryPath)
 
 	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
 	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, gitSvc)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
-	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs)
+	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
 	acth := handler.NewActivityHandler(s.runs, s.activityRepo, s.registry)
 	gh := handler.NewGitHandler(s.registry, s.projectRepo, gitSvc)
 	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath)
+	sh := handler.NewSessionHandler(s.registry)
+	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs)
 
 	// Wire orchestrator (created once, reused across Router calls)
 	if s.orchestrator == nil {
@@ -114,6 +117,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/pipeline/summary", plh.GetSummary)
 		r.Get("/{id}/pipeline/summary/watch", plh.WatchSummary)
 		r.Post("/{id}/pipeline/summary", plh.RegenerateSummary)
+		r.Post("/{id}/pipeline/summary/approve", plh.ApproveSummary)
 		r.Post("/{id}/pipeline/enhance", eh.Enhance)
 
 		r.Get("/{id}/stages/{stage}/artifact", ah.Get)
@@ -153,6 +157,18 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/{id}/git/remote", gh.RemoveRemote)
 		r.Post("/{id}/git/push", gh.Push)
 		r.Post("/{id}/git/pull", gh.Pull)
+
+		r.Get("/{id}/sessions", sh.ListSessions)
+
+		r.Post("/{id}/stages/build/skills/analyze", skh.Analyze)
+		r.Get("/{id}/stages/build/skills/suggestions", skh.GetSuggestions)
+		r.Get("/{id}/stages/build/skills/observed", skh.GetObserved)
+		r.Post("/{id}/stages/build/skills/approve", skh.ApproveSuggestions)
+	})
+
+	r.Route("/api/skills", func(r chi.Router) {
+		r.Get("/", skh.ListAll)
+		r.Get("/{skillId}", skh.GetSkill)
 	})
 
 	// Serve embedded frontend static files with SPA fallback.

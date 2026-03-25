@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Project, StageName, VersionBump, StageActivity } from '../../types';
-import { regenerateSummary, getSummary, watchSummary } from '../../api/pipeline';
+import type { Project, StageName, VersionBump, StageActivity, SessionSummary } from '../../types';
+import { regenerateSummary, getSummary, watchSummary, approveSummary } from '../../api/pipeline';
+import { getSessions } from '../../api/sessions';
 import { BuildingAnimation } from '../ux/BuildingAnimation';
 
 const ARTIFACT_STAGES: { name: StageName; label: string }[] = [
@@ -27,9 +28,13 @@ export function CompletionView({ project, activity, onNewProject, onViewStage, o
   const [versionBump, setVersionBump] = useState<VersionBump>('minor');
   const [submitting, setSubmitting] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [summaryApproved, setSummaryApproved] = useState(project.summaryApproved ?? false);
   const [summaryContent, setSummaryContent] = useState('');
   const [summaryError, setSummaryError] = useState('');
   const [tokenCount, setTokenCount] = useState(0);
+  const [sessionData, setSessionData] = useState<SessionSummary | null>(null);
+  const [showTokens, setShowTokens] = useState(false);
   const summaryAbortRef = useRef<AbortController | null>(null);
   const streamRef = useRef<HTMLDivElement>(null);
 
@@ -42,6 +47,12 @@ export function CompletionView({ project, activity, onNewProject, onViewStage, o
         if (res.exists) setSummaryContent(res.content);
       }).catch(console.error);
     }
+  }, [project.id, project.summaryReady]);
+
+  // Fetch session token data when summary is ready
+  useEffect(() => {
+    if (!project.summaryReady) return;
+    getSessions(project.id).then(setSessionData).catch(console.error);
   }, [project.id, project.summaryReady]);
 
   // Connect to live stream only while generating
@@ -85,6 +96,18 @@ export function CompletionView({ project, activity, onNewProject, onViewStage, o
       await regenerateSummary(project.id);
     } catch {
       setGenerating(false);
+    }
+  };
+
+  const handleApproveSummary = async () => {
+    setApproving(true);
+    try {
+      await approveSummary(project.id);
+      setSummaryApproved(true);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to save summary to docs');
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -179,6 +202,66 @@ export function CompletionView({ project, activity, onNewProject, onViewStage, o
             </ul>
           </div>
 
+          {sessionData && (
+            <div className="completion-tokens">
+              <button
+                className="tokens-toggle"
+                onClick={() => setShowTokens(v => !v)}
+              >
+                {showTokens ? '▾' : '▸'} Token Usage — {sessionData.grandTotal.toLocaleString()} total
+              </button>
+              {showTokens && (
+                <table className="tokens-table">
+                  <thead>
+                    <tr>
+                      <th>Stage</th>
+                      <th>Sessions</th>
+                      <th>Tokens</th>
+                      <th>%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ARTIFACT_STAGES.map(({ name, label }) => {
+                      const s = sessionData.byStage[name];
+                      if (!s) return null;
+                      const pct = sessionData.grandTotal > 0
+                        ? ((s.tokens / sessionData.grandTotal) * 100).toFixed(1)
+                        : '0';
+                      return (
+                        <tr key={name}>
+                          <td>{label}</td>
+                          <td>{s.count}</td>
+                          <td>{s.tokens.toLocaleString()}</td>
+                          <td>{pct}%</td>
+                        </tr>
+                      );
+                    })}
+                    {sessionData.byStage.complete && (
+                      <tr>
+                        <td>Summary</td>
+                        <td>{sessionData.byStage.complete.count}</td>
+                        <td>{sessionData.byStage.complete.tokens.toLocaleString()}</td>
+                        <td>
+                          {sessionData.grandTotal > 0
+                            ? ((sessionData.byStage.complete.tokens / sessionData.grandTotal) * 100).toFixed(1)
+                            : '0'}%
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td><strong>Total</strong></td>
+                      <td><strong>{sessionData.sessions.length}</strong></td>
+                      <td><strong>{sessionData.grandTotal.toLocaleString()}</strong></td>
+                      <td><strong>100%</strong></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          )}
+
           {showEnhanceForm ? (
             <div className="enhance-form">
               <h3>Enhance {project.name}</h3>
@@ -228,24 +311,37 @@ export function CompletionView({ project, activity, onNewProject, onViewStage, o
             </div>
           ) : (
             <div className="completion-actions">
-              <button className="approve-button" onClick={() => setShowEnhanceForm(true)}>
-                Enhance
-              </button>
-              {(() => {
-                const match = /## Suggested Enhancements\n([\s\S]*?)(?=\n## |$)/.exec(summaryContent);
-                const suggestions = match?.[1]?.trim() ?? '';
-                return suggestions ? (
-                  <button
-                    className="approve-button"
-                    onClick={() => { setShowEnhanceForm(true); setEnhanceVision(suggestions); }}
-                  >
-                    Quick Enhance
+              {!summaryApproved && (
+                <button
+                  className="approve-button"
+                  onClick={handleApproveSummary}
+                  disabled={approving}
+                >
+                  {approving ? 'Saving…' : 'Save to Docs'}
+                </button>
+              )}
+              {summaryApproved && (
+                <>
+                  <button className="approve-button" onClick={() => setShowEnhanceForm(true)}>
+                    Enhance
                   </button>
-                ) : null;
-              })()}
-              <button className="approve-button secondary" onClick={onNewProject}>
-                Start New Project
-              </button>
+                  {(() => {
+                    const match = /## Suggested Enhancements\n([\s\S]*?)(?=\n## |$)/.exec(summaryContent);
+                    const suggestions = match?.[1]?.trim() ?? '';
+                    return suggestions ? (
+                      <button
+                        className="approve-button"
+                        onClick={() => { setShowEnhanceForm(true); setEnhanceVision(suggestions); }}
+                      >
+                        Quick Enhance
+                      </button>
+                    ) : null;
+                  })()}
+                  <button className="approve-button secondary" onClick={onNewProject}>
+                    Start New Project
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

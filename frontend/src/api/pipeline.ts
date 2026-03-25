@@ -21,6 +21,10 @@ export function getSummary(projectId: string): Promise<{ content: string; exists
   return apiFetch<{ content: string; exists: boolean }>(`/projects/${projectId}/pipeline/summary`);
 }
 
+export function approveSummary(projectId: string): Promise<void> {
+  return apiFetch<void>(`/projects/${projectId}/pipeline/summary/approve`, { method: 'POST' });
+}
+
 export async function watchPipeline(
   projectId: string,
   onState: (state: PipelineState) => void,

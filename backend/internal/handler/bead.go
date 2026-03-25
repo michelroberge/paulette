@@ -39,10 +39,11 @@ type BeadHandler struct {
 	artifactRepo repository.ArtifactRepo
 	activityRepo repository.ActivityRepo
 	runs         *stream.Manager
+	skillRepo    *fsrepo.SkillRepo
 }
 
-func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager) *BeadHandler {
-	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs}
+func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, skillRepo *fsrepo.SkillRepo) *BeadHandler {
+	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs, skillRepo: skillRepo}
 }
 
 // GetGraph returns the current bead graph JSON for a project,
@@ -255,6 +256,16 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
 
+		var generateTokens int
+		runStart := time.Now()
+		defer func() {
+			if generateTokens > 0 {
+				project.AddStageTokens(model.StageBuild, generateTokens)
+				h.registry.Update(project)
+				recordSession(project.HostDir, model.StageBuild, model.SessionBeadGenerate, project.Iteration, runStart, generateTokens)
+			}
+		}()
+
 		ctx := run.Context()
 
 		// Step 1: Parse build.md with Claude (architecture provided for scoping inference)
@@ -273,6 +284,10 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 				return
 			} else if event.Type == "done" {
 				fullResponse = event.Content
+			} else if event.Type == "tokens" {
+				var n int
+				fmt.Sscanf(event.Content, "%d", &n)
+				generateTokens += n
 			} else if event.Type == "chunk" {
 				run.Emit(event)
 			}
@@ -483,10 +498,12 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
 
 		var totalBuildTokens atomic.Int64
+		runStart := time.Now()
 		defer func() {
 			if n := int(totalBuildTokens.Load()); n > 0 {
 				project.AddStageTokens(model.StageBuild, n)
 				h.registry.Update(project)
+				recordSession(project.HostDir, model.StageBuild, model.SessionBeadExecute, project.Iteration, runStart, n)
 			}
 		}()
 
@@ -515,6 +532,28 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				enhCtx.Summary = string(data)
 			}
 		}
+
+		// Load skills from the global library for matching to beads
+		type cachedSkill struct {
+			skill  model.Skill
+			prompt string
+		}
+		var skillCache []cachedSkill
+		if allSkills, _ := h.skillRepo.List(); len(allSkills) > 0 {
+			for _, s := range allSkills {
+				_, promptText, err := h.skillRepo.Get(s.ID)
+				if err != nil || promptText == "" {
+					continue
+				}
+				skillCache = append(skillCache, cachedSkill{skill: s, prompt: promptText})
+				// Copy to project for local agent access
+				h.skillRepo.CopyToProject(project.HostDir, s.ID)
+			}
+		}
+
+		// Set up skill observer to detect emergent patterns during execution
+		observer := NewSkillObserver(project.HostDir, h.skillRepo, run, project, 5)
+		defer observer.Flush()
 
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, maxParallel)
@@ -555,8 +594,29 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				const maxReviewIterations = 3
 				currentBead := b
 
+				// Match skills to this bead by tag overlap and inject via context
+				beadCtx := ctx
+				if len(skillCache) > 0 && len(b.Tags) > 0 {
+					beadTags := make(map[string]bool, len(b.Tags))
+					for _, t := range b.Tags {
+						beadTags[t] = true
+					}
+					var matched []agent.MatchedSkill
+					for _, cs := range skillCache {
+						for _, st := range cs.skill.Tags {
+							if beadTags[st] {
+								matched = append(matched, agent.MatchedSkill{Name: cs.skill.Name, Prompt: cs.prompt})
+								break
+							}
+						}
+					}
+					if len(matched) > 0 {
+						beadCtx = agent.WithSkillContext(ctx, &agent.SkillContext{Skills: matched})
+					}
+				}
+
 				// Execute initial bead
-				agentEvents, err := agent.ExecuteBead(ctx, project.HostDir, currentBead, artifacts, enhCtx)
+				agentEvents, err := agent.ExecuteBead(beadCtx, project.HostDir, currentBead, artifacts, enhCtx)
 				if err != nil {
 					run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] execute failed: %v", currentBead.ID, err)})
 					return
@@ -624,6 +684,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						beadJSON, _ = json.Marshal(currentBead)
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", currentBead.ID, currentBead.Title)})
+						observer.RecordBead(currentBead, currentBead.Title, currentBead.Description)
 						return
 					}
 

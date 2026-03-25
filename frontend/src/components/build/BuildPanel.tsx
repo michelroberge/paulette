@@ -5,6 +5,7 @@ import { getArtifact } from '../../api/artifacts';
 import { useBeads } from '../../hooks/useBeads';
 import { BeadGraph } from './BeadGraph';
 import { BeadDetailPanel } from './BeadDetailPanel';
+import { BuildingAnimation } from '../ux/BuildingAnimation';
 
 interface Props {
   projectId: string;
@@ -15,9 +16,12 @@ interface Props {
   onBeadTokens?: (n: number) => void;
   onExecutionComplete?: () => void;
   onBuildDone?: () => void;
+  agentActive?: boolean;
+  agentOperation?: string;
+  agentStreamingText?: string;
 }
 
-export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, onExecutionComplete, onBuildDone }: Props) {
+export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, onExecutionComplete, onBuildDone, agentActive, agentOperation, agentStreamingText }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [maxParallel, setMaxParallel] = useState(2);
@@ -124,16 +128,28 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
             </button>
           )}
           {!hasBeads && !isGenerating && loading && (
-            <>
-              <span className="execute-status-dot" />
-              <span className="execute-status-label">Loading beads...</span>
-            </>
+            <BuildingAnimation />
           )}
         </div>
       )}
 
       <div className="build-panel-content">
-        {mode === 'artifact' && (
+        {mode === 'artifact' && agentActive && agentOperation === 'chat' ? (
+          <div className="mock-split-layout">
+            <div className="mock-main-column">
+              <BuildingAnimation />
+            </div>
+            <div className="mock-activity-panel">
+              <div className="mock-activity-header">
+                <span className="mock-stream-dot" />
+                <span>Refining build plan…</span>
+              </div>
+              <div className="mock-activity-content">
+                {agentStreamingText || 'Starting…'}
+              </div>
+            </div>
+          </div>
+        ) : mode === 'artifact' && (
           artifactExists ? (
             <div className="artifact-content">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactContent}</ReactMarkdown>
@@ -169,8 +185,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
 
             {!hasBeads && !isGenerating && loading && (
               <div className="artifact-preview empty">
-                <span className="execute-status-dot" />
-                <p>Loading beads...</p>
+                <BuildingAnimation />
               </div>
             )}
 

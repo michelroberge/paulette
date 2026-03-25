@@ -352,9 +352,9 @@ Analyze the codebase and produce a System Architecture document describing what 
 
 %s
 
-When ready, produce the architecture document wrapped in these exact delimiters:
-
-<!-- ARTIFACT:START -->
+When ready, produce the architecture document using this format:
+<response>
+<artifact>
 # System Architecture: {Product Name}
 
 ## Tech Stack
@@ -371,9 +371,10 @@ Describe the data structures and their relationships.
 
 ## Infrastructure
 Note any deployment, CI/CD, or infrastructure patterns observed.
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters. Be thorough — document what actually exists, not what should exist.`, digest, buildArchIDNote(version))
+Always wrap the document in exactly those tags. Be thorough — document what actually exists, not what should exist.`, digest, buildArchIDNote(version))
 }
 
 func buildImportUXPrompt(version, digest, archContent string) string {
@@ -393,9 +394,9 @@ Analyze the codebase (especially routes, pages, screens, UI components) and prod
 
 %s
 
-When ready, produce the UX document wrapped in these exact delimiters:
-
-<!-- ARTIFACT:START -->
+When ready, produce the UX document using this format:
+<response>
+<artifact>
 # UX Design: {Product Name}
 
 ## User Journeys
@@ -409,9 +410,10 @@ How do users navigate between screens?
 
 ## Interaction Patterns
 What UI patterns and interactions are used?
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters. Document what actually exists in the code.`, digest, archContent, buildJourneyIDNote(version))
+Always wrap the document in exactly those tags. Document what actually exists in the code.`, digest, archContent, buildJourneyIDNote(version))
 }
 
 func buildImportArchCrossRefPrompt(version, archContent, uxContent string) string {
@@ -431,13 +433,14 @@ Update the architecture document to add journey cross-references (JRN-v%s-NNN) t
 
 %s
 
-Produce the COMPLETE updated architecture document wrapped in these exact delimiters:
-
-<!-- ARTIFACT:START -->
+Produce the COMPLETE updated architecture document using this format:
+<response>
+<artifact>
 {complete updated architecture document with journey cross-references}
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters.`, archContent, uxContent, version, buildArchIDNote(version))
+Always wrap the document in exactly those tags.`, archContent, uxContent, version, buildArchIDNote(version))
 }
 
 func buildImportVisionPrompt(projectName, archContent, uxContent string) string {
@@ -455,9 +458,9 @@ Here is the UX analysis:
 
 Based on these analyses, synthesize a Product Vision document that captures what this product is, who it's for, and what it does.
 
-When ready, produce the vision document wrapped in these exact delimiters:
-
-<!-- ARTIFACT:START -->
+When ready, produce the vision document using this format:
+<response>
+<artifact>
 # Product Vision: %s
 
 ## Problem Statement
@@ -480,9 +483,10 @@ Technical, business, or other constraints observed.
 
 ## Out of Scope (V1)
 What is explicitly not included in the current version.
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters. Infer the vision from what the code actually does.`, archContent, uxContent, projectName)
+Always wrap the document in exactly those tags. Infer the vision from what the code actually does.`, archContent, uxContent, projectName)
 }
 
 func buildImportBuildArtifact(projectName, version string) string {

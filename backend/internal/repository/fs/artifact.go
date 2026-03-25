@@ -193,6 +193,44 @@ func ReadBeadChatHistory(hostDir, version, beadID string) ([]model.Message, erro
 	return msgs, nil
 }
 
+// WriteReadme generates a README.md at the project root with metadata and links to docs.
+func WriteReadme(project *model.Project) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n", project.Name)
+	fmt.Fprintf(&b, "**Version:** %s  \n", project.Version)
+	fmt.Fprintf(&b, "**Author:** %s\n", project.Author)
+
+	hasCommands := len(project.DevCommands) > 0 || len(project.BuildCommands) > 0 || len(project.RunCommands) > 0
+	if hasCommands {
+		b.WriteString("\n## How to Use\n")
+		writeCommandSection(&b, "Development", project.DevCommands)
+		writeCommandSection(&b, "Build", project.BuildCommands)
+		writeCommandSection(&b, "Run", project.RunCommands)
+	}
+
+	v := project.Version
+	b.WriteString("\n## Documentation\n\n")
+	fmt.Fprintf(&b, "- [Vision](docs/%s/vision/vision.md)\n", v)
+	fmt.Fprintf(&b, "- [UX Design](docs/%s/ux/ux.md)\n", v)
+	fmt.Fprintf(&b, "- [UX Mock](docs/%s/ux/mock.html)\n", v)
+	fmt.Fprintf(&b, "- [Architecture](docs/%s/architecture/architecture.md)\n", v)
+	fmt.Fprintf(&b, "- [Iteration Summary](docs/%s/summary.md)\n", v)
+
+	p := filepath.Join(project.HostDir, "README.md")
+	return os.WriteFile(p, []byte(b.String()), 0644)
+}
+
+func writeCommandSection(b *strings.Builder, title string, cmds []string) {
+	if len(cmds) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n### %s\n\n```sh\n", title)
+	for _, c := range cmds {
+		fmt.Fprintln(b, c)
+	}
+	b.WriteString("```\n")
+}
+
 // AppendBeadChatMessage appends a message to per-bead chat history.
 func AppendBeadChatMessage(hostDir, version, beadID string, msg model.Message) error {
 	msgs, _ := ReadBeadChatHistory(hostDir, version, beadID)

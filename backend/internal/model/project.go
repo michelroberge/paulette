@@ -54,6 +54,7 @@ type Project struct {
 	EnhancementVision string              `json:"enhancementVision,omitempty"`
 	Imported          bool                `json:"imported,omitempty"`
 	SummaryReady      bool                `json:"summaryReady"`
+	SummaryApproved   bool                `json:"summaryApproved,omitempty"`
 	Autonomous        bool                `json:"autonomous"`
 	DevCommands       []string            `json:"devCommands,omitempty"`
 	BuildCommands     []string            `json:"buildCommands,omitempty"`

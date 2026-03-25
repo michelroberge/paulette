@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -133,10 +134,12 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageUX)
 
 		var stageTokensAccum int
+		runStart := time.Now()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(model.StageUX, stageTokensAccum)
 				h.registry.Update(project)
+				recordSession(project.HostDir, model.StageUX, model.SessionMock, project.Iteration, runStart, stageTokensAccum)
 			}
 		}()
 

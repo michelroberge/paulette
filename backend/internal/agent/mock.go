@@ -32,17 +32,17 @@ Screen navigation:
 - If there is only one screen, no tab bar is needed — just render it directly
 
 OUTPUT FORMAT — follow this exactly:
-- Wrap the complete HTML file between ----HTML_START---- and ----HTML_END---- markers, each on its own line:
+Wrap your entire response in <response>...</response> tags. Put the complete HTML file in <htmlcontent>...</htmlcontent> using CDATA to protect HTML characters:
 
-----HTML_START----
-<!DOCTYPE html>
+<response>
+<htmlcontent><![CDATA[<!DOCTYPE html>
 ...full HTML...
-</html>
-----HTML_END----
+</html>]]></htmlcontent>
+</response>
 
-- Do NOT write anything outside these markers — no preamble, explanation, commentary, or markdown
+- Do NOT write anything outside <response>...</response>
 - Do NOT ask for permission or describe what the mockup contains
-- The HTML between the markers must be the complete, self-contained file`
+- The HTML inside CDATA must be the complete, self-contained file`
 
 var frameworkInstructions = map[model.UXFramework]string{
 	model.FrameworkTailwind: `Framework: Tailwind CSS
@@ -99,27 +99,27 @@ func buildMockSystemPrompt(cfg *model.FrameworkConfig) string {
 
 const maxMockRetries = 2
 
-const mockRetryPrompt = `Your previous response is missing the required ----HTML_START---- and ----HTML_END---- markers.
+const mockRetryPrompt = `Your previous response is missing the required XML envelope with CDATA HTML content.
 
 You MUST wrap the HTML exactly like this:
-----HTML_START----
-<!DOCTYPE html>
+<response>
+<htmlcontent><![CDATA[<!DOCTYPE html>
 ...complete HTML wireframe...
-</html>
-----HTML_END----
+</html>]]></htmlcontent>
+</response>
 
-Nothing should appear before ----HTML_START---- or after ----HTML_END----.
+Nothing should appear outside <response>...</response>.
 
 Here is your previous (wrong) response for reference — do NOT repeat this mistake:
 ---
 %s
 ---
 
-Now output the complete HTML wireframe mockup wrapped in the required markers.`
+Now output the complete HTML wireframe mockup wrapped in the required XML envelope.`
 
-// hasHTMLBlock checks whether the response contains the ----HTML_START---- / ----HTML_END---- delimiters.
+// hasHTMLBlock checks whether the response contains the XML envelope with htmlcontent.
 func hasHTMLBlock(s string) bool {
-	return strings.Contains(s, "----HTML_START----") && strings.Contains(s, "----HTML_END----")
+	return strings.Contains(s, "<htmlcontent>") && strings.Contains(s, "</htmlcontent>")
 }
 
 // invokeMockClaude runs a single Claude invocation and collects streamed events.
@@ -257,29 +257,7 @@ func GenerateMock(ctx context.Context, uxArtifact string, refinement string, fra
 	return ch, nil
 }
 
-// ExtractHTML extracts HTML from between ----HTML_START---- and ----HTML_END---- markers.
-// Falls back to stripping markdown code fences if markers are absent.
+// ExtractHTML extracts HTML from a Claude XML envelope response.
 func ExtractHTML(raw string) string {
-	const startMarker = "----HTML_START----"
-	const endMarker = "----HTML_END----"
-
-	si := strings.Index(raw, startMarker)
-	ei := strings.LastIndex(raw, endMarker)
-	if si >= 0 && ei > si {
-		return strings.TrimSpace(raw[si+len(startMarker) : ei])
-	}
-
-	// Fallback: strip markdown code fences
-	s := strings.TrimSpace(raw)
-	if strings.HasPrefix(s, "```") {
-		first := strings.Index(s, "\n")
-		if first >= 0 {
-			s = s[first+1:]
-		}
-		if strings.HasSuffix(s, "```") {
-			s = s[:len(s)-3]
-		}
-		s = strings.TrimSpace(s)
-	}
-	return s
+	return ParseResponse(raw).HTML
 }

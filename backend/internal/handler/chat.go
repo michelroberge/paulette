@@ -188,10 +188,12 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		defer clearActivity(h.activityRepo, project.HostDir, stage)
 
 		var stageTokensAccum int
+		runStart := time.Now()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(stage, stageTokensAccum)
 				h.registry.Update(project)
+				recordSession(project.HostDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
 			}
 		}()
 

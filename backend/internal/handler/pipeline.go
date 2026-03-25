@@ -266,6 +266,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 			return
 		}
 
+		runStart := time.Now()
 		var fullText strings.Builder
 		var tokens int
 		for ev := range events {
@@ -294,6 +295,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		project.SummaryReady = true
 		project.SummaryTokens = tokens
 		project.AddStageTokens(model.StageComplete, tokens)
+		recordSession(project.HostDir, model.StageComplete, model.SessionSummaryKind, project.Iteration, runStart, tokens)
 		project.UpdatedAt = time.Now()
 		if err := h.registry.Update(project); err != nil {
 			log.Printf("failed to update registry after summary: %v", err)
@@ -387,4 +389,51 @@ func (h *PipelineHandler) RegenerateSummary(w http.ResponseWriter, r *http.Reque
 	}
 	h.startSummaryRun(project)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// ApproveSummary promotes the generated summary from .paulette/summary.md to docs/{version}/summary.md.
+func (h *PipelineHandler) ApproveSummary(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	if !project.SummaryReady {
+		http.Error(w, "summary not ready", http.StatusBadRequest)
+		return
+	}
+
+	summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+	b, err := os.ReadFile(summaryPath)
+	if err != nil {
+		http.Error(w, "failed to read summary: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := fsrepo.WriteSummaryDoc(project.HostDir, project.Version, string(b)); err != nil {
+		http.Error(w, "failed to write summary doc: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := fsrepo.WriteReadme(project); err != nil {
+		log.Printf("failed to generate README.md: %v", err)
+	}
+
+	docPath := filepath.Join("docs", project.Version, "summary.md")
+	commitMsg := fmt.Sprintf("docs(v%s): approve iteration summary", project.Version)
+	if err := h.git.AddAndCommit(project.HostDir, []string{docPath, "README.md"}, commitMsg); err != nil {
+		log.Printf("git commit approved summary failed: %v", err)
+	}
+
+	project.SummaryApproved = true
+	project.UpdatedAt = time.Now()
+	if err := h.registry.Update(project); err != nil {
+		log.Printf("failed to update registry after summary approve: %v", err)
+	}
+	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
+		log.Printf("failed to save project after summary approve: %v", err)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -8,6 +8,7 @@ import { ChatPanel } from './components/chat/ChatPanel';
 import { ArtifactPreview } from './components/artifact/ArtifactPreview';
 import { UxPanel } from './components/ux/UxPanel';
 import { BuildPanel } from './components/build/BuildPanel';
+import { SkillAnalysisPanel } from './components/build/SkillAnalysisPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { VersionHistoryModal } from './components/git/VersionHistoryModal';
@@ -37,7 +38,7 @@ interface StageTab {
   label: string;
 }
 
-function getTabsForStage(stage: StageName | null, imported?: boolean): StageTab[] {
+function getTabsForStage(stage: StageName | null, imported?: boolean, hasBeads?: boolean): StageTab[] {
   if (!stage || stage === 'complete') return [];
   if (stage === 'ux') return [
     { id: 'chat', label: 'Chat' },
@@ -48,8 +49,9 @@ function getTabsForStage(stage: StageName | null, imported?: boolean): StageTab[
     const tabs: StageTab[] = [
       { id: 'chat', label: 'Chat' },
       { id: 'artifact', label: 'Build Plan' },
+      { id: 'skills', label: 'Skills' },
     ];
-    if (!imported) tabs.push({ id: 'execute', label: 'Execute' });
+    if (!imported || hasBeads) tabs.push({ id: 'execute', label: 'Execute' });
     return tabs;
   }
   return [
@@ -69,6 +71,7 @@ function App() {
   const [showImportProgress, setShowImportProgress] = useState(false);
   const [mockGenerated, setMockGenerated] = useState(false);
   const [buildComplete, setBuildComplete] = useState(false);
+  const [hasBeads, setHasBeads] = useState(false);
   const [activeRuns, setActiveRuns] = useState<ActiveRun[]>([]);
   const [btwInput, setBtwInput] = useState('');
   const [btwSending, setBtwSending] = useState(false);
@@ -154,6 +157,7 @@ function App() {
     }
     setMockGenerated(false);
     setBuildComplete(false);
+    setHasBeads(false);
 
     (async () => {
       try {
@@ -165,10 +169,11 @@ function App() {
           if (mock.exists) { setActiveTab('mock'); setMockGenerated(true); }
           else setActiveTab('artifact');
         } else if (selectedStage === 'build') {
-          if (!project.imported) {
-            const graph = await getBeadGraph(project.id);
-            if (graph?.beads?.length) { setActiveTab('execute'); setBuildComplete(true); }
-            else setActiveTab('artifact');
+          const graph = await getBeadGraph(project.id);
+          if (graph?.beads?.length) {
+            setHasBeads(true);
+            setActiveTab('execute');
+            setBuildComplete(true);
           } else {
             setActiveTab('artifact');
           }
@@ -266,7 +271,7 @@ function App() {
 
   const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
   const isActiveStage = currentStageInfo?.status === 'active';
-  const tabs = getTabsForStage(selectedStage, project?.imported);
+  const tabs = getTabsForStage(selectedStage, project?.imported, hasBeads);
 
   return (
     <div className="app-shell">
@@ -323,7 +328,7 @@ function App() {
                   This artifact was auto-generated from your codebase. Review and refine via chat, then approve.
                 </div>
               )}
-              {agentActive && agentOperation !== 'chat' && selectedStage !== 'ux' && !(selectedStage === 'build' && activeTab === 'execute') ? (
+              {agentActive && agentOperation !== 'chat' && agentStage === selectedStage && selectedStage !== 'ux' && selectedStage !== 'build' ? (
                 <AgentStreamingView
                   streamingText={agentStreamingText}
                   operation={agentOperation}
@@ -366,7 +371,11 @@ function App() {
                   />
                 )}
 
-                {selectedStage === 'build' && (
+                {selectedStage === 'build' && activeTab === 'skills' && (
+                  <SkillAnalysisPanel projectId={project.id} />
+                )}
+
+                {selectedStage === 'build' && activeTab !== 'skills' && (
                   <BuildPanel
                     projectId={project.id}
                     refreshTrigger={artifactUpdated}
@@ -376,6 +385,9 @@ function App() {
                     onBeadTokens={(n) => addTokens('build', n)}
                     onExecutionComplete={() => setBuildComplete(true)}
                     onBuildDone={() => setBuildComplete(true)}
+                    agentActive={agentActive}
+                    agentOperation={agentOperation}
+                    agentStreamingText={agentStreamingText}
                   />
                 )}
               </StageView>
