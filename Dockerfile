@@ -55,6 +55,9 @@ RUN useradd -m -s /bin/bash paulette && \
 USER paulette
 WORKDIR /home/paulette
 
+# Trust all directories (needed for volume-mounted repos from the host OS)
+RUN git config --global --add safe.directory '*'
+
 ENV HOME=/home/paulette \
     REGISTRY_PATH=/home/paulette/.paulette \
     REPOS_PATH=/home/paulette/repos \

@@ -1704,6 +1704,20 @@ body {
   overflow: hidden;
 }
 
+.execute-paulette {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.execute-details-empty {
+  padding: 1.5rem 1rem;
+  color: #64748b;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
 /* Bead config bar */
 .bead-config-bar {
   display: flex;
