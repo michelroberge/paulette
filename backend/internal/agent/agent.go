@@ -137,7 +137,11 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 				}
 			case "result":
 				if event.IsError {
-					ch <- StreamEvent{Type: "plan_limit", Content: "Claude plan limit reached"}
+					msg := event.Result
+					if msg == "" {
+						msg = "Claude plan limit reached"
+					}
+					ch <- StreamEvent{Type: "plan_limit", Content: msg}
 					return
 				}
 				if event.Usage != nil {

@@ -16,12 +16,13 @@ interface Props {
   onBeadTokens?: (n: number) => void;
   onExecutionComplete?: () => void;
   onBuildDone?: () => void;
+  onHasBeads?: (v: boolean) => void;
   agentActive?: boolean;
   agentOperation?: string;
   agentStreamingText?: string;
 }
 
-export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, onExecutionComplete, onBuildDone, agentActive, agentOperation, agentStreamingText }: Props) {
+export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, onExecutionComplete, onBuildDone, onHasBeads, agentActive, agentOperation, agentStreamingText }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [maxParallel, setMaxParallel] = useState(2);
@@ -70,6 +71,11 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
   const activeCount = graph.beads.filter(b => b.status === 'in_progress').length;
   const completedCount = taskBeads.filter(b => b.status === 'closed').length;
   const totalCount = taskBeads.length;
+
+  // Notify parent of bead existence
+  useEffect(() => {
+    onHasBeads?.(hasBeads);
+  }, [hasBeads]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Notify parent when execution completes
   const prevPhaseRef = useRef(phase);

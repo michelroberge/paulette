@@ -1,0 +1,366 @@
+{
+  "suggestions": [
+    {
+      "name": "Go File-Persisted Store with Mutex",
+      "description": "Creates a Go struct that manages a slice of records persisted to a JSON file, with atomic writes (write-to-temp + rename), chmod permissions, sync.RWMutex concurrency safety, and full CRUD methods.",
+      "category": "backend",
+      "tags": [
+        "go",
+        "persistence",
+        "file-storage",
+        "crud",
+        "concurrency",
+        "json",
+        "mutex"
+      ],
+      "parameters": [
+        {
+          "name": "entityName",
+          "description": "Name of the entity being stored (e.g. Connection, Project)"
+        },
+        {
+          "name": "packageName",
+          "description": "Go package name",
+          "default": "store"
+        },
+        {
+          "name": "filePath",
+          "description": "Path expression for the JSON file (e.g. ~/.paulette/connections.json)"
+        },
+        {
+          "name": "filePermissions",
+          "description": "File chmod permissions (e.g. 0600, 0644)",
+          "default": "0644"
+        },
+        {
+          "name": "idField",
+          "description": "Name of the ID field on the struct",
+          "default": "ID"
+        },
+        {
+          "name": "extraDeleteReturn",
+          "description": "Optional: extra computed value to return from Delete (e.g. affected stage names). Leave empty if not needed."
+        }
+      ],
+      "promptTemplate": "Create a Go file-persisted store for `{{entityName}}` records in the `{{packageName}}` package.\n\n## Requirements\n\n### Struct\n```go\ntype {{entityName}}Store struct {\n    path  string           // {{filePath}}\n    mu    sync.RWMutex\n    items []{{entityName}}\n}\n\nfunc New{{entityName}}Store(basePath string) *{{entityName}}Store\n```\n\n### CRUD Methods\n- `List() []{{entityName}}` — returns a copy of all records (read lock)\n- `Get(id string) (*{{entityName}}, error)` — returns a single record by `{{idField}}`\n- `Create(item {{entityName}}) (*{{entityName}}, error)` — assigns a new UUID to `{{idField}}`, sets `CreatedAt`/`UpdatedAt`, appends, saves\n- `Update(item {{entityName}}) (*{{entityName}}, error)` — finds by `{{idField}}`, replaces, sets `UpdatedAt`, saves\n- `Delete(id string) ({{#if extraDeleteReturn}}{{extraDeleteReturn}}, {{/if}}error)` — removes by `{{idField}}`{{#if extraDeleteReturn}}, returns `{{extraDeleteReturn}}` representing any references that were cleaned up{{/if}}, saves\n\n### File Persistence (`save()` — private)\n1. Marshal the in-memory slice to JSON with `json.MarshalIndent`\n2. Write to a temp file in the same directory (`*.tmp`)\n3. `os.Rename(tmp, path)` for atomic swap\n4. `os.Chmod(path, {{filePermissions}})` after rename\n5. Return any error from these steps\n\n### Loading\nOn `New{{entityName}}Store`, attempt to read and unmarshal the file. If the file does not exist (`os.IsNotExist`), start with an empty slice — do not return an error.\n\n### Concurrency\nUse `sync.RWMutex`: `RLock/RUnlock` for reads (`List`, `Get`), `Lock/Unlock` for writes (`Create`, `Update`, `Delete`, `save`).\n\n### Error handling\n- Return a descriptive `fmt.Errorf` when record is not found\n- Wrap file I/O errors with context\n- Panic is never acceptable; all errors are returned\n\nInclude all necessary imports (`sync`, `os`, `encoding/json`, `path/filepath`, `time`, `fmt`, `github.com/google/uuid` or `crypto/rand` for UUID generation).",
+      "approved": true
+    },
+    {
+      "name": "Go HTTP CRUD Handler Group",
+      "description": "Generates a Go handler struct with a full set of HTTP handler methods for CRUD operations on an entity, plus optional action endpoints (test, list-sub-resources). Follows chi router conventions with structured JSON responses.",
+      "category": "backend",
+      "tags": [
+        "go",
+        "http",
+        "chi",
+        "rest",
+        "crud",
+        "handler",
+        "api"
+      ],
+      "parameters": [
+        {
+          "name": "entityName",
+          "description": "Name of the entity (e.g. Connection, Project)"
+        },
+        {
+          "name": "packageName",
+          "description": "Go package name",
+          "default": "handler"
+        },
+        {
+          "name": "storeName",
+          "description": "Name of the injected store/repository type (e.g. *provider.ConnectionStore)"
+        },
+        {
+          "name": "routePrefix",
+          "description": "URL prefix for this group (e.g. /api/connections)"
+        },
+        {
+          "name": "responseType",
+          "description": "Response struct name if different from entity (for credential redaction, etc.). Leave same as entityName if not needed."
+        },
+        {
+          "name": "extraActions",
+          "description": "Comma-separated list of extra action endpoints beyond CRUD (e.g. Test,TestNew,ListModels)"
+        }
+      ],
+      "promptTemplate": "Create a Go HTTP handler group for `{{entityName}}` in the `{{packageName}}` package, mounted at `{{routePrefix}}`.\n\n## Handler Struct\n```go\ntype {{entityName}}Handler struct {\n    store {{storeName}}\n    // add other dependencies as needed\n}\n\nfunc New{{entityName}}Handler(store {{storeName}}) *{{entityName}}Handler\n```\n\n## Standard CRUD Endpoints\nImplement each as a method on `*{{entityName}}Handler`:\n\n| Method | Path | Handler | Notes |\n|---|---|---|---|\n| GET | `{{routePrefix}}` | `List` | Return array; use `{{responseType}}` if credential redaction needed |\n| POST | `{{routePrefix}}` | `Create` | Decode body, delegate to store, return 201 |\n| GET | `{{routePrefix}}/{id}` | `Get` | Return single record or 404 |\n| PUT | `{{routePrefix}}/{id}` | `Update` | Decode body, delegate to store, return 200 |\n| DELETE | `{{routePrefix}}/{id}` | `Delete` | Delegate to store, return JSON result (may include affected references) |\n\n{{#if extraActions}}\n## Extra Action Endpoints\nAlso implement: `{{extraActions}}`\n- For each action, add a method and a brief comment describing its behaviour.\n{{/if}}\n\n## Conventions\n- All responses are `Content-Type: application/json`\n- Errors use a helper: `jsonError(w, status, message string)` → `{\"error\": \"message\"}`\n- Path params read via `chi.URLParam(r, \"id\")`\n- Request bodies decoded with `json.NewDecoder(r.Body).Decode(\u0026input)`; return 400 on decode error\n- Store `not found` errors → 404; other errors → 500\n- `List` and `Get` must never return raw credentials — use `{{responseType}}` or map to a safe struct\n- Include a `RegisterRoutes(r chi.Router)` method that mounts all routes on the provided router\n\n## Error response format\n```json\n{\"error\": \"human-readable message\"}\n```\n\nInclude all necessary imports (`net/http`, `encoding/json`, `github.com/go-chi/chi/v5`, `fmt`).",
+      "approved": true
+    },
+    {
+      "name": "Go LLM Streaming Provider Adapter",
+      "description": "Implements the Provider interface for a specific LLM API, converting its native streaming format (SSE, NDJSON, typed events) into a shared StreamEvent channel. Covers Chat, TestConnection, and ListModels.",
+      "category": "backend",
+      "tags": [
+        "go",
+        "llm",
+        "streaming",
+        "provider",
+        "sse",
+        "ndjson",
+        "ai",
+        "adapter"
+      ],
+      "parameters": [
+        {
+          "name": "providerName",
+          "description": "Name of the provider (e.g. Ollama, OpenAI, Anthropic, Gemini)"
+        },
+        {
+          "name": "packageName",
+          "description": "Go package name",
+          "default": "provider"
+        },
+        {
+          "name": "chatEndpoint",
+          "description": "HTTP endpoint for chat (e.g. POST /api/chat, POST /v1/chat/completions)"
+        },
+        {
+          "name": "streamingFormat",
+          "description": "Streaming format: 'ndjson' | 'openai_sse' | 'anthropic_sse' | 'gemini_ndjson_array'",
+          "default": "openai_sse"
+        },
+        {
+          "name": "authMechanism",
+          "description": "Auth mechanism: 'none' | 'bearer_header' | 'api_key_header' | 'query_param'",
+          "default": "none"
+        },
+        {
+          "name": "authHeaderOrParam",
+          "description": "Header name or query param name for auth (e.g. Authorization, x-api-key, key)"
+        },
+        {
+          "name": "modelListEndpoint",
+          "description": "Endpoint to list models, or 'hardcoded' if list is static, or 'unsupported'"
+        },
+        {
+          "name": "defaultBaseURL",
+          "description": "Default base URL (e.g. https://api.openai.com, http://localhost:11434)"
+        },
+        {
+          "name": "extraFields",
+          "description": "Additional struct fields beyond baseURL and httpClient (e.g. apiKey string, orgID string)"
+        }
+      ],
+      "promptTemplate": "Create a Go `{{providerName}}Provider` in the `{{packageName}}` package that implements the `Provider` interface.\n\n## Provider Struct\n```go\ntype {{providerName}}Provider struct {\n    baseURL    string // default: \"{{defaultBaseURL}}\"\n    httpClient *http.Client\n    {{extraFields}}\n}\n```\n\n## Interface Methods\n\n### `Chat(ctx context.Context, req ChatRequest) (\u003c-chan StreamEvent, error)`\n1. Build the provider-specific request body from `ChatRequest` (convert `History` + `UserMessage` to the provider's message array format)\n2. Set auth: **{{authMechanism}}** — {{#if authHeaderOrParam}}using `{{authHeaderOrParam}}`{{/if}}\n3. POST to `{{chatEndpoint}}` with a 10-minute timeout context\n4. Launch a goroutine that reads the response body and converts to `StreamEvent`:\n\n**Streaming format: `{{streamingFormat}}`**\n{{#if (eq streamingFormat 'ndjson')}}\n- Read line-by-line with `bufio.Scanner`\n- Unmarshal each JSON line\n- Map content field → `StreamEvent{Type: \"chunk\", Content: ...}`\n- On done sentinel → `StreamEvent{Type: \"done\"}`\n{{/if}}\n{{#if (eq streamingFormat 'openai_sse')}}\n- Read SSE lines (`data: {...}` prefix)\n- Skip `data: [DONE]` lines with a `done` event\n- Unmarshal JSON, extract `choices[0].delta.content` → `StreamEvent{Type: \"chunk\"}`\n{{/if}}\n{{#if (eq streamingFormat 'anthropic_sse')}}\n- Parse typed SSE events (`event:` line followed by `data:` line)\n- `content_block_delta` event → `StreamEvent{Type: \"chunk\", Content: delta.text}`\n- `message_stop` event → `StreamEvent{Type: \"done\"}`\n{{/if}}\n{{#if (eq streamingFormat 'gemini_ndjson_array')}}\n- Read line-by-line; buffer to handle chunked JSON array entries\n- Extract `candidates[0].content.parts[0].text` → `StreamEvent{Type: \"chunk\"}`\n- Empty line or array close → `StreamEvent{Type: \"done\"}`\n{{/if}}\n5. On any HTTP or parse error, send `StreamEvent{Type: \"error\", Content: err.Error()}` and close the channel\n\n### `TestConnection(ctx context.Context) error`\n- Use a 30-second timeout\n- Send a minimal probe to verify connectivity and auth (prefer a cheap endpoint like model list or a 1-token message)\n- Return nil on 2xx, descriptive error otherwise\n\n### `ListModels(ctx context.Context) ([]ModelInfo, error)`\n{{#if (eq modelListEndpoint 'unsupported')}}\n- Return `nil, ErrModelListUnsupported`\n{{else if (eq modelListEndpoint 'hardcoded')}}\n- Return a hardcoded `[]ModelInfo` slice of known models for this provider\n{{else}}\n- GET `{{modelListEndpoint}}` with auth\n- Parse response → `[]ModelInfo{ID: ..., Name: ...}`\n{{/if}}\n\n## Error handling\n- Never panic; all errors are returned or sent as error StreamEvents\n- Wrap HTTP errors with provider name for context: `fmt.Errorf(\"{{providerName}}: %w\", err)`\n- Close the StreamEvent channel in a `defer` inside the goroutine\n\nInclude all necessary imports (`net/http`, `bufio`, `encoding/json`, `context`, `fmt`, `io`, `strings`).",
+      "approved": true
+    },
+    {
+      "name": "TypeScript API Client Module",
+      "description": "Creates a typed TypeScript API client module with functions for each endpoint, using a shared fetch helper. Follows a consistent pattern: function per endpoint, typed request/response, error propagation.",
+      "category": "frontend",
+      "tags": [
+        "typescript",
+        "api",
+        "fetch",
+        "client",
+        "rest",
+        "frontend"
+      ],
+      "parameters": [
+        {
+          "name": "moduleName",
+          "description": "Name of the module/file (e.g. connections, stageConfig)"
+        },
+        {
+          "name": "baseRoute",
+          "description": "Base API route prefix (e.g. /api/connections, /api/config)"
+        },
+        {
+          "name": "fetchHelper",
+          "description": "Name of the existing fetch helper function to use (e.g. apiFetch)",
+          "default": "apiFetch"
+        },
+        {
+          "name": "endpoints",
+          "description": "JSON array of endpoint descriptors: [{name, method, path, requestType, responseType, description}]",
+          "default": "[]"
+        },
+        {
+          "name": "importTypes",
+          "description": "Comma-separated list of types to import from types module (e.g. Connection, ConnectionInput, TestResult)"
+        }
+      ],
+      "promptTemplate": "Create a TypeScript API client module at `api/{{moduleName}}.ts`.\n\n## Imports\n```typescript\nimport { {{importTypes}} } from '../types'\nimport { {{fetchHelper}} } from './client'\n```\n\n## Endpoints to implement\n{{endpoints}}\n\nFor each endpoint, create an exported async function following this pattern:\n```typescript\n// GET list example\nexport async function list{{EntityName}}s(): Promise\u003cResponseType[]\u003e {\n  return {{fetchHelper}}\u003cResponseType[]\u003e('GET', '{{baseRoute}}')\n}\n\n// POST with body example\nexport async function create{{EntityName}}(input: InputType): Promise\u003cResponseType\u003e {\n  return {{fetchHelper}}\u003cResponseType\u003e('POST', '{{baseRoute}}', input)\n}\n\n// DELETE with result example\nexport async function delete{{EntityName}}(id: string): Promise\u003cDeleteResult\u003e {\n  return {{fetchHelper}}\u003cDeleteResult\u003e('DELETE', `{{baseRoute}}/${id}`)\n}\n\n// Sending null to clear/reset\nexport async function clearOverride(id: string): Promise\u003cvoid\u003e {\n  return {{fetchHelper}}\u003cvoid\u003e('PUT', `{{baseRoute}}/${id}`, null)\n}\n```\n\n## Conventions\n- Every function is `export async function`\n- Path params are template literals: `` `{{baseRoute}}/${id}` ``\n- No inline `fetch` calls — always delegate to `{{fetchHelper}}`\n- Return type is always explicit — no `any`\n- Functions that return nothing use `Promise\u003cvoid\u003e`\n- All error handling is left to the caller (do not catch inside the module)\n- Add a JSDoc comment on each function describing what it does and any notable behaviour (e.g. \"Send null assignment to clear the override and revert to inherit\")\n\nProduce the complete file with all functions.",
+      "approved": true
+    },
+    {
+      "name": "React Slide-over Panel with Form",
+      "description": "Creates a React slide-over (drawer) panel component with a form, save/cancel footer, loading state, and optional dynamic field rendering based on a type selector. Styled with Tailwind CSS.",
+      "category": "frontend",
+      "tags": [
+        "react",
+        "typescript",
+        "tailwind",
+        "slide-over",
+        "drawer",
+        "form",
+        "ui"
+      ],
+      "parameters": [
+        {
+          "name": "componentName",
+          "description": "Component name (e.g. ConnectionForm, ProjectStageSettings)",
+          "default": "SlideOverForm"
+        },
+        {
+          "name": "entityName",
+          "description": "Human-readable entity name shown in the title (e.g. Connection, Stage Settings)"
+        },
+        {
+          "name": "formFields",
+          "description": "Description of the form fields and any conditional rendering logic"
+        },
+        {
+          "name": "onSaveCallback",
+          "description": "Description of what happens on save (e.g. calls createConnection API then closes panel)"
+        },
+        {
+          "name": "hasTypeSelector",
+          "description": "Whether the form has a type selector that controls which fields are shown (true/false)",
+          "default": "false"
+        },
+        {
+          "name": "hasInlineAction",
+          "description": "Optional inline action button label and description (e.g. 'Test Connection — sends probe and shows result inline'). Leave empty if not needed."
+        }
+      ],
+      "promptTemplate": "Create a React slide-over panel component `{{componentName}}.tsx` using TypeScript and Tailwind CSS.\n\n## Props Interface\n```typescript\ninterface {{componentName}}Props {\n  isOpen: boolean\n  onClose: () =\u003e void\n  onSaved: (result: ...) =\u003e void\n  initialData?: ... // for edit mode; undefined means create mode\n}\n```\n\n## Layout Structure\nThe slide-over must use a fixed overlay pattern:\n```\n\u003cdiv class=\"fixed inset-0 z-50 flex justify-end\"\u003e\n  {/* Backdrop */}\n  \u003cdiv class=\"fixed inset-0 bg-black/30\" onClick={onClose} /\u003e\n  {/* Panel */}\n  \u003cdiv class=\"relative w-full max-w-md bg-white shadow-xl flex flex-col h-full\"\u003e\n    {/* Header — title + close button */}\n    {/* Body — scrollable form */}\n    {/* Footer — Cancel + Save buttons */}\n  \u003c/div\u003e\n\u003c/div\u003e\n```\n\nWhen `isOpen` is false, return `null` (unmount rather than hide).\n\n## Form Fields\n{{formFields}}\n\n{{#if (eq hasTypeSelector 'true')}}\n## Dynamic Field Rendering\nWhen a type selector field changes, conditionally show/hide other fields based on the selected type. Use a `switch` or lookup map — do **not** use async loading; field visibility changes are instant.\n{{/if}}\n\n{{#if hasInlineAction}}\n## Inline Action: {{hasInlineAction}}\n- Button inside the form body (not the footer)\n- Shows a spinner while pending\n- Displays an inline result (✓ success or ✗ error message) after completion\n- Does not block the Save button\n{{/if}}\n\n## State Management\n- `formData` state initialised from `initialData` (edit) or empty defaults (create)\n- `isSaving` boolean for the Save button spinner\n- `errors` record for per-field validation messages\n- On save: validate required fields, call API, invoke `onSaved(result)`, then `onClose()`\n- On error: set error state, do not close panel\n\n## Footer Buttons\n- **Cancel** (`bg-white border border-gray-300 text-gray-700`) — calls `onClose()`\n- **Save** (`bg-blue-600 text-white hover:bg-blue-700`) — disabled + spinner while `isSaving`\n\nUse standard Tailwind utility classes throughout. No external UI library dependencies.",
+      "approved": false
+    },
+    {
+      "name": "React Auto-save Table with Inline Confirmation",
+      "description": "Creates a React table component where each row auto-saves on field change/blur, shows a brief 'Saved ✓' confirmation that fades out, and optionally supports an inherit/override toggle per row.",
+      "category": "frontend",
+      "tags": [
+        "react",
+        "typescript",
+        "tailwind",
+        "table",
+        "auto-save",
+        "ui",
+        "form"
+      ],
+      "parameters": [
+        {
+          "name": "componentName",
+          "description": "Component name (e.g. StageDefaultsTab, ProjectStageSettings)",
+          "default": "AutoSaveTable"
+        },
+        {
+          "name": "rowEntityName",
+          "description": "What each row represents (e.g. Stage, Category)",
+          "default": "Row"
+        },
+        {
+          "name": "rowItems",
+          "description": "Description of the static row items and their labels/identifiers"
+        },
+        {
+          "name": "editableFields",
+          "description": "Description of the editable fields per row (e.g. connection dropdown + model text input)"
+        },
+        {
+          "name": "saveFunction",
+          "description": "API function to call on save (e.g. setGlobalStageDefault(stage, assignment))"
+        },
+        {
+          "name": "hasInheritToggle",
+          "description": "Whether rows have an Inherit/Override toggle (true/false)",
+          "default": "false"
+        },
+        {
+          "name": "inheritedValues",
+          "description": "If hasInheritToggle is true: where inherited values come from (e.g. global defaults)"
+        }
+      ],
+      "promptTemplate": "Create a React component `{{componentName}}.tsx` that renders a table where each row auto-saves independently.\n\n## Rows\nThe table always renders these fixed rows for `{{rowEntityName}}` items:\n{{rowItems}}\n\n## Editable Fields per Row\nEach row contains:\n{{editableFields}}\n\n{{#if (eq hasInheritToggle 'true')}}\n## Inherit / Override Toggle\nEach row has an **Inherit** toggle (checkbox or switch):\n- **Inherit ON** (default): fields are read-only, showing muted values from `{{inheritedValues}}`; row has normal background\n- **Inherit OFF** (override): fields become editable; row gets `bg-yellow-50` tint to signal an active override\n- Toggling from Override → Inherit calls `{{saveFunction}}` with `null` to clear the override\n{{/if}}\n\n## Auto-save Behaviour\n- Trigger save on `onChange` (for selects/checkboxes) or `onBlur` (for text inputs)\n- Call `{{saveFunction}}` with the row's current values\n- Track per-row save state: `'idle' | 'saving' | 'saved' | 'error'`\n- On success: transition to `'saved'`, show `\"Saved ✓\"` inline next to the row's fields with `text-green-600 text-sm`\n- After 2 seconds, fade back to `'idle'` (use `setTimeout` + `opacity-0 transition-opacity`)\n- On error: show `\"Failed to save\"` in `text-red-500`; do not auto-clear\n\n## State Shape\n```typescript\ntype RowSaveState = 'idle' | 'saving' | 'saved' | 'error'\nconst [saveStates, setSaveStates] = useState\u003cRecord\u003cstring, RowSaveState\u003e\u003e({})\nconst [rowData, setRowData] = useState\u003cRecord\u003cstring, RowValues\u003e\u003e({})\n```\n\n## Table Layout (Tailwind)\n- `\u003ctable class=\"w-full text-sm\"\u003e` with `\u003cthead\u003e` column headers and `\u003ctbody\u003e` rows\n- Each row: `\u003ctr class=\"border-b border-gray-100\"\u003e` with `\u003ctd class=\"py-3 px-2\"\u003e`\n- First column: row label with a coloured pip or icon\n- Last column: save state indicator (spinner / ✓ / error text)\n\n## Loading\nFetch initial data in `useEffect` on mount; show a simple skeleton (3 grey bars) while loading.\n\nUse standard Tailwind utility classes. No external UI library dependencies.",
+      "approved": false
+    },
+    {
+      "name": "React Router Setup in Existing App",
+      "description": "Adds client-side routing to an existing React app that uses state-based navigation, preserving all existing views while introducing URL-based routes and query param support.",
+      "category": "frontend",
+      "tags": [
+        "react",
+        "react-router",
+        "typescript",
+        "routing",
+        "spa",
+        "navigation"
+      ],
+      "parameters": [
+        {
+          "name": "routes",
+          "description": "JSON array of route descriptors: [{path, component, description}]",
+          "default": "[]"
+        },
+        {
+          "name": "existingNavPattern",
+          "description": "Description of the current navigation pattern being replaced (e.g. useState with view enum)"
+        },
+        {
+          "name": "queryParams",
+          "description": "Comma-separated list of query params to parse and pass to components (e.g. tab, highlight)"
+        },
+        {
+          "name": "deepLinkExample",
+          "description": "Example of a deep-link that must work (e.g. /configure?tab=connections\u0026highlight=uuid)"
+        },
+        {
+          "name": "packageManager",
+          "description": "Package manager to use for install command (npm/yarn/pnpm)",
+          "default": "npm"
+        }
+      ],
+      "promptTemplate": "Add React Router to an existing React + TypeScript app, migrating from `{{existingNavPattern}}` to URL-based routing.\n\n## Installation\n```bash\n{{packageManager}} install react-router-dom\n```\nAlso install types if needed: `{{packageManager}} install -D @types/react-router-dom`\n\n## Routes to implement\n{{routes}}\n\n## Migration Steps\n\n### 1. Wrap the app in a Router\nIn the entry point (`main.tsx` or `index.tsx`), wrap `\u003cApp /\u003e` with `\u003cBrowserRouter\u003e`:\n```tsx\nimport { BrowserRouter } from 'react-router-dom'\nroot.render(\u003cBrowserRouter\u003e\u003cApp /\u003e\u003c/BrowserRouter\u003e)\n```\n\n### 2. Replace state-based navigation in `App.tsx`\n- Remove `{{existingNavPattern}}`\n- Use `\u003cRoutes\u003e` + `\u003cRoute\u003e` to render the correct view component per path\n- All existing view components remain unchanged — only their mounting logic changes\n- Preserve all props/state that existing components received\n\n### 3. Navigation\n- Replace any `onClick` state-setters used for navigation with `useNavigate()` hooks or `\u003cLink\u003e` components\n- Back/forward browser buttons must work (this is automatic with React Router if done correctly)\n\n{{#if queryParams}}\n### 4. Query Param Parsing\nFor routes that need query params (`{{queryParams}}`), use:\n```typescript\nimport { useSearchParams } from 'react-router-dom'\nconst [searchParams] = useSearchParams()\nconst tab = searchParams.get('tab') // e.g. 'connections' | 'defaults' | null\nconst highlight = searchParams.get('highlight') // e.g. UUID | null\n```\nPass these as props into the relevant child components.\n{{/if}}\n\n{{#if deepLinkExample}}\n### 5. Deep-link support\nVerify that navigating directly to `{{deepLinkExample}}` renders the correct view with the correct tab/highlight state active. This requires the Vite dev server (or production server) to serve `index.html` for all routes — add `historyApiFallback: true` to `vite.config.ts` if not already present.\n{{/if}}\n\n## Compatibility checklist\n- [ ] All existing routes render identically to before\n- [ ] Browser back/forward navigation works\n- [ ] No TypeScript errors introduced\n- [ ] No prop drilling regressions (state that was previously managed in App still works)\n\nReturn the updated `App.tsx` (or minimal diff) and any changes to `main.tsx` / `vite.config.ts`.",
+      "approved": true
+    },
+    {
+      "name": "Go Interface with Multi-Implementation Registry",
+      "description": "Defines a Go interface, a registry/factory struct that instantiates the correct implementation based on a type discriminator, and a resolution method with a multi-level fallback chain.",
+      "category": "backend",
+      "tags": [
+        "go",
+        "interface",
+        "registry",
+        "factory",
+        "polymorphism",
+        "design-pattern"
+      ],
+      "parameters": [
+        {
+          "name": "interfaceName",
+          "description": "Name of the interface (e.g. Provider, Storage, Notifier)"
+        },
+        {
+          "name": "packageName",
+          "description": "Go package name"
+        },
+        {
+          "name": "discriminatorType",
+          "description": "Type used to select the implementation (e.g. ProviderType string, StorageBackend string)"
+        },
+        {
+          "name": "implementations",
+          "description": "Comma-separated list of implementation names and their discriminator values (e.g. OllamaProvider:ollama, OpenAIProvider:openai)"
+        },
+        {
+          "name": "unsupportedImplementations",
+          "description": "Comma-separated discriminator values that should return an explicit 'not yet supported' error"
+        },
+        {
+          "name": "interfaceMethods",
+          "description": "List of methods on the interface with their signatures"
+        },
+        {
+          "name": "fallbackChain",
+          "description": "Description of the multi-level fallback resolution logic (e.g. project override → global default → hardcoded default)"
+        }
+      ],
+      "promptTemplate": "Create a Go interface `{{interfaceName}}` and a `Registry` struct in the `{{packageName}}` package.\n\n## Interface Definition\n```go\n// {{interfaceName}} is the core abstraction — all backends must implement this.\ntype {{interfaceName}} interface {\n    {{interfaceMethods}}\n}\n```\n\n## Discriminator Type\n```go\ntype {{discriminatorType}}\n```\nDefine constants for each known value: `{{implementations}}` plus `{{unsupportedImplementations}}`.\n\n## Registry Struct\n```go\ntype Registry struct {\n    // inject the store(s) needed to look up configuration by ID\n}\n\nfunc NewRegistry(...) *Registry\n```\n\n## Factory Method: `ForID(id string) ({{interfaceName}}, error)`\nLook up the configuration record by `id`, then switch on the discriminator field:\n```go\nswitch record.Type {\n// For each implementation in {{implementations}}:\n// case DiscriminatorValue:\n//     return NewXxxImplementation(record), nil\n// For each value in {{unsupportedImplementations}}:\n// case UnsupportedValue:\n//     return nil, fmt.Errorf(\"%s: not yet supported\", record.Type)\ndefault:\n    return nil, fmt.Errorf(\"unknown type: %s\", record.Type)\n}\n```\n\n## Resolution Method with Fallback Chain\nImplement `ResolveFor(contextKey string, ...) ({{interfaceName}}, string, error)` that walks the following chain:\n\n{{fallbackChain}}\n\n1. Check first-priority source. If a matching record exists → call `ForID()` and return the result.\n2. Check second-priority source. Same logic.\n3. Fall back to the hardcoded default — instantiate the default implementation directly (no store lookup required).\n\nIf `ForID()` fails at any level (e.g. stale reference to a deleted record), log a warning and continue to the next fallback level rather than returning an error.\n\n## Error Types\n```go\nvar ErrFeatureUnsupported = errors.New(\"feature not supported by this implementation\")\n```\n\n## Documentation\nAdd a package-level comment explaining the fallback resolution order and when each level takes precedence.\n\nInclude all necessary imports (`context`, `errors`, `fmt`).",
+      "approved": false
+    }
+  ]
+}

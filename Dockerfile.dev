@@ -22,21 +22,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # air — Go live-reload tool
     && go install github.com/air-verse/air@latest \
     # repos dir + Claude Code permissions for non-interactive agent use
-    && mkdir -p /root/repos /root/.claude \
+    && mkdir -p /home/paulette/repos /home/paulette/.claude \
     && printf '%s' \
          '{"permissions":{"allow":[' \
-         '"Write(/root/repos/**)",' \
-         '"Edit(/root/repos/**)",' \
+         '"Write(/home/paulette/repos/**)",' \
+         '"Edit(/home/paulette/repos/**)",' \
          '"Bash(*)",' \
-         '"Read(/root/repos/**)"' \
+         '"Read(/home/paulette/repos/**)"' \
          ']}}' \
-         > /root/.claude/settings.json
+         > /home/paulette/.claude/settings.json
 
 WORKDIR /workspace
 
-ENV HOME=/root \
-    REGISTRY_PATH=/root/.paulette \
-    REPOS_PATH=/root/repos \
+ENV HOME=/home/paulette \
+    REGISTRY_PATH=/home/paulette/.paulette \
+    REPOS_PATH=/home/paulette/repos \
     CLAUDE_PATH=claude \
     PORT=8080
 

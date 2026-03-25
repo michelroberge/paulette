@@ -671,7 +671,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					}
 					if reviewErr != nil {
 						if errors.Is(reviewErr, agent.ErrPlanLimit) {
-							run.Emit(agent.StreamEvent{Type: "plan_limit", Content: "Claude plan limit reached during review"})
+							run.Emit(agent.StreamEvent{Type: "plan_limit", Content: reviewErr.Error()})
 							return
 						}
 						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] review error: %v (closing anyway)", currentBead.ID, reviewErr)})

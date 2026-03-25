@@ -152,6 +152,12 @@ export function CompletionView({ project, activity, onNewProject, onViewStage, o
     );
   }
 
+  const handleCancelSummary = () => {
+    summaryAbortRef.current?.abort();
+    summaryAbortRef.current = null;
+    setGenerating(false);
+  };
+
   if (!project.summaryReady && isGenerating) {
     return (
       <div className="completion-view">
@@ -166,6 +172,13 @@ export function CompletionView({ project, activity, onNewProject, onViewStage, o
               {tokenCount > 0 && (
                 <span className="mock-stream-tokens">{tokenCount.toLocaleString()} tokens</span>
               )}
+              <button
+                className="stop-button"
+                style={{ marginLeft: 'auto' }}
+                onClick={handleCancelSummary}
+              >
+                Cancel
+              </button>
             </div>
             <div className="mock-activity-content" ref={streamRef}>
               {summaryContent}

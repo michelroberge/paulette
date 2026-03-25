@@ -45,7 +45,7 @@ interface StageTab {
   label: string;
 }
 
-function getTabsForStage(stage: StageName | null, imported?: boolean, hasBeads?: boolean): StageTab[] {
+function getTabsForStage(stage: StageName | null): StageTab[] {
   if (!stage || stage === 'complete') return [];
   if (stage === 'ux') return [
     { id: 'chat', label: 'Chat' },
@@ -58,7 +58,7 @@ function getTabsForStage(stage: StageName | null, imported?: boolean, hasBeads?:
       { id: 'artifact', label: 'Build Plan' },
       { id: 'skills', label: 'Skills' },
     ];
-    if (!imported || hasBeads) tabs.push({ id: 'execute', label: 'Execute' });
+    tabs.push({ id: 'execute', label: 'Execute' });
     return tabs;
   }
   return [
@@ -304,7 +304,7 @@ function App() {
 
   const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
   const isActiveStage = currentStageInfo?.status === 'active';
-  const tabs = getTabsForStage(selectedStage, project?.imported, hasBeads);
+  const tabs = getTabsForStage(selectedStage);
 
   return (
     <div className="app-shell">
@@ -419,6 +419,7 @@ function App() {
                     onBeadTokens={(n) => addTokens('build', n)}
                     onExecutionComplete={() => setBuildComplete(true)}
                     onBuildDone={() => setBuildComplete(true)}
+                    onHasBeads={setHasBeads}
                     agentActive={agentActive}
                     agentOperation={agentOperation}
                     agentStreamingText={agentStreamingText}
@@ -434,7 +435,16 @@ function App() {
                   ) : (
                     <ApproveButton
                       projectId={project.id}
-                      disabled={streaming || (selectedStage === 'ux' && !mockGenerated) || (selectedStage === 'build' && !buildComplete && !project?.imported)}
+                      disabled={streaming || (selectedStage === 'ux' && !mockGenerated)}
+                      warning={
+                        selectedStage === 'build'
+                          ? !hasBeads
+                            ? "Are you sure? You didn't build anything yet"
+                            : !buildComplete
+                              ? "Are you sure? There's still work to do!"
+                              : undefined
+                          : undefined
+                      }
                       onApproved={handleApproved}
                     />
                   )}
