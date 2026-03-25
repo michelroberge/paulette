@@ -44,7 +44,8 @@ func NextStage(current model.StageName) (model.StageName, error) {
 
 // BuildPipelineState returns the full pipeline state for a project.
 // activities maps stage names to their current or last-known activity (may be nil).
-func BuildPipelineState(currentStage model.StageName, activities map[model.StageName]*model.StageActivity) model.PipelineState {
+// summaryApproved marks the complete stage as approved when the summary has been saved to docs.
+func BuildPipelineState(currentStage model.StageName, activities map[model.StageName]*model.StageActivity, summaryApproved bool) model.PipelineState {
 	currentIdx := stageIndex(currentStage)
 	stages := make([]model.StageInfo, len(StageOrder))
 
@@ -54,7 +55,11 @@ func BuildPipelineState(currentStage model.StageName, activities map[model.Stage
 		case i < currentIdx:
 			status = model.StageStatusApproved
 		case i == currentIdx:
-			status = model.StageStatusActive
+			if summaryApproved && name == model.StageComplete {
+				status = model.StageStatusApproved
+			} else {
+				status = model.StageStatusActive
+			}
 		default:
 			status = model.StageStatusLocked
 		}

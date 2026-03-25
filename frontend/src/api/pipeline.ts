@@ -1,6 +1,12 @@
 import { apiFetch, apiStreamUrl } from './client';
 import type { PipelineState, StreamEvent } from '../types';
 
+export function downloadProject(projectId: string): void {
+  const a = document.createElement('a');
+  a.href = `/api/projects/${projectId}/download`;
+  a.click();
+}
+
 export function getPipeline(projectId: string): Promise<PipelineState> {
   return apiFetch<PipelineState>(`/projects/${projectId}/pipeline`);
 }

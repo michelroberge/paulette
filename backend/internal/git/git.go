@@ -22,10 +22,14 @@ type CommitEntry struct {
 
 // Status represents the working tree and remote state.
 type Status struct {
-	Clean     bool   `json:"clean"`
-	Dirty     int    `json:"dirty"`
-	HasRemote bool   `json:"hasRemote"`
-	RemoteURL string `json:"remoteUrl"`
+	Clean        bool   `json:"clean"`
+	Dirty        int    `json:"dirty"`
+	HasRemote    bool   `json:"hasRemote"`
+	RemoteURL    string `json:"remoteUrl"`
+	Branch       string `json:"branch"`
+	RemoteBranch string `json:"remoteBranch"`
+	GitUserName  string `json:"gitUserName"`
+	GitUserEmail string `json:"gitUserEmail"`
 }
 
 // Service provides git operations with per-directory locking.
@@ -194,11 +198,38 @@ func (s *Service) Status(dir string) (Status, error) {
 		hasRemote = true
 	}
 
+	branch := ""
+	if b, err := run(dir, "branch", "--show-current"); err == nil {
+		branch = b
+	}
+
+	remoteBranch := ""
+	if hasRemote {
+		if out, err := run(dir, "ls-remote", "--symref", "origin", "HEAD"); err == nil {
+			// output: "ref: refs/heads/main\tHEAD\n..."
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, "ref: refs/heads/") {
+					// strip the trailing \tHEAD before trimming the prefix
+					ref := strings.SplitN(line, "\t", 2)[0]
+					remoteBranch = strings.TrimPrefix(ref, "ref: refs/heads/")
+					break
+				}
+			}
+		}
+	}
+
+	userName, _ := run(dir, "config", "user.name")
+	userEmail, _ := run(dir, "config", "user.email")
+
 	return Status{
-		Clean:     dirty == 0,
-		Dirty:     dirty,
-		HasRemote: hasRemote,
-		RemoteURL: remoteURL,
+		Clean:        dirty == 0,
+		Dirty:        dirty,
+		HasRemote:    hasRemote,
+		RemoteURL:    remoteURL,
+		Branch:       branch,
+		RemoteBranch: remoteBranch,
+		GitUserName:  userName,
+		GitUserEmail: userEmail,
 	}, nil
 }
 
@@ -262,12 +293,107 @@ func (s *Service) RemoteRemove(dir string) error {
 	return err
 }
 
-// Push pushes the current branch and tags to origin.
-func (s *Service) Push(dir string) error {
+// RenameLocalBranch renames the current local branch.
+func (s *Service) RenameLocalBranch(dir, newName string) error {
 	mu := s.lock(dir)
 	mu.Lock()
 	defer mu.Unlock()
-	_, err := run(dir, "push", "origin", "HEAD", "--tags")
+	_, err := run(dir, "branch", "-m", newName)
+	return err
+}
+
+// SetIdentity sets user.name and user.email in the local repo config.
+func (s *Service) SetIdentity(dir, name, email string) error {
+	mu := s.lock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	if _, err := run(dir, "config", "user.name", name); err != nil {
+		return err
+	}
+	_, err := run(dir, "config", "user.email", email)
+	return err
+}
+
+// Push pushes localBranch to remoteBranch on origin.
+// If remoteBranch is empty it defaults to localBranch (or HEAD).
+// Uses a refspec (local:remote) when the names differ.
+func (s *Service) Push(dir string, localBranch, remoteBranch string, force bool) error {
+	mu := s.lock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	if localBranch == "" {
+		localBranch = "HEAD"
+	}
+	if remoteBranch == "" {
+		remoteBranch = localBranch
+	}
+	refspec := localBranch
+	if localBranch != remoteBranch {
+		refspec = localBranch + ":" + remoteBranch
+	}
+	args := []string{"push", "-u"}
+	if force {
+		args = append(args, "-f")
+	}
+	args = append(args, "origin", refspec, "--tags")
+	_, err := run(dir, args...)
+	return err
+}
+
+// SSHPublicKey returns the container's SSH public key, generating an ed25519
+// key pair if one does not already exist. It also ensures github.com is in
+// known_hosts so that host key verification doesn't block pushes.
+func (s *Service) SSHPublicKey() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	sshDir := filepath.Join(home, ".ssh")
+	keyPath := filepath.Join(sshDir, "id_ed25519")
+	pubKeyPath := keyPath + ".pub"
+	knownHostsPath := filepath.Join(sshDir, "known_hosts")
+
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		return "", err
+	}
+
+	if _, err := os.Stat(pubKeyPath); os.IsNotExist(err) {
+		out, err := exec.Command("ssh-keygen", "-t", "ed25519", "-C", "paulette", "-f", keyPath, "-N", "").CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("ssh-keygen: %w: %s", err, out)
+		}
+	}
+
+	// Ensure github.com host key is trusted so pushes don't fail with
+	// "Host key verification failed".
+	if err := ensureKnownHost(knownHostsPath, "github.com"); err != nil {
+		return "", fmt.Errorf("known_hosts: %w", err)
+	}
+
+	data, err := os.ReadFile(pubKeyPath)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// ensureKnownHost adds host's keys to knownHostsPath if not already present.
+func ensureKnownHost(knownHostsPath, host string) error {
+	// Check if host is already in known_hosts
+	existing, _ := os.ReadFile(knownHostsPath)
+	if strings.Contains(string(existing), host) {
+		return nil
+	}
+	out, err := exec.Command("ssh-keyscan", "-H", host).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ssh-keyscan %s: %w: %s", host, err, out)
+	}
+	f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(out)
 	return err
 }
 
@@ -289,11 +415,11 @@ func (s *Service) CurrentHash(dir string) string {
 	return out
 }
 
-// FileDiff returns the diff of a single file between fromRef and HEAD.
-// If fromRef is empty, diffs against the index (uncommitted changes).
-// Returns original and modified content.
+// FileDiff returns the diff of a single file between fromRef and the working tree.
+// If fromRef is empty, diffs against HEAD.
+// Returns original (at fromRef) and modified (current on disk) content.
 func (s *Service) FileDiff(dir, filePath, fromRef string) (original, modified string, err error) {
-	// Read current (modified) content
+	// Read current (modified) content from disk
 	modBytes, readErr := os.ReadFile(filepath.Join(dir, filePath))
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
@@ -306,16 +432,34 @@ func (s *Service) FileDiff(dir, filePath, fromRef string) (original, modified st
 	}
 
 	if fromRef == "" {
-		// No ref: original is HEAD version
 		fromRef = "HEAD"
 	}
 
 	origOut, origErr := run(dir, "show", fromRef+":"+filePath)
 	if origErr != nil {
-		// File didn't exist at that ref
 		original = ""
 	} else {
 		original = origOut
+	}
+
+	return original, modified, nil
+}
+
+// FileDiffBetweenRefs returns the content of a file at two git refs.
+// Use this for stable diffs when both commits are known (e.g. pre/post bead execution).
+func (s *Service) FileDiffBetweenRefs(dir, filePath, fromRef, toRef string) (original, modified string, err error) {
+	origOut, origErr := run(dir, "show", fromRef+":"+filePath)
+	if origErr != nil {
+		original = ""
+	} else {
+		original = origOut
+	}
+
+	modOut, modErr := run(dir, "show", toRef+":"+filePath)
+	if modErr != nil {
+		modified = ""
+	} else {
+		modified = modOut
 	}
 
 	return original, modified, nil

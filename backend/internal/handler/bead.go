@@ -688,12 +688,21 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 							run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] close failed: %v", currentBead.ID, err)})
 							return
 						}
+						// Commit all changes made during this bead's execution so diffs are stable
+						commitMsg := fmt.Sprintf("build(%s): %s", b.ID, b.Title)
+						if commitErr := h.gitSvc.AddAllAndCommit(project.HostDir, commitMsg); commitErr != nil {
+							run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] warn: git commit failed: %v", b.ID, commitErr)})
+						}
+						postCommit := h.gitSvc.CurrentHash(project.HostDir)
 						currentBead.Status = model.BeadStatusClosed
-						updateGraphStatus(mu, project.HostDir, currentBead.ID, model.BeadStatusClosed)
-						beadJSON, _ = json.Marshal(currentBead)
+						updateGraphBeadFields(mu, project.HostDir, b.ID, func(stored *model.Bead) {
+							stored.PostExecutionCommit = postCommit
+						})
+						b.PostExecutionCommit = postCommit
+						beadJSON, _ = json.Marshal(b)
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
-						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", currentBead.ID, currentBead.Title)})
-						observer.RecordBead(currentBead, currentBead.Title, currentBead.Description)
+						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", b.ID, b.Title)})
+						observer.RecordBead(b, b.Title, b.Description)
 						return
 					}
 
@@ -1302,6 +1311,23 @@ type beadFilesResponse struct {
 	Files []beadFileEntry `json:"files"`
 }
 
+// resolveBeadFilePath resolves a target file path (which may be absolute or relative)
+// to an absolute path for reading, and a clean relative display path for the response.
+func resolveBeadFilePath(hostDir, rawPath string) (absPath, displayPath string) {
+	if filepath.IsAbs(rawPath) {
+		absPath = rawPath
+		if rel, err := filepath.Rel(hostDir, rawPath); err == nil {
+			displayPath = rel
+		} else {
+			displayPath = filepath.Base(rawPath)
+		}
+	} else {
+		displayPath = rawPath
+		absPath = filepath.Join(hostDir, rawPath)
+	}
+	return
+}
+
 // GetBeadFiles returns the current content of all target files for a bead.
 func (h *BeadHandler) GetBeadFiles(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -1332,22 +1358,22 @@ func (h *BeadHandler) GetBeadFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := beadFilesResponse{Files: make([]beadFileEntry, 0, len(bead.TargetFiles))}
-	for _, relPath := range bead.TargetFiles {
-		absPath := filepath.Join(project.HostDir, relPath)
+	for _, rawPath := range bead.TargetFiles {
+		absPath, displayPath := resolveBeadFilePath(project.HostDir, rawPath)
 		data, readErr := os.ReadFile(absPath)
 		if readErr != nil {
 			// File doesn't exist yet — include entry with empty content
 			resp.Files = append(resp.Files, beadFileEntry{
-				Path:     relPath,
+				Path:     displayPath,
 				Content:  "",
-				Language: languageFromPath(relPath),
+				Language: languageFromPath(displayPath),
 			})
 			continue
 		}
 		resp.Files = append(resp.Files, beadFileEntry{
-			Path:     relPath,
+			Path:     displayPath,
 			Content:  string(data),
-			Language: languageFromPath(relPath),
+			Language: languageFromPath(displayPath),
 		})
 	}
 
@@ -1396,16 +1422,25 @@ func (h *BeadHandler) GetBeadDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := beadDiffResponse{Diffs: make([]beadDiffEntry, 0, len(bead.TargetFiles))}
-	for _, relPath := range bead.TargetFiles {
-		original, modified, diffErr := h.gitSvc.FileDiff(project.HostDir, relPath, bead.PreExecutionCommit)
+	for _, rawPath := range bead.TargetFiles {
+		_, displayPath := resolveBeadFilePath(project.HostDir, rawPath)
+		var original, modified string
+		var diffErr error
+		if bead.PreExecutionCommit != "" && bead.PostExecutionCommit != "" {
+			// Both refs known: stable diff between commits, unaffected by later changes
+			original, modified, diffErr = h.gitSvc.FileDiffBetweenRefs(project.HostDir, displayPath, bead.PreExecutionCommit, bead.PostExecutionCommit)
+		} else {
+			// Fallback: compare pre-execution commit against current working tree
+			original, modified, diffErr = h.gitSvc.FileDiff(project.HostDir, displayPath, bead.PreExecutionCommit)
+		}
 		if diffErr != nil {
 			continue
 		}
 		resp.Diffs = append(resp.Diffs, beadDiffEntry{
-			Path:     relPath,
+			Path:     displayPath,
 			Original: original,
 			Modified: modified,
-			Language: languageFromPath(relPath),
+			Language: languageFromPath(displayPath),
 		})
 	}
 

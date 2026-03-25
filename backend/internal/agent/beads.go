@@ -48,7 +48,7 @@ Rules:
 - depsOn contains the exact titles of tasks this task depends on (can reference tasks across epics by exact title)
 - priority: 0=critical, 1=high, 2=medium (default), 3=low, 4=backlog
 - tags: one or more from this set: backend, frontend, api, database, styling, config, testing, devops. Use these to classify what area of the codebase the task touches.
-- targetFiles: file paths or directory paths the task should create or modify, inferred from the architecture document. If unsure, omit rather than guess.
+- targetFiles: relative file/directory paths (from the project root) the task should create or modify. NEVER use absolute paths. If unsure, omit rather than guess.
 - journeyRefs: array of JRN-* IDs from the UX document that this task directly serves. Extract these from the task description and build plan text. If not explicit, infer from context (e.g. a login task serves the authentication journey). Always output as an array (use [] if genuinely unknown).
 - archRefs: array of ARCH-* IDs from the architecture document that this task directly implements or modifies. Extract from task descriptions and architecture references. Always output as an array (use [] if genuinely unknown).
 - Do not include any text, explanation, or markdown outside the XML envelope`

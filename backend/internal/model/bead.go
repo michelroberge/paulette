@@ -34,7 +34,8 @@ type Bead struct {
 	JourneyRefs         []string   `json:"journeyRefs,omitempty"`
 	ArchRefs            []string   `json:"archRefs,omitempty"`
 	Tokens              int        `json:"tokens,omitempty"`
-	PreExecutionCommit  string     `json:"preExecutionCommit,omitempty"` // git commit hash before execution started
+	PreExecutionCommit  string     `json:"preExecutionCommit,omitempty"`  // git commit hash before execution started
+	PostExecutionCommit string     `json:"postExecutionCommit,omitempty"` // git commit hash after bead was closed
 }
 
 type BeadGraph struct {

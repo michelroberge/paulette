@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -59,7 +61,7 @@ func (h *PipelineHandler) buildState(project *model.Project) model.PipelineState
 	liveRuns := h.runs.ActiveForProject(project.ID)
 	persisted, _ := h.activityRepo.ReadActivity(project.HostDir)
 	activities := mergeActivities(liveRuns, persisted)
-	return pipeline.BuildPipelineState(project.CurrentStage, activities)
+	return pipeline.BuildPipelineState(project.CurrentStage, activities, project.SummaryApproved)
 }
 
 // WatchPipeline is an SSE endpoint that pushes updated PipelineState whenever runs change.
@@ -278,7 +280,11 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 			run.Emit(ev)
 		}
 
-		summary := strings.TrimSpace(fullText.String())
+		parsed := agent.ParseResponse(fullText.String()).Discussion
+		if parsed == "" {
+			parsed = strings.TrimSpace(fullText.String())
+		}
+		summary := parsed
 		if summary == "" {
 			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", "summary generation produced no output")
 			run.Emit(agent.StreamEvent{Type: "error", Content: "summary generation produced no output"})
@@ -444,4 +450,54 @@ func (h *PipelineHandler) ApproveSummary(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// DownloadProject zips the project's HostDir and sends it as a zip file download.
+func (h *PipelineHandler) DownloadProject(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	safeName := strings.ReplaceAll(project.Name, " ", "_")
+	filename := safeName + "-v" + project.Version + ".zip"
+
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+
+	baseDir := project.HostDir
+	err = filepath.Walk(baseDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(baseDir, path)
+		if err != nil {
+			return err
+		}
+		// Use forward slashes in zip entries
+		rel = filepath.ToSlash(rel)
+
+		fw, err := zw.Create(rel)
+		if err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = io.Copy(fw, f)
+		return err
+	})
+	if err != nil {
+		log.Printf("download zip error for project %s: %v", id, err)
+	}
 }

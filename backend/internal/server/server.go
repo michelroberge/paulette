@@ -134,6 +134,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/pipeline/summary/watch", plh.WatchSummary)
 		r.Post("/{id}/pipeline/summary", plh.RegenerateSummary)
 		r.Post("/{id}/pipeline/summary/approve", plh.ApproveSummary)
+		r.Get("/{id}/download", plh.DownloadProject)
 		r.Post("/{id}/pipeline/enhance", eh.Enhance)
 
 		r.Get("/{id}/stages/{stage}/artifact", ah.Get)
@@ -174,6 +175,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/git/status", gh.Status)
 		r.Post("/{id}/git/reset", gh.Reset)
 		r.Post("/{id}/git/discard", gh.Discard)
+		r.Post("/{id}/git/commit", gh.Commit)
+		r.Post("/{id}/git/branch/rename", gh.RenameBranch)
+		r.Post("/{id}/git/identity", gh.SetIdentity)
+		r.Get("/{id}/git/ssh-key", gh.SSHKey)
 		r.Put("/{id}/git/remote", gh.SetRemote)
 		r.Delete("/{id}/git/remote", gh.RemoveRemote)
 		r.Post("/{id}/git/push", gh.Push)

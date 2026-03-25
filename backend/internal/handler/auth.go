@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	contentTypeJSON = "application/json"
-	contentTypeSSE  = "text/event-stream"
+	headerContentType = "Content-Type"
+	contentTypeJSON   = "application/json"
+	contentTypeSSE    = "text/event-stream"
 
 	claudeClientID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	claudeTokenURL    = "https://platform.claude.com/v1/oauth/token"
@@ -116,7 +117,7 @@ type authStatus struct {
 func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	status := h.checkStatus()
 	fmt.Printf("[auth] status: authenticated=%v account=%q\n", status.Authenticated, status.Account)
-	w.Header().Set("Content-Type", contentTypeJSON)
+	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(status)
 }
 
@@ -175,7 +176,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", contentTypeSSE)
+	w.Header().Set(headerContentType, contentTypeSSE)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -317,7 +318,7 @@ func (h *AuthHandler) exchangeToken(sess *pkceSession, code string) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set(headerContentType, "application/x-www-form-urlencoded")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -415,7 +416,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		_ = os.Remove(filepath.Join(home, ".claude", ".credentials.json"))
 	}
 
-	w.Header().Set("Content-Type", contentTypeJSON)
+	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 

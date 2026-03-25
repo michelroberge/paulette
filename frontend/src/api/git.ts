@@ -31,8 +31,36 @@ export function removeRemote(projectId: string): Promise<void> {
   return apiFetch(`/projects/${projectId}/git/remote`, { method: 'DELETE' });
 }
 
-export function push(projectId: string): Promise<void> {
-  return apiFetch(`/projects/${projectId}/git/push`, { method: 'POST' });
+export function renameBranch(projectId: string, name: string): Promise<void> {
+  return apiFetch(`/projects/${projectId}/git/branch/rename`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function setIdentity(projectId: string, name: string, email: string): Promise<void> {
+  return apiFetch(`/projects/${projectId}/git/identity`, {
+    method: 'POST',
+    body: JSON.stringify({ name, email }),
+  });
+}
+
+export function commitAll(projectId: string, message: string): Promise<void> {
+  return apiFetch(`/projects/${projectId}/git/commit`, {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  });
+}
+
+export function push(projectId: string, localBranch?: string, remoteBranch?: string, force?: boolean): Promise<void> {
+  return apiFetch(`/projects/${projectId}/git/push`, {
+    method: 'POST',
+    body: JSON.stringify({ localBranch: localBranch ?? '', remoteBranch: remoteBranch ?? '', force: !!force }),
+  });
+}
+
+export function getSSHKey(projectId: string): Promise<{ publicKey: string }> {
+  return apiFetch(`/projects/${projectId}/git/ssh-key`);
 }
 
 export function pull(projectId: string): Promise<{ project: Project; pipeline: PipelineState }> {

@@ -4,6 +4,30 @@
   padding: 0;
 }
 
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+  border: 2px solid #1e293b;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+::-webkit-scrollbar-corner {
+  background: #1e293b;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: #0f172a;
@@ -1960,10 +1984,72 @@ body {
   font-size: 0.85rem;
 }
 
+.git-identity-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: #1e1b4b;
+  border: 1px solid #4338ca;
+  border-radius: 4px;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.git-identity-title {
+  font-size: 0.82rem;
+  color: #a5b4fc;
+  font-weight: 600;
+}
+
+.git-identity-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.git-identity-row input {
+  flex: 1;
+  padding: 0.3rem 0.5rem;
+  background: #0f0f2a;
+  border: 1px solid #4338ca;
+  border-radius: 4px;
+  color: #e0e7ff;
+  font-size: 0.82rem;
+}
+
+.git-identity-row input::placeholder {
+  color: #6366f1;
+}
+
+.git-identity-row input:focus {
+  outline: none;
+  border-color: #818cf8;
+}
+
+.git-identity-row button {
+  padding: 0.3rem 0.65rem;
+  background: #4338ca;
+  border: none;
+  border-radius: 4px;
+  color: #e0e7ff;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.git-identity-row button:hover {
+  background: #4f46e5;
+}
+
+.git-identity-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .version-history-dirty {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 0.5rem;
   background: #451a03;
   border: 1px solid #92400e;
   border-radius: 6px;
@@ -1985,6 +2071,31 @@ body {
 
 .version-history-dirty button:hover {
   background: #78350f;
+}
+
+.dirty-commit-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.dirty-commit-input {
+  flex: 1;
+  padding: 0.3rem 0.5rem;
+  background: #1c0a00;
+  border: 1px solid #92400e;
+  border-radius: 4px;
+  color: #fde68a;
+  font-size: 0.82rem;
+}
+
+.dirty-commit-input::placeholder {
+  color: #a16207;
+}
+
+.dirty-commit-input:focus {
+  outline: none;
+  border-color: #d97706;
 }
 
 .version-history-commits {
@@ -2188,6 +2299,230 @@ body {
 .remote-actions button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.ssh-key-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ssh-key-toggle {
+  align-self: flex-start;
+  padding: 0.3rem 0.6rem;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #94a3b8;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.ssh-key-toggle:hover:not(:disabled) {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.ssh-key-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ssh-key-hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.ssh-key-hint strong {
+  color: #94a3b8;
+}
+
+.ssh-key-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 4px;
+  padding: 0.5rem;
+}
+
+.ssh-key-box code {
+  flex: 1;
+  font-size: 0.72rem;
+  color: #7dd3fc;
+  word-break: break-all;
+  line-height: 1.4;
+}
+
+.ssh-copy-btn {
+  flex-shrink: 0;
+  padding: 0.25rem 0.55rem;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ssh-copy-btn:hover {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.remote-push-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.local-branch-label {
+  font-size: 0.78rem;
+  color: #64748b;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 3px;
+  padding: 0.25rem 0.45rem;
+  white-space: nowrap;
+  font-family: monospace;
+  cursor: pointer;
+}
+
+.local-branch-label:hover {
+  color: #94a3b8;
+  border-color: #334155;
+}
+
+.branch-rename-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.branch-rename-inline input {
+  width: 7rem;
+  padding: 0.25rem 0.4rem;
+  background: #0f172a;
+  border: 1px solid #3b82f6;
+  border-radius: 3px;
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  font-family: monospace;
+}
+
+.branch-rename-inline input:focus {
+  outline: none;
+}
+
+.branch-rename-inline button {
+  padding: 0.2rem 0.4rem;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 3px;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.branch-rename-inline button:hover:not(:disabled) {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.branch-rename-inline button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.remote-push-row input[type="text"] {
+  flex: 1;
+  padding: 0.4rem 0.6rem;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+}
+
+.remote-push-row input[type="text"]:focus {
+  border-color: #3b82f6;
+  outline: none;
+}
+
+.force-push-toggle {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 0.4rem;
+  cursor: pointer;
+  user-select: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.force-push-toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  background: #334155;
+  border-radius: 9px;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.force-push-toggle.active .toggle-track {
+  background: #ef4444;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: #94a3b8;
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+
+.force-push-toggle.active .toggle-thumb {
+  transform: translateX(14px);
+  background: #fff;
+}
+
+.toggle-label {
+  font-size: 0.82rem;
+  line-height: 1;
+  color: #94a3b8;
+  transition: color 0.2s;
+}
+
+.force-push-toggle.active .toggle-label {
+  color: #ef4444;
+}
+
+.push-success {
+  font-size: 0.82rem;
+  color: #4ade80;
+}
+
+.remote-no-commits {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #f59e0b;
 }
 
 .remote-actions {
@@ -2487,9 +2822,10 @@ body {
 /* --- Bead Detail Modal --- */
 
 .bead-detail-modal {
-  width: 90vw;
-  max-width: 1200px;
-  max-height: 85vh;
+  width: 95vw;
+  max-width: 95vw;
+  height: 95vh;
+  max-height: 95vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2829,10 +3165,86 @@ body {
 
 .bead-code-tab {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   flex: 1;
   min-height: 0;
   height: 100%;
+}
+
+.bead-code-tree {
+  width: 220px;
+  flex-shrink: 0;
+  background: #0a1120;
+  border-right: 1px solid #1e293b;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0.4rem 0;
+  font-size: 0.78rem;
+  font-family: monospace;
+}
+
+.bead-code-tree-loading {
+  color: #64748b;
+  font-style: italic;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+.bead-tree-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #94a3b8;
+  user-select: none;
+}
+
+.bead-tree-item:hover {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.bead-tree-item--selected {
+  background: #1e3a5f;
+  color: #60a5fa;
+}
+
+.bead-tree-item--selected:hover {
+  background: #1e40af;
+  color: #fff;
+}
+
+.bead-tree-icon {
+  flex-shrink: 0;
+  font-style: normal;
+}
+
+.bead-tree-icon--arrow {
+  font-size: 0.65rem;
+  color: #475569;
+}
+
+.bead-tree-dir {
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+.bead-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.bead-code-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 
 .bead-code-empty {
@@ -2851,31 +3263,13 @@ body {
   background: #0f172a;
   border-bottom: 1px solid #1e293b;
   flex-shrink: 0;
+  min-height: 2.25rem;
 }
 
-.bead-code-file-selector {
+.bead-code-status {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  flex: 1;
-  min-width: 0;
-}
-
-.bead-code-select {
-  background: #1e293b;
-  border: 1px solid #334155;
-  border-radius: 0.25rem;
-  color: #e2e8f0;
-  font-size: 0.78rem;
-  padding: 0.25rem 0.5rem;
-  flex: 1;
-  min-width: 0;
-  font-family: monospace;
-}
-
-.bead-code-select:focus {
-  outline: none;
-  border-color: #3b82f6;
 }
 
 .bead-code-live-badge {
@@ -3307,6 +3701,11 @@ body {
   0%   { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
   70%  { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
   100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+}
+
+/* Stage sidebar: green robot for approved (completed) stages */
+.stage-item.approved .stage-robot {
+  color: #22c55e;
 }
 
 /* Stage pip robot variant */

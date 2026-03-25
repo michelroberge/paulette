@@ -166,6 +166,10 @@ export interface GitStatus {
   dirty: number;
   hasRemote: boolean;
   remoteUrl: string;
+  branch: string;
+  remoteBranch: string;
+  gitUserName: string;
+  gitUserEmail: string;
 }
 
 // Session token tracking

@@ -10,6 +10,93 @@ interface Props {
   targetFiles: string[];
 }
 
+// ── File tree helpers ────────────────────────────────────────────────────────
+
+interface TreeNode {
+  name: string;
+  path: string;
+  isFile: boolean;
+  children: TreeNode[];
+}
+
+function buildTree(paths: string[]): TreeNode[] {
+  const root: TreeNode[] = [];
+  for (const raw of paths) {
+    // Split on either slash style but preserve original path as leaf path
+    const parts = raw.split(/[/\\]/);
+    let current = root;
+    let built = '';
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      // Reconstruct path using the same separator as found in original
+      const sep = raw.includes('/') ? '/' : '\\';
+      built = built ? `${built}${sep}${part}` : part;
+      const isFile = i === parts.length - 1;
+      // For leaf nodes, use the original raw path so it matches files array exactly
+      const nodePath = isFile ? raw : built;
+      let node = current.find(n => n.name === part);
+      if (!node) {
+        node = { name: part, path: nodePath, isFile, children: [] };
+        current.push(node);
+      }
+      current = node.children;
+    }
+  }
+  return root;
+}
+
+interface TreeNodeProps {
+  node: TreeNode;
+  selectedPath: string;
+  onSelect: (path: string) => void;
+  depth: number;
+}
+
+function TreeNodeItem({ node, selectedPath, onSelect, depth }: TreeNodeProps) {
+  const [open, setOpen] = useState(true);
+  const indent = depth * 12 + 8;
+
+  if (node.isFile) {
+    const isSelected = selectedPath === node.path ||
+      selectedPath.replace(/\\/g, '/') === node.path;
+    return (
+      <div
+        className={`bead-tree-item bead-tree-file${isSelected ? ' bead-tree-item--selected' : ''}`}
+        style={{ paddingLeft: `${indent}px` }}
+        onClick={() => onSelect(node.path)}
+        title={node.path}
+      >
+        <span className="bead-tree-icon bead-tree-icon--file">&#x1F4C4;</span>
+        <span className="bead-tree-name">{node.name}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div
+        className="bead-tree-item bead-tree-dir"
+        style={{ paddingLeft: `${indent}px` }}
+        onClick={() => setOpen(o => !o)}
+      >
+        <span className="bead-tree-icon bead-tree-icon--arrow">{open ? '▾' : '▸'}</span>
+        <span className="bead-tree-name">{node.name}</span>
+      </div>
+      {open && node.children.map(child => (
+        <TreeNodeItem
+          key={child.path}
+          node={child}
+          selectedPath={selectedPath}
+          onSelect={onSelect}
+          depth={depth + 1}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ── Main component ───────────────────────────────────────────────────────────
+
 export function BeadCodeTab({ projectId, beadId, beadStatus, targetFiles }: Props) {
   const [files, setFiles] = useState<BeadFileEntry[]>([]);
   const [diffs, setDiffs] = useState<BeadDiffEntry[]>([]);
@@ -49,13 +136,11 @@ export function BeadCodeTab({ projectId, beadId, beadStatus, targetFiles }: Prop
     }
   };
 
-  // Initial load
   useEffect(() => {
     setLoading(true);
     fetchFiles().finally(() => setLoading(false));
   }, [beadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Poll every 5s when in_progress
   useEffect(() => {
     if (isLive) {
       pollRef.current = setInterval(fetchFiles, 5000);
@@ -70,7 +155,6 @@ export function BeadCodeTab({ projectId, beadId, beadStatus, targetFiles }: Prop
     };
   }, [isLive, beadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load diffs when switching to diff view
   useEffect(() => {
     if (viewMode === 'diff' && canDiff && diffs.length === 0) {
       fetchDiff();
@@ -85,86 +169,95 @@ export function BeadCodeTab({ projectId, beadId, beadStatus, targetFiles }: Prop
     );
   }
 
+  const treePaths = files.length > 0 ? files.map(f => f.path) : targetFiles;
+  const tree = buildTree(treePaths);
+
   const selectedFile = files.find(f => f.path === selectedPath);
   const selectedDiff = diffs.find(d => d.path === selectedPath);
   const language = selectedFile?.language ?? selectedDiff?.language ?? 'plaintext';
 
   return (
     <div className="bead-code-tab">
-      {/* Toolbar */}
-      <div className="bead-code-toolbar">
-        <div className="bead-code-file-selector">
-          <select
-            value={selectedPath}
-            onChange={e => setSelectedPath(e.target.value)}
-            className="bead-code-select"
-          >
-            {(files.length > 0 ? files.map(f => f.path) : targetFiles).map(path => (
-              <option key={path} value={path}>{path}</option>
-            ))}
-          </select>
-          {isLive && (
-            <span className={`bead-code-live-badge${liveIndicator ? ' bead-code-live-badge--pulse' : ''}`}>
-              LIVE
-            </span>
-          )}
-          {loading && <span className="bead-code-loading-indicator">loading…</span>}
-        </div>
-
-        {canDiff && (
-          <div className="bead-code-view-toggle">
-            <button
-              className={`bead-code-toggle-btn${viewMode === 'source' ? ' bead-code-toggle-btn--active' : ''}`}
-              onClick={() => setViewMode('source')}
-            >
-              Source
-            </button>
-            <button
-              className={`bead-code-toggle-btn${viewMode === 'diff' ? ' bead-code-toggle-btn--active' : ''}`}
-              onClick={() => setViewMode('diff')}
-            >
-              Diff
-            </button>
-          </div>
-        )}
+      {/* Left: file tree */}
+      <div className="bead-code-tree">
+        {loading && <div className="bead-code-tree-loading">loading…</div>}
+        {tree.map(node => (
+          <TreeNodeItem
+            key={node.path}
+            node={node}
+            selectedPath={selectedPath}
+            onSelect={setSelectedPath}
+            depth={0}
+          />
+        ))}
       </div>
 
-      {/* Editor area */}
-      <div className="bead-code-editor">
-        {viewMode === 'source' || !canDiff ? (
-          <Editor
-            height="100%"
-            language={language}
-            value={selectedFile?.content ?? ''}
-            theme="vs-dark"
-            options={{
-              readOnly: true,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              fontSize: 13,
-              lineNumbers: 'on',
-              wordWrap: 'on',
-              renderWhitespace: 'none',
-            }}
-            loading={<div className="bead-code-editor-loading">Loading editor…</div>}
-          />
-        ) : (
-          <DiffEditor
-            height="100%"
-            language={language}
-            original={selectedDiff?.original ?? ''}
-            modified={selectedDiff?.modified ?? ''}
-            theme="vs-dark"
-            options={{
-              readOnly: true,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              fontSize: 13,
-              renderSideBySide: true,
-            }}
-            loading={<div className="bead-code-editor-loading">Loading diff…</div>}
-          />
-        )}
+      {/* Right: toolbar + editor */}
+      <div className="bead-code-main">
+        <div className="bead-code-toolbar">
+          <div className="bead-code-status">
+            {isLive && (
+              <span className={`bead-code-live-badge${liveIndicator ? ' bead-code-live-badge--pulse' : ''}`}>
+                LIVE
+              </span>
+            )}
+          </div>
+          {canDiff && (
+            <div className="bead-code-view-toggle">
+              <button
+                className={`bead-code-toggle-btn${viewMode === 'source' ? ' bead-code-toggle-btn--active' : ''}`}
+                onClick={() => setViewMode('source')}
+              >
+                Source
+              </button>
+              <button
+                className={`bead-code-toggle-btn${viewMode === 'diff' ? ' bead-code-toggle-btn--active' : ''}`}
+                onClick={() => setViewMode('diff')}
+              >
+                Diff
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="bead-code-editor">
+          {viewMode === 'source' || !canDiff ? (
+            <Editor
+              key={selectedPath}
+              height="100%"
+              language={language}
+              value={selectedFile?.content ?? ''}
+              theme="vs-dark"
+              options={{
+                readOnly: true,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                fontSize: 13,
+                lineNumbers: 'on',
+                wordWrap: 'on',
+                renderWhitespace: 'none',
+              }}
+              loading={<div className="bead-code-editor-loading">Loading editor…</div>}
+            />
+          ) : (
+            <DiffEditor
+              key={selectedPath}
+              height="100%"
+              language={language}
+              original={selectedDiff?.original ?? ''}
+              modified={selectedDiff?.modified ?? ''}
+              theme="vs-dark"
+              options={{
+                readOnly: true,
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                fontSize: 13,
+                renderSideBySide: true,
+              }}
+              loading={<div className="bead-code-editor-loading">Loading diff…</div>}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

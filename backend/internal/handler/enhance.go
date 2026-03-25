@@ -72,7 +72,7 @@ func (h *EnhanceHandler) Enhance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := pipeline.BuildPipelineState(project.CurrentStage, nil)
+	state := pipeline.BuildPipelineState(project.CurrentStage, nil, project.SummaryApproved)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(enhanceResponse{
 		Project:  *project,
