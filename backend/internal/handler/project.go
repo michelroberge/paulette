@@ -160,7 +160,8 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchProjectRequest struct {
-	Autonomous *bool `json:"autonomous"`
+	Autonomous *bool   `json:"autonomous"`
+	BaseBranch *string `json:"baseBranch"`
 }
 
 func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
@@ -175,6 +176,10 @@ func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
+	}
+
+	if req.BaseBranch != nil {
+		project.BaseBranch = *req.BaseBranch
 	}
 
 	if req.Autonomous != nil {

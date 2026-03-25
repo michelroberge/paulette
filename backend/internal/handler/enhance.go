@@ -147,6 +147,11 @@ func (h *EnhanceHandler) EnhanceInternal(projectID, vision, versionBump string) 
 		log.Printf("git commit enhance failed: %v", err)
 	}
 
+	branchName := fmt.Sprintf("pauline/iteration-%d", project.Iteration)
+	if err := h.git.CreateAndCheckoutBranch(project.HostDir, branchName); err != nil {
+		log.Printf("git create branch %s failed: %v", branchName, err)
+	}
+
 	return project, nil
 }
 

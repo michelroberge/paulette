@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { CommitEntry, GitStatus, Project, PipelineState } from '../../types';
 import { getGitLog, getGitStatus, getBranches, resetToCommit, discardChanges, commitAll, renameBranch, setRemote, removeRemote, push, pull } from '../../api/git';
+import { getProject, patchProject } from '../../api/projects';
 import { UncommittedDiffViewer } from './UncommittedDiffViewer';
 
 interface Props {
@@ -30,6 +31,8 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
   const [pushSuccess, setPushSuccess] = useState(false);
   const [renamingBranch, setRenamingBranch] = useState(false);
   const [branchNameInput, setBranchNameInput] = useState('');
+  const [baseBranchInput, setBaseBranchInput] = useState('');
+  const [baseBranchSaved, setBaseBranchSaved] = useState(false);
 
   // History tab state
   const [commits, setCommits] = useState<CommitEntry[]>([]);
@@ -55,12 +58,13 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const [st, bl] = await Promise.all([getGitStatus(projectId), getBranches(projectId)]);
+      const [st, bl, proj] = await Promise.all([getGitStatus(projectId), getBranches(projectId), getProject(projectId)]);
       setStatus(st);
       setBranchList(bl.branches);
       setHistoryBranch(prev => prev || bl.current);
       setRemoteInput(st.remoteUrl || '');
       setPushBranch(st.remoteBranch || st.branch || 'main');
+      setBaseBranchInput(proj.baseBranch ?? '');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load git info');
     } finally {
@@ -114,6 +118,19 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
       onReset(result.project, result.pipeline);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Reset failed');
+    } finally {
+      setOpLoading(null);
+    }
+  };
+
+  const handleSetBaseBranch = async () => {
+    setOpLoading('baseBranch');
+    try {
+      await patchProject(projectId, { baseBranch: baseBranchInput.trim() });
+      setBaseBranchSaved(true);
+      setTimeout(() => setBaseBranchSaved(false), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save base branch');
     } finally {
       setOpLoading(null);
     }
@@ -225,6 +242,25 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
                 {status?.hasRemote && (
                   <button disabled={opLoading !== null} onClick={handleRemoveRemote}>Remove</button>
                 )}
+              </div>
+              {status?.remoteUrl?.startsWith('https://') && (
+                <div className="remote-url-hint">
+                  HTTPS remotes require credentials. Use SSH format instead: <code>git@github.com:user/repo.git</code>
+                </div>
+              )}
+
+              {/* Base branch for PR automation */}
+              <div className="remote-url-row base-branch-row">
+                <input
+                  type="text"
+                  value={baseBranchInput}
+                  onChange={e => setBaseBranchInput(e.target.value)}
+                  placeholder="main"
+                  title="Branch that iteration PRs merge into (leave empty to disable PR automation)"
+                />
+                <button disabled={opLoading !== null} onClick={handleSetBaseBranch}>
+                  {opLoading === 'baseBranch' ? '...' : baseBranchSaved ? 'Saved!' : 'Set base branch'}
+                </button>
               </div>
 
               {/* Uncommitted changes banner */}

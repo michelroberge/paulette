@@ -2365,6 +2365,10 @@ body {
   gap: 0.5rem;
 }
 
+.base-branch-row {
+  margin-top: 0.75rem;
+}
+
 .remote-url-row input {
   flex: 1;
   padding: 0.4rem 0.6rem;
@@ -2400,6 +2404,20 @@ body {
 .remote-actions button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.remote-url-hint {
+  font-size: 0.78rem;
+  color: #fbbf24;
+  background: #451a03;
+  border: 1px solid #92400e;
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+}
+
+.remote-url-hint code {
+  font-family: monospace;
+  color: #fde68a;
 }
 
 .ssh-key-section {

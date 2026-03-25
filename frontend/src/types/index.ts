@@ -14,6 +14,7 @@ export interface Project {
   summaryReady: boolean;
   summaryApproved?: boolean;
   autonomous?: boolean;
+  baseBranch?: string;
   devCommands?: string[];
   buildCommands?: string[];
   runCommands?: string[];

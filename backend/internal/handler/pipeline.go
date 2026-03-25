@@ -441,6 +441,21 @@ func (h *PipelineHandler) ApproveSummary(w http.ResponseWriter, r *http.Request)
 		log.Printf("git commit approved summary failed: %v", err)
 	}
 
+	if project.BaseBranch != "" {
+		branchName := fmt.Sprintf("pauline/iteration-%d", project.Iteration)
+		st, _ := h.git.Status(project.HostDir)
+		if st.RemoteURL != "" {
+			if err := h.git.Push(project.HostDir, branchName, branchName, false); err != nil {
+				log.Printf("push iteration branch failed: %v", err)
+			} else {
+				prTitle := fmt.Sprintf("Iteration %d (v%s)", project.Iteration, project.Version)
+				if err := h.git.CreatePullRequest(project.HostDir, prTitle, project.BaseBranch); err != nil {
+					log.Printf("gh pr create failed: %v", err)
+				}
+			}
+		}
+	}
+
 	project.SummaryApproved = true
 	project.UpdatedAt = time.Now()
 	if err := h.registry.Update(project); err != nil {

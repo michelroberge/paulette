@@ -565,3 +565,31 @@ func (s *Service) FileDiffBetweenRefs(dir, filePath, fromRef, toRef string) (ori
 
 	return original, modified, nil
 }
+
+// ErrGHNotAvailable is returned by CreatePullRequest when the gh CLI is not on PATH.
+var ErrGHNotAvailable = fmt.Errorf("gh CLI not found on PATH")
+
+// CreateAndCheckoutBranch creates a local branch (or resets it if it already exists)
+// and checks it out using `git checkout -B <name>`.
+func (s *Service) CreateAndCheckoutBranch(dir, name string) error {
+	mu := s.lock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+	_, err := run(dir, "checkout", "-B", name)
+	return err
+}
+
+// CreatePullRequest opens a GitHub pull request from the current branch into baseBranch
+// using the gh CLI. Returns ErrGHNotAvailable if gh is not installed.
+func (s *Service) CreatePullRequest(dir, title, baseBranch string) error {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return ErrGHNotAvailable
+	}
+	cmd := exec.Command("gh", "pr", "create", "--title", title, "--body", "", "--base", baseBranch)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("gh pr create: %w: %s", err, out)
+	}
+	return nil
+}
