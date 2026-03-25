@@ -12,6 +12,7 @@ import { SkillAnalysisPanel } from './components/build/SkillAnalysisPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { VersionHistoryModal } from './components/git/VersionHistoryModal';
+import { ProfileModal } from './components/git/ProfileModal';
 import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
 import { getArtifact } from './api/artifacts';
 import { getMock } from './api/mock';
@@ -68,6 +69,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<string>('chat');
   const [stageTokens, setStageTokens] = useState<Partial<Record<StageName, number>>>({});
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [showImportProgress, setShowImportProgress] = useState(false);
   const [mockGenerated, setMockGenerated] = useState(false);
   const [buildComplete, setBuildComplete] = useState(false);
@@ -288,6 +290,7 @@ function App() {
         onBack={() => { setProject(null); setPipeline(null); }}
         totalTokens={grandTotal}
         onShowHistory={() => setShowVersionHistory(true)}
+        onShowProfile={() => setShowProfile(true)}
         autonomous={!!project.autonomous}
         onToggleAutonomous={handleToggleAutonomous}
       />
@@ -424,6 +427,13 @@ function App() {
           projectId={project.id}
           onClose={() => setShowVersionHistory(false)}
           onReset={handleGitReset}
+        />
+      )}
+      {showProfile && (
+        <ProfileModal
+          projectId={project.id}
+          initialName={project.author}
+          onClose={() => setShowProfile(false)}
         />
       )}
     </div>

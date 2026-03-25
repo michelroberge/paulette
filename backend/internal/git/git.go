@@ -20,6 +20,12 @@ type CommitEntry struct {
 	Tags      []string `json:"tags"`
 }
 
+// BranchList holds all local branches and the currently checked-out branch.
+type BranchList struct {
+	Branches []string `json:"branches"`
+	Current  string   `json:"current"`
+}
+
 // Status represents the working tree and remote state.
 type Status struct {
 	Clean        bool   `json:"clean"`
@@ -108,19 +114,43 @@ func (s *Service) AddAllAndCommit(dir string, message string) error {
 	return err
 }
 
-// Log returns the most recent commits.
-func (s *Service) Log(dir string, limit int) ([]CommitEntry, error) {
+// ListBranches returns all local branch names and the currently checked-out branch.
+func (s *Service) ListBranches(dir string) (BranchList, error) {
+	mu := s.lock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+
+	out, err := run(dir, "branch", "--format=%(refname:short)")
+	if err != nil {
+		return BranchList{}, err
+	}
+	current, _ := run(dir, "branch", "--show-current")
+	var branches []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line != "" {
+			branches = append(branches, line)
+		}
+	}
+	return BranchList{Branches: branches, Current: strings.TrimSpace(current)}, nil
+}
+
+// Log returns commits with optional pagination and branch filter.
+func (s *Service) Log(dir string, limit, offset int, branch string) ([]CommitEntry, error) {
 	mu := s.lock(dir)
 	mu.Lock()
 	defer mu.Unlock()
 
 	if limit <= 0 {
-		limit = 50
+		limit = 10
 	}
 	// Format: hash<SEP>shortHash<SEP>author<SEP>date<SEP>message<SEP>refs
 	sep := "<SEP>"
 	format := fmt.Sprintf("%%H%s%%h%s%%an%s%%aI%s%%s%s%%D", sep, sep, sep, sep, sep)
-	out, err := run(dir, "log", fmt.Sprintf("--max-count=%d", limit), fmt.Sprintf("--format=%s", format))
+	args := []string{"log", fmt.Sprintf("--max-count=%d", limit), fmt.Sprintf("--skip=%d", offset), fmt.Sprintf("--format=%s", format)}
+	if branch != "" {
+		args = append(args, branch)
+	}
+	out, err := run(dir, args...)
 	if err != nil {
 		// Empty repo has no commits
 		if strings.Contains(err.Error(), "does not have any commits") {
@@ -443,6 +473,77 @@ func (s *Service) FileDiff(dir, filePath, fromRef string) (original, modified st
 	}
 
 	return original, modified, nil
+}
+
+// DiffEntry holds the diff of a single file against HEAD.
+type DiffEntry struct {
+	Path     string `json:"path"`
+	Original string `json:"original"`
+	Modified string `json:"modified"`
+}
+
+// WorkingDiff returns all uncommitted changes (staged + unstaged + untracked)
+// as a slice of DiffEntry, each containing HEAD content vs current disk content.
+func (s *Service) WorkingDiff(dir string) ([]DiffEntry, error) {
+	mu := s.lock(dir)
+	mu.Lock()
+	defer mu.Unlock()
+
+	out, err := run(dir, "status", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return []DiffEntry{}, nil
+	}
+
+	var entries []DiffEntry
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		xy := line[:2]
+		filePath := strings.TrimSpace(line[3:])
+		// Handle renames: "R old -> new" or "R old\tnew"
+		if idx := strings.Index(filePath, " -> "); idx >= 0 {
+			filePath = filePath[idx+4:]
+		} else if idx := strings.Index(filePath, "\t"); idx >= 0 {
+			filePath = filePath[idx+1:]
+		}
+
+		isDeleted := strings.Contains(xy, "D")
+		isNew := xy == "??" || xy == "A " || xy == " A"
+
+		var original, modified string
+		if isNew {
+			// Untracked / newly added: no HEAD version
+			original = ""
+			modBytes, readErr := os.ReadFile(filepath.Join(dir, filePath))
+			if readErr == nil {
+				modified = string(modBytes)
+			}
+		} else if isDeleted {
+			// Deleted: no disk version
+			modified = ""
+			origOut, _ := run(dir, "show", "HEAD:"+filePath)
+			original = origOut
+		} else {
+			// Modified: read HEAD and disk
+			origOut, _ := run(dir, "show", "HEAD:"+filePath)
+			original = origOut
+			modBytes, readErr := os.ReadFile(filepath.Join(dir, filePath))
+			if readErr == nil {
+				modified = string(modBytes)
+			}
+		}
+
+		entries = append(entries, DiffEntry{
+			Path:     filePath,
+			Original: original,
+			Modified: modified,
+		})
+	}
+	return entries, nil
 }
 
 // FileDiffBetweenRefs returns the content of a file at two git refs.

@@ -126,6 +126,8 @@ func (h *EnhanceHandler) EnhanceInternal(projectID, vision, versionBump string) 
 	project.Version = newVersion
 	project.Iteration++
 	project.EnhancementVision = vision
+	project.SummaryReady = false
+	project.SummaryApproved = false
 	project.UpdatedAt = time.Now()
 
 	if err := h.registry.Update(project); err != nil {

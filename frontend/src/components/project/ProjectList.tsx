@@ -9,6 +9,17 @@ import { StageRobot } from '../layout/StageRobot';
 import type { Project, StageName } from '../../types';
 
 const STAGE_ORDER: StageName[] = ['vision', 'ux', 'architecture', 'build', 'complete'];
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function totalTokens(p: Project): number {
+  const stage = Object.values(p.stageTokens ?? {}).reduce((s, v) => s + (v ?? 0), 0);
+  return stage + (p.summaryTokens ?? 0);
+}
 const STAGE_LABELS: Record<string, string> = {
   vision: 'Vision', ux: 'UX', architecture: 'Arch', build: 'Build', complete: 'Done',
 };
@@ -312,6 +323,10 @@ export function ProjectList({ onSelect }: Props) {
                 <span>{activityCounts[p.id]} agent{activityCounts[p.id] > 1 ? 's' : ''} running</span>
               </div>
             )}
+            <div className="project-card-stats">
+              <span title="Total tokens consumed">{fmtTokens(totalTokens(p))} tokens</span>
+              <span title="Completed iterations">{p.iteration} iter</span>
+            </div>
             <div className="project-meta">
               <span>{p.author}</span>
               <span>v{p.version} · {new Date(p.updatedAt).toLocaleDateString()}</span>

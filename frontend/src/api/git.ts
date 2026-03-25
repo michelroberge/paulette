@@ -1,8 +1,15 @@
 import { apiFetch } from './client';
 import type { CommitEntry, GitStatus, Project, PipelineState } from '../types';
 
-export function getGitLog(projectId: string, limit = 50): Promise<CommitEntry[]> {
-  return apiFetch<CommitEntry[]>(`/projects/${projectId}/git/log?limit=${limit}`);
+export function getGitLog(projectId: string, limit = 10, offset = 0, branch?: string): Promise<CommitEntry[]> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (branch) params.set('branch', branch);
+  return apiFetch<CommitEntry[]>(`/projects/${projectId}/git/log?${params}`);
+}
+
+export interface BranchList { branches: string[]; current: string; }
+export function getBranches(projectId: string): Promise<BranchList> {
+  return apiFetch<BranchList>(`/projects/${projectId}/git/branches`);
 }
 
 export function getGitStatus(projectId: string): Promise<GitStatus> {
@@ -61,6 +68,17 @@ export function push(projectId: string, localBranch?: string, remoteBranch?: str
 
 export function getSSHKey(projectId: string): Promise<{ publicKey: string }> {
   return apiFetch(`/projects/${projectId}/git/ssh-key`);
+}
+
+export interface WorkingDiffEntry {
+  path: string;
+  original: string;
+  modified: string;
+  language: string;
+}
+
+export function getWorkingDiff(projectId: string): Promise<WorkingDiffEntry[]> {
+  return apiFetch<WorkingDiffEntry[]>(`/projects/${projectId}/git/diff`);
 }
 
 export function pull(projectId: string): Promise<{ project: Project; pipeline: PipelineState }> {

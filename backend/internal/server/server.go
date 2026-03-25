@@ -173,6 +173,7 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/{id}/git/log", gh.Log)
 		r.Get("/{id}/git/status", gh.Status)
+		r.Get("/{id}/git/diff", gh.WorkingDiff)
 		r.Post("/{id}/git/reset", gh.Reset)
 		r.Post("/{id}/git/discard", gh.Discard)
 		r.Post("/{id}/git/commit", gh.Commit)
@@ -183,6 +184,7 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/{id}/git/remote", gh.RemoveRemote)
 		r.Post("/{id}/git/push", gh.Push)
 		r.Post("/{id}/git/pull", gh.Pull)
+		r.Get("/{id}/git/branches", gh.ListBranches)
 
 		r.Get("/{id}/sessions", sh.ListSessions)
 

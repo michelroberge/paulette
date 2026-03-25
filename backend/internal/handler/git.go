@@ -43,13 +43,20 @@ func (h *GitHandler) Log(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limit := 50
+	limit := 10
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil && n > 0 {
 			limit = n
 		}
 	}
-	entries, err := h.git.Log(dir, limit)
+	offset := 0
+	if q := r.URL.Query().Get("offset"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	branch := r.URL.Query().Get("branch")
+	entries, err := h.git.Log(dir, limit, offset, branch)
 	if err != nil {
 		http.Error(w, "git log failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -122,6 +129,37 @@ func (h *GitHandler) Reset(w http.ResponseWriter, r *http.Request) {
 		Project:  project,
 		Pipeline: state,
 	})
+}
+
+// WorkingDiff returns all uncommitted changes as a list of file diffs.
+func (h *GitHandler) WorkingDiff(w http.ResponseWriter, r *http.Request) {
+	_, dir, ok := h.projectDir(w, r)
+	if !ok {
+		return
+	}
+	entries, err := h.git.WorkingDiff(dir)
+	if err != nil {
+		http.Error(w, "git diff failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type diffResponse struct {
+		Path     string `json:"path"`
+		Original string `json:"original"`
+		Modified string `json:"modified"`
+		Language string `json:"language"`
+	}
+	resp := make([]diffResponse, 0, len(entries))
+	for _, e := range entries {
+		resp = append(resp, diffResponse{
+			Path:     e.Path,
+			Original: e.Original,
+			Modified: e.Modified,
+			Language: languageFromPath(e.Path),
+		})
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(resp)
 }
 
 // Discard discards all uncommitted changes.
@@ -280,6 +318,21 @@ func (h *GitHandler) SSHKey(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]string{"publicKey": pubKey})
+}
+
+// ListBranches returns all local branches and the current branch.
+func (h *GitHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
+	_, dir, ok := h.projectDir(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.git.ListBranches(dir)
+	if err != nil {
+		http.Error(w, "git branch: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(result)
 }
 
 // Pull pulls from origin.

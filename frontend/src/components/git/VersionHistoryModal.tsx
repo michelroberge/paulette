@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { CommitEntry, GitStatus, Project, PipelineState } from '../../types';
-import { getGitLog, getGitStatus, resetToCommit, discardChanges, commitAll, setIdentity, renameBranch, setRemote, removeRemote, push, pull, getSSHKey } from '../../api/git';
+import { getGitLog, getGitStatus, getBranches, resetToCommit, discardChanges, commitAll, renameBranch, setRemote, removeRemote, push, pull } from '../../api/git';
+import { UncommittedDiffViewer } from './UncommittedDiffViewer';
 
 interface Props {
   projectId: string;
@@ -8,37 +9,58 @@ interface Props {
   onReset: (project: Project, pipeline: PipelineState) => void;
 }
 
+type GitTab = 'repo' | 'history';
+const LIMIT = 10;
+
 export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
-  const [commits, setCommits] = useState<CommitEntry[]>([]);
+  const [activeTab, setActiveTab] = useState<GitTab>('repo');
+
+  // Shared state
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [confirmRef, setConfirmRef] = useState<string | null>(null);
-  const [remoteInput, setRemoteInput] = useState('');
-  const [showRemote, setShowRemote] = useState(false);
   const [opLoading, setOpLoading] = useState<string | null>(null);
+
+  const [showDiff, setShowDiff] = useState(false);
+
+  // Repo tab state
+  const [remoteInput, setRemoteInput] = useState('');
   const [pushBranch, setPushBranch] = useState('');
   const [forcePush, setForcePush] = useState(false);
-  const [commitMsg, setCommitMsg] = useState('');
-  const [identityName, setIdentityName] = useState('');
-  const [identityEmail, setIdentityEmail] = useState('');
-  const [sshKey, setSSHKey] = useState<string | null>(null);
-  const [sshCopied, setSSHCopied] = useState(false);
   const [pushSuccess, setPushSuccess] = useState(false);
   const [renamingBranch, setRenamingBranch] = useState(false);
   const [branchNameInput, setBranchNameInput] = useState('');
+
+  // History tab state
+  const [commits, setCommits] = useState<CommitEntry[]>([]);
+  const [branchList, setBranchList] = useState<string[]>([]);
+  const [historyBranch, setHistoryBranch] = useState('');
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [confirmRef, setConfirmRef] = useState<string | null>(null);
+  const [commitMsg, setCommitMsg] = useState('');
+
+  const loadCommits = useCallback(async (branch: string, offset: number, append: boolean) => {
+    try {
+      const entries = await getGitLog(projectId, LIMIT, offset, branch || undefined);
+      setCommits(prev => append ? [...prev, ...entries] : entries);
+      setHistoryOffset(offset + entries.length);
+      setHasMore(entries.length === LIMIT);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load commits');
+    }
+  }, [projectId]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [log, st] = await Promise.all([getGitLog(projectId), getGitStatus(projectId)]);
-      setCommits(log);
+      const [st, bl] = await Promise.all([getGitStatus(projectId), getBranches(projectId)]);
       setStatus(st);
+      setBranchList(bl.branches);
+      setHistoryBranch(prev => prev || bl.current);
       setRemoteInput(st.remoteUrl || '');
       setPushBranch(st.remoteBranch || st.branch || 'main');
-      if (!st.gitUserName) setIdentityName('');
-      if (!st.gitUserEmail) setIdentityEmail('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load git info');
     } finally {
@@ -48,18 +70,14 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const handleSetIdentity = async () => {
-    if (!identityName.trim() || !identityEmail.trim()) return;
-    setOpLoading('identity');
-    try {
-      await setIdentity(projectId, identityName.trim(), identityEmail.trim());
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to set identity');
-    } finally {
-      setOpLoading(null);
+  useEffect(() => {
+    if (historyBranch) {
+      setCommits([]);
+      setHistoryOffset(0);
+      setHasMore(true);
+      loadCommits(historyBranch, 0, false);
     }
-  };
+  }, [historyBranch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCommit = async () => {
     if (!commitMsg.trim()) return;
@@ -68,6 +86,7 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
       await commitAll(projectId, commitMsg.trim());
       setCommitMsg('');
       await refresh();
+      loadCommits(historyBranch, 0, false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Commit failed');
     } finally {
@@ -141,6 +160,18 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
     }
   };
 
+  const handlePull = async () => {
+    setOpLoading('pull');
+    try {
+      const result = await pull(projectId);
+      onReset(result.project, result.pipeline);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Pull failed');
+    } finally {
+      setOpLoading(null);
+    }
+  };
+
   const handleRenameBranch = async () => {
     if (!branchNameInput.trim()) return;
     setOpLoading('rename');
@@ -155,165 +186,32 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
     }
   };
 
-  const handlePull = async () => {
-    setOpLoading('pull');
-    try {
-      const result = await pull(projectId);
-      onReset(result.project, result.pipeline);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Pull failed');
-    } finally {
-      setOpLoading(null);
-    }
-  };
-
-  const handleShowSSHKey = async () => {
-    if (sshKey) { setSSHKey(null); return; }
-    setOpLoading('ssh');
-    try {
-      const res = await getSSHKey(projectId);
-      setSSHKey(res.publicKey);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to get SSH key');
-    } finally {
-      setOpLoading(null);
-    }
-  };
-
-  const handleCopySSHKey = () => {
-    if (!sshKey) return;
-    navigator.clipboard.writeText(sshKey);
-    setSSHCopied(true);
-    setTimeout(() => setSSHCopied(false), 2000);
-  };
-
   const formatDate = (dateStr: string) => {
     const d = new Date(dateStr);
     return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  const missingIdentity = status && (!status.gitUserName || !status.gitUserEmail);
-
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal version-history-modal" onClick={e => e.stopPropagation()}>
-        <div className="version-history-header">
-          <h2>Version History</h2>
+      <div className="modal git-modal" onClick={e => e.stopPropagation()}>
+        <div className="git-modal-header">
+          <h2>Git</h2>
           <button className="close-btn" onClick={onClose}>&times;</button>
         </div>
 
         {error && <div className="version-history-error">{error}</div>}
 
-        {/* Git identity banner */}
-        {missingIdentity && (
-          <div className="git-identity-banner">
-            <span className="git-identity-title">Git identity not set</span>
-            <div className="git-identity-row">
-              <input
-                type="text"
-                placeholder="Your name"
-                value={identityName}
-                onChange={e => setIdentityName(e.target.value)}
-              />
-              <input
-                type="email"
-                placeholder="your@email.com"
-                value={identityEmail}
-                onChange={e => setIdentityEmail(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSetIdentity()}
-              />
-              <button
-                disabled={opLoading !== null || !identityName.trim() || !identityEmail.trim()}
-                onClick={handleSetIdentity}
-              >
-                {opLoading === 'identity' ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Git status banner */}
-        {status && !status.clean && (
-          <div className="version-history-dirty">
-            <span>{status.dirty} uncommitted change{status.dirty !== 1 ? 's' : ''}</span>
-            <div className="dirty-commit-row">
-              <input
-                type="text"
-                className="dirty-commit-input"
-                placeholder="Commit message…"
-                value={commitMsg}
-                onChange={e => setCommitMsg(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleCommit()}
-              />
-              <button disabled={opLoading !== null || !commitMsg.trim()} onClick={handleCommit}>
-                {opLoading === 'commit' ? 'Committing...' : 'Commit'}
-              </button>
-              <button disabled={opLoading !== null} onClick={handleDiscard}>
-                {opLoading === 'discard' ? 'Discarding...' : 'Discard all'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Commit list */}
-        <div className="version-history-commits">
-          {loading ? (
-            <div className="version-history-loading">Loading...</div>
-          ) : commits.length === 0 ? (
-            <div className="version-history-empty">No commits yet</div>
-          ) : (
-            commits.map(c => (
-              <div key={c.hash} className="commit-row">
-                <div className="commit-info">
-                  <div className="commit-message">
-                    {c.message}
-                    {c.tags?.map(tag => (
-                      <span key={tag} className="commit-tag">{tag}</span>
-                    ))}
-                  </div>
-                  <div className="commit-meta">
-                    <span className="commit-hash">{c.shortHash}</span>
-                    <span className="commit-author">{c.author}</span>
-                    <span className="commit-date">{formatDate(c.date)}</span>
-                  </div>
-                </div>
-                <div className="commit-actions">
-                  {confirmRef === c.hash ? (
-                    <div className="commit-confirm">
-                      <span>Reset to here? This discards later work.</span>
-                      <button
-                        className="btn-danger"
-                        disabled={opLoading !== null}
-                        onClick={() => handleReset(c.hash)}
-                      >
-                        {opLoading === 'reset' ? 'Resetting...' : 'Confirm'}
-                      </button>
-                      <button onClick={() => setConfirmRef(null)}>Cancel</button>
-                    </div>
-                  ) : (
-                    <button
-                      className="btn-reset-to"
-                      disabled={opLoading !== null}
-                      onClick={() => setConfirmRef(c.hash)}
-                    >
-                      Reset to here
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
+        <div className="git-modal-tabs">
+          <button className={`git-tab${activeTab === 'repo' ? ' active' : ''}`} onClick={() => setActiveTab('repo')}>Repo</button>
+          <button className={`git-tab${activeTab === 'history' ? ' active' : ''}`} onClick={() => setActiveTab('history')}>History</button>
         </div>
 
-        {/* Remote section */}
-        <div className="version-history-remote">
-          <button className="remote-toggle" onClick={() => setShowRemote(!showRemote)}>
-            {showRemote ? 'Hide' : 'Show'} Remote Settings
-            {status?.hasRemote && <span className="remote-indicator">connected</span>}
-          </button>
-
-          {showRemote && (
-            <div className="remote-panel">
+        <div className="git-modal-body">
+          {loading && activeTab === 'repo' ? (
+            <div className="version-history-loading">Loading...</div>
+          ) : activeTab === 'repo' ? (
+            <div className="repo-tab">
+              {/* Remote URL */}
               <div className="remote-url-row">
                 <input
                   type="text"
@@ -321,39 +219,41 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
                   onChange={e => setRemoteInput(e.target.value)}
                   placeholder="git@github.com:user/repo.git"
                 />
-                <button
-                  disabled={opLoading !== null || !remoteInput.trim()}
-                  onClick={handleSetRemote}
-                >
+                <button disabled={opLoading !== null || !remoteInput.trim()} onClick={handleSetRemote}>
                   {opLoading === 'remote' ? '...' : 'Set'}
                 </button>
                 {status?.hasRemote && (
-                  <button disabled={opLoading !== null} onClick={handleRemoveRemote}>
-                    Remove
-                  </button>
+                  <button disabled={opLoading !== null} onClick={handleRemoveRemote}>Remove</button>
                 )}
               </div>
 
-              {/* SSH key panel */}
-              <div className="ssh-key-section">
-                <button className="ssh-key-toggle" onClick={handleShowSSHKey} disabled={opLoading !== null}>
-                  {opLoading === 'ssh' ? 'Loading…' : sshKey ? 'Hide SSH Key' : 'Show SSH Public Key'}
-                </button>
-                {sshKey && (
-                  <div className="ssh-key-panel">
-                    <p className="ssh-key-hint">
-                      Add this key to your GitHub account under <strong>Settings → SSH keys</strong> to authenticate this container.
-                    </p>
-                    <div className="ssh-key-box">
-                      <code>{sshKey}</code>
-                      <button className="ssh-copy-btn" onClick={handleCopySSHKey}>
-                        {sshCopied ? 'Copied!' : 'Copy'}
-                      </button>
-                    </div>
+              {/* Uncommitted changes banner */}
+              {status && !status.clean && (
+                <div className="version-history-dirty">
+                  <div className="version-history-dirty-top">
+                    <span>{status.dirty} uncommitted change{status.dirty !== 1 ? 's' : ''}</span>
+                    <button className="dirty-view-btn" onClick={() => setShowDiff(true)}>View</button>
                   </div>
-                )}
-              </div>
+                  <div className="dirty-commit-row">
+                    <input
+                      type="text"
+                      className="dirty-commit-input"
+                      placeholder="Commit message…"
+                      value={commitMsg}
+                      onChange={e => setCommitMsg(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleCommit()}
+                    />
+                    <button disabled={opLoading !== null || !commitMsg.trim()} onClick={handleCommit}>
+                      {opLoading === 'commit' ? 'Committing...' : 'Commit'}
+                    </button>
+                    <button disabled={opLoading !== null} onClick={handleDiscard}>
+                      {opLoading === 'discard' ? 'Discarding...' : 'Discard all'}
+                    </button>
+                  </div>
+                </div>
+              )}
 
+              {/* Branch */}
               <div className="remote-push-row">
                 {status?.branch && (
                   renamingBranch ? (
@@ -401,12 +301,10 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
                   <span className="toggle-label">Force</span>
                 </button>
               </div>
-              {commits.length === 0 && (
-                <p className="remote-no-commits">No commits yet — commit your changes first.</p>
-              )}
+
               <div className="remote-actions">
                 <button
-                  disabled={opLoading !== null || !status?.hasRemote || commits.length === 0}
+                  disabled={opLoading !== null || !status?.hasRemote}
                   onClick={handlePush}
                 >
                   {opLoading === 'push' ? 'Pushing...' : 'Push'}
@@ -420,9 +318,85 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
               </div>
               {pushSuccess && <span className="push-success">Pushed successfully</span>}
             </div>
+          ) : (
+            <div className="history-tab">
+              {/* Branch selector */}
+              {branchList.length > 0 && (
+                <select
+                  className="git-branch-select"
+                  value={historyBranch}
+                  onChange={e => setHistoryBranch(e.target.value)}
+                >
+                  {branchList.map(b => (
+                    <option key={b} value={b}>{b}</option>
+                  ))}
+                </select>
+              )}
+
+              {/* Commit list */}
+              <div className="version-history-commits">
+                {commits.length === 0 ? (
+                  <div className="version-history-empty">No commits yet</div>
+                ) : (
+                  commits.map(c => (
+                    <div key={c.hash} className="commit-row">
+                      <div className="commit-info">
+                        <div className="commit-message">
+                          {c.message}
+                          {c.tags?.map(tag => (
+                            <span key={tag} className="commit-tag">{tag}</span>
+                          ))}
+                        </div>
+                        <div className="commit-meta">
+                          <span className="commit-hash">{c.shortHash}</span>
+                          <span className="commit-author">{c.author}</span>
+                          <span className="commit-date">{formatDate(c.date)}</span>
+                        </div>
+                      </div>
+                      <div className="commit-actions">
+                        {confirmRef === c.hash ? (
+                          <div className="commit-confirm">
+                            <span>Reset to here? This discards later work.</span>
+                            <button
+                              className="btn-danger"
+                              disabled={opLoading !== null}
+                              onClick={() => handleReset(c.hash)}
+                            >
+                              {opLoading === 'reset' ? 'Resetting...' : 'Confirm'}
+                            </button>
+                            <button onClick={() => setConfirmRef(null)}>Cancel</button>
+                          </div>
+                        ) : (
+                          <button
+                            className="btn-reset-to"
+                            disabled={opLoading !== null}
+                            onClick={() => setConfirmRef(c.hash)}
+                          >
+                            Reset to here
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {hasMore && (
+                <button
+                  className="git-load-more"
+                  onClick={() => loadCommits(historyBranch, historyOffset, true)}
+                  disabled={opLoading !== null}
+                >
+                  Load more
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
+      {showDiff && (
+        <UncommittedDiffViewer projectId={projectId} onClose={() => setShowDiff(false)} />
+      )}
     </div>
   );
 }

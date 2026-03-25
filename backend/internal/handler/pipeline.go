@@ -368,7 +368,8 @@ func (h *PipelineHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 				json.NewEncoder(w).Encode(map[string]interface{}{"content": "", "exists": false})
 				return
 			}
-			approved = true
+			// Only treat as approved if the project record confirms it;
+			// a new iteration may have a docs copy from a prior iteration.
 		} else {
 			http.Error(w, "failed to read summary: "+err.Error(), http.StatusInternalServerError)
 			return
