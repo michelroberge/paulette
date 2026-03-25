@@ -8,14 +8,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/git"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/pipeline"
-	"github.com/michelroberge/claudine/backend/internal/repository"
+	"github.com/michelroberge/paulette/backend/internal/git"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/repository"
 )
 
 type EnhanceHandler struct {
@@ -46,16 +47,6 @@ type enhanceResponse struct {
 
 func (h *EnhanceHandler) Enhance(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	project, err := h.registry.Get(id)
-	if err != nil {
-		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
-
-	if project.CurrentStage != model.StageComplete {
-		http.Error(w, "project must be at complete stage to enhance", http.StatusBadRequest)
-		return
-	}
 
 	var req enhanceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -71,37 +62,57 @@ func (h *EnhanceHandler) Enhance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify summary exists
-	summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
-	if _, err := os.Stat(summaryPath); os.IsNotExist(err) {
-		http.Error(w, "summary.md not found — complete the pipeline first", http.StatusBadRequest)
-		return
-	}
-
-	// Archive current iteration
-	archiveDir := filepath.Join(project.HostDir, ".claudine", "iterations", "v"+project.Version)
-	if err := archiveIteration(project.HostDir, archiveDir); err != nil {
-		http.Error(w, "failed to archive iteration: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Bump version
-	newVersion, err := bumpVersion(project.Version, req.VersionBump)
+	project, err := h.EnhanceInternal(id, req.Vision, req.VersionBump)
 	if err != nil {
-		http.Error(w, "failed to bump version: "+err.Error(), http.StatusBadRequest)
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "failed to") {
+			status = http.StatusInternalServerError
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 
-	// Clear all stage artifacts and chat histories
+	state := pipeline.BuildPipelineState(project.CurrentStage, nil, project.SummaryApproved)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(enhanceResponse{
+		Project:  *project,
+		Pipeline: state,
+	})
+}
+
+// EnhanceInternal runs the enhancement logic without HTTP plumbing.
+func (h *EnhanceHandler) EnhanceInternal(projectID, vision, versionBump string) (*model.Project, error) {
+	project, err := h.registry.Get(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("project not found: %w", err)
+	}
+
+	if project.CurrentStage != model.StageComplete {
+		return nil, fmt.Errorf("project must be at complete stage to enhance")
+	}
+
+	summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+	if _, err := os.Stat(summaryPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("summary.md not found — complete the pipeline first")
+	}
+
+	archiveDir := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+project.Version)
+	if err := archiveIteration(project.HostDir, archiveDir); err != nil {
+		return nil, fmt.Errorf("failed to archive iteration: %w", err)
+	}
+
+	newVersion, err := bumpVersion(project.Version, versionBump)
+	if err != nil {
+		return nil, fmt.Errorf("failed to bump version: %w", err)
+	}
+
 	for _, s := range pipeline.StageOrder {
 		if s == model.StageComplete {
 			break
 		}
-		stageDir := filepath.Join(project.HostDir, ".claudine", string(s))
-		chatFile := filepath.Join(stageDir, "chat-history.json")
-		artifactFile := filepath.Join(stageDir, string(s)+".md")
-		os.Remove(chatFile)
-		os.Remove(artifactFile)
+		stageDir := filepath.Join(project.HostDir, ".paulette", string(s))
+		os.Remove(filepath.Join(stageDir, "chat-history.json"))
+		os.Remove(filepath.Join(stageDir, string(s)+".md"))
 		if s == model.StageUX {
 			os.Remove(filepath.Join(stageDir, "mock.html"))
 			os.Remove(filepath.Join(stageDir, "framework.json"))
@@ -111,40 +122,37 @@ func (h *EnhanceHandler) Enhance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Update project
 	project.CurrentStage = model.StageVision
 	project.Version = newVersion
 	project.Iteration++
-	project.EnhancementVision = req.Vision
+	project.EnhancementVision = vision
+	project.SummaryReady = false
+	project.SummaryApproved = false
 	project.UpdatedAt = time.Now()
 
 	if err := h.registry.Update(project); err != nil {
-		http.Error(w, "failed to update registry: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to update registry: %w", err)
 	}
 	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
-		http.Error(w, "failed to save project: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to save project: %w", err)
 	}
 
-	// Tag the completed version before starting the new iteration
 	tagName := "v" + project.Version
 	if err := h.git.CreateTag(project.HostDir, tagName, fmt.Sprintf("Iteration %d complete", project.Iteration-1)); err != nil {
 		log.Printf("git tag %s failed (may already exist): %v", tagName, err)
 	}
 
-	// Git commit the enhancement start
 	commitMsg := fmt.Sprintf("enhance: start iteration %d (v%s)", project.Iteration, newVersion)
 	if err := h.git.AddAllAndCommit(project.HostDir, commitMsg); err != nil {
 		log.Printf("git commit enhance failed: %v", err)
 	}
 
-	state := pipeline.BuildPipelineState(project.CurrentStage)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(enhanceResponse{
-		Project:  *project,
-		Pipeline: state,
-	})
+	branchName := fmt.Sprintf("pauline/iteration-%d", project.Iteration)
+	if err := h.git.CreateAndCheckoutBranch(project.HostDir, branchName); err != nil {
+		log.Printf("git create branch %s failed: %v", branchName, err)
+	}
+
+	return project, nil
 }
 
 // archiveIteration copies current artifacts and summary to the archive directory.
@@ -153,7 +161,7 @@ func archiveIteration(hostDir, archiveDir string) error {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
 
-	factoryBase := filepath.Join(hostDir, ".claudine")
+	factoryBase := filepath.Join(hostDir, ".paulette")
 
 	// Copy summary.md
 	summaryPath := filepath.Join(factoryBase, "summary.md")

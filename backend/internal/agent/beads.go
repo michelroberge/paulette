@@ -6,19 +6,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"regexp"
 	"strings"
 
-	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/model"
 )
-
-var beadJSONRe = regexp.MustCompile(`(?s)<!-- JSON:START -->\s*(.*?)\s*<!-- JSON:END -->`)
 
 const parseBuildPlanSystemPrompt = `You are a Build Plan Parser for an AI App Factory. Read the build plan and architecture below and extract all milestones and tasks into a structured JSON format.
 
-Output ONLY a JSON block wrapped in exactly these delimiters:
-<!-- JSON:START -->
-{
+OUTPUT FORMAT: Wrap in <response>...</response>. Put JSON only in <jsonplan>...</jsonplan>. No discussion.
+<response>
+<jsonplan>{"epics":[...]}</jsonplan>
+</response>
+
+Example:
+<response>
+<jsonplan>{
   "epics": [
     {
       "title": "Milestone name",
@@ -37,8 +39,8 @@ Output ONLY a JSON block wrapped in exactly these delimiters:
       ]
     }
   ]
-}
-<!-- JSON:END -->
+}</jsonplan>
+</response>
 
 Rules:
 - Each milestone in the build plan becomes an epic
@@ -46,14 +48,15 @@ Rules:
 - depsOn contains the exact titles of tasks this task depends on (can reference tasks across epics by exact title)
 - priority: 0=critical, 1=high, 2=medium (default), 3=low, 4=backlog
 - tags: one or more from this set: backend, frontend, api, database, styling, config, testing, devops. Use these to classify what area of the codebase the task touches.
-- targetFiles: file paths or directory paths the task should create or modify, inferred from the architecture document. If unsure, omit rather than guess.
+- targetFiles: relative file/directory paths (from the project root) the task should create or modify. NEVER use absolute paths. If unsure, omit rather than guess.
 - journeyRefs: array of JRN-* IDs from the UX document that this task directly serves. Extract these from the task description and build plan text. If not explicit, infer from context (e.g. a login task serves the authentication journey). Always output as an array (use [] if genuinely unknown).
 - archRefs: array of ARCH-* IDs from the architecture document that this task directly implements or modifies. Extract from task descriptions and architecture references. Always output as an array (use [] if genuinely unknown).
-- Do not include any text, explanation, or markdown outside the delimiters`
+- Do not include any text, explanation, or markdown outside the XML envelope`
 
 const devilAdvocateSystemPrompt = `You are the Devil's Advocate Agent for an AI App Factory. Your role is to critically review code just written by another agent and challenge its quality, completeness, and correctness.
 
 You have read-only access to the project files via Bash. Review what was implemented for the given task.
+Use relative paths in all Bash commands (e.g., ` + "`cat src/app.py`" + `, not ` + "`cat /root/project/src/app.py`" + `). Your working directory is already set to the project root.
 
 Challenge:
 - Is the implementation complete or are there stubs/placeholders?
@@ -64,9 +67,16 @@ Challenge:
 
 Be a tough reviewer, but pragmatic. Focus on real issues, not style preferences.
 
-Respond with EXACTLY one of:
-1. "LGTM" (optionally followed by a brief reason) if the implementation is satisfactory
-2. A concise bullet list of specific, actionable issues — no preamble, no "LGTM"`
+CRITICAL — your final text response determines what happens next. The VERY FIRST word of your <discussion> content decides the outcome:
+1. If the implementation is satisfactory: start your <discussion> with "LGTM" optionally followed by a brief reason.
+2. If there are real issues: start your <discussion> with a concise bullet list of specific, actionable issues. Do NOT include "LGTM" anywhere.
+
+You may use Bash to inspect files before responding, but your final output must use this format:
+<response>
+<discussion>LGTM (or bullet list of issues)</discussion>
+</response>
+
+No preamble, no narration of what you did — just the verdict wrapped in the XML envelope.`
 
 const codeWriterSystemPrompt = `You are a Code Writer Agent for an AI App Factory. You implement individual tasks from an approved build plan by writing real, working code.
 
@@ -77,7 +87,8 @@ When given a task to implement:
 - Create all necessary files using the Write, Edit, and Bash tools
 - Follow the architecture decisions and tech stack from the approved artifacts
 - Make the code work end-to-end for this specific task
-- Run tests or build commands if applicable to verify the implementation`
+- Run tests or build commands if applicable to verify the implementation
+- ALWAYS use relative paths for file operations (e.g., ` + "`src/app.py`" + `, not ` + "`/root/project/src/app.py`" + `). Your working directory is already set to the project root.`
 
 // ParseBuildPlan streams Claude's response while parsing build.md into structured epics/tasks.
 // The caller should collect the full "done" event content and call ExtractBeadJSON on it.
@@ -94,7 +105,7 @@ func ParseBuildPlan(ctx context.Context, buildMdContent, archContent string) (<-
 	}
 	prompt.WriteString("Extract all milestones and tasks from this build plan into the required JSON format. Include tags and targetFiles for each task.")
 
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
@@ -179,6 +190,24 @@ func beadExecutionModel(tags []string) string {
 // ExecuteBead streams Claude's code-writing response for a single bead.
 // Claude is invoked with Write, Edit, and Bash tool access in the project directory.
 // Artifacts are filtered based on bead tags to reduce context waste.
+type skillContextKey struct{}
+
+// WithSkillContext attaches skill context to a context.Context for bead execution.
+func WithSkillContext(ctx context.Context, sc *SkillContext) context.Context {
+	return context.WithValue(ctx, skillContextKey{}, sc)
+}
+
+// SkillContext holds matched skill prompts to inject during bead execution.
+type SkillContext struct {
+	Skills []MatchedSkill
+}
+
+// MatchedSkill pairs a skill name with its rendered prompt template.
+type MatchedSkill struct {
+	Name   string
+	Prompt string
+}
+
 func ExecuteBead(ctx context.Context, projectDir string, bead model.Bead, artifacts map[model.StageName]string, enhancement ...*EnhancementContext) (<-chan StreamEvent, error) {
 	var systemPrompt strings.Builder
 	var artifactContext strings.Builder
@@ -194,6 +223,7 @@ func ExecuteBead(ctx context.Context, projectDir string, bead model.Bead, artifa
 	}
 
 	systemPrompt.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactContext.String()))
+	systemPrompt.WriteString(fmt.Sprintf("\n\nProject root: `%s`\nALWAYS use relative paths for file operations — never hardcode absolute paths.", projectDir))
 
 	// Inject enhancement context for code writer when iterating on existing code
 	if len(enhancement) > 0 && enhancement[0] != nil {
@@ -217,6 +247,18 @@ Your approach MUST be:
 		systemPrompt.WriteString("Enhancement request: ")
 		systemPrompt.WriteString(enhCtx.Vision)
 		systemPrompt.WriteString("\n--- END ENHANCEMENT CONTEXT ---\n")
+	}
+
+	// Inject matched skill templates if provided via context value
+	if skillCtx, ok := ctx.Value(skillContextKey{}).(*SkillContext); ok && skillCtx != nil && len(skillCtx.Skills) > 0 {
+		systemPrompt.WriteString("\n\n--- REUSABLE SKILL TEMPLATES ---\n")
+		systemPrompt.WriteString("The following skill templates are available to guide your implementation. Use them as patterns where applicable:\n\n")
+		for _, ms := range skillCtx.Skills {
+			systemPrompt.WriteString(fmt.Sprintf("### Skill: %s\n", ms.Name))
+			systemPrompt.WriteString(ms.Prompt)
+			systemPrompt.WriteString("\n\n")
+		}
+		systemPrompt.WriteString("--- END SKILL TEMPLATES ---\n")
 	}
 
 	var userMsg strings.Builder
@@ -244,10 +286,11 @@ Your approach MUST be:
 		userMsg.WriteString("\n\nREMEMBER: This project has existing code from a prior iteration. Read existing files before modifying them. Use Edit for changes to existing files, Write only for new files.")
 	}
 
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
+		"--include-partial-messages",
 		"--model", beadExecutionModel(bead.Tags),
 		"--allowedTools", "Write,Edit,Bash",
 		"--permission-mode", "acceptEdits",
@@ -364,12 +407,14 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 		userMsg.WriteString("- New functionality was added without breaking existing features\n")
 		userMsg.WriteString("- The implementation is incremental, not a from-scratch rewrite\n")
 	}
+	userMsg.WriteString(fmt.Sprintf("\nProject root: `%s`\nUse relative paths in all Bash commands.\n", projectDir))
 	userMsg.WriteString("\nUse Bash to inspect the project files, then assess whether this task was implemented correctly and completely.")
 
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
+		"--include-partial-messages",
 		"--model", "claude-sonnet-4-6",
 		"--allowedTools", "Bash",
 		"--permission-mode", "acceptEdits",
@@ -424,18 +469,46 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 	}
 	cmd.Wait()
 
-	response := strings.TrimSpace(fullResponse.String())
-	if strings.HasPrefix(response, "LGTM") {
+	discussion := ParseResponse(fullResponse.String()).Discussion
+	if discussion == "" {
+		// Fallback: treat raw response as discussion if envelope is missing
+		discussion = strings.TrimSpace(fullResponse.String())
+	}
+	if isLGTM(discussion) {
 		return "", totalTokens, nil
 	}
-	return response, totalTokens, nil
+	return discussion, totalTokens, nil
 }
 
-// ExtractBeadJSON extracts the JSON block from Claude's response.
+// isLGTM checks whether the devil's advocate response is an approval.
+// Primary check: response starts with "LGTM".
+// Fallback: if the response contains "LGTM" and has no actionable bullet
+// points (lines starting with "- "), treat it as approval — the model
+// narrated its review but ultimately approved.
+func isLGTM(response string) bool {
+	if strings.HasPrefix(response, "LGTM") {
+		return true
+	}
+	upper := strings.ToUpper(response)
+	if !strings.Contains(upper, "LGTM") {
+		return false
+	}
+	// Contains LGTM but didn't start with it — only approve if there are
+	// no actionable bullet points (issue lists).
+	for _, line := range strings.Split(response, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
+			return false
+		}
+	}
+	return true
+}
+
+// ExtractBeadJSON extracts the JSON build plan from a Claude XML envelope response.
 func ExtractBeadJSON(response string) ([]byte, bool) {
-	m := beadJSONRe.FindStringSubmatch(response)
-	if len(m) < 2 {
+	j := ParseResponse(response).JSON
+	if j == nil {
 		return nil, false
 	}
-	return []byte(m[1]), true
+	return j, true
 }

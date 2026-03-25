@@ -7,11 +7,10 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
-	"github.com/michelroberge/claudine/backend/internal/agent"
-	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
 // Command category constants.
@@ -127,7 +126,7 @@ func runToCompletion(ctx context.Context, dir, cmdStr, category string, timeout 
 
 	cmd := exec.CommandContext(tctx, "sh", "-c", cmdStr)
 	cmd.Dir = dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setSysProcAttr(cmd)
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -168,7 +167,7 @@ func runLongRunning(ctx context.Context, dir, cmdStr, category string, timeout t
 
 	cmd := exec.Command("sh", "-c", cmdStr)
 	cmd.Dir = dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setSysProcAttr(cmd)
 
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
@@ -242,23 +241,6 @@ func runLongRunning(ctx context.Context, dir, cmdStr, category string, timeout t
 	}
 }
 
-// killProcessGroup sends SIGTERM to the process group, then SIGKILL after 5s.
-func killProcessGroup(cmd *exec.Cmd) {
-	if cmd.Process == nil {
-		return
-	}
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err != nil {
-		cmd.Process.Kill()
-		return
-	}
-	// SIGTERM the group.
-	syscall.Kill(-pgid, syscall.SIGTERM)
-	// Give 5s grace then SIGKILL.
-	time.AfterFunc(5*time.Second, func() {
-		syscall.Kill(-pgid, syscall.SIGKILL)
-	})
-}
 
 // backtickCmdRe matches a backtick-wrapped command in a markdown bullet.
 // e.g. "- `npm run build`" or "- `go build ./...` — compiles everything"

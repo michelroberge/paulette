@@ -12,7 +12,9 @@ export interface Project {
   enhancementVision?: string;
   imported?: boolean;
   summaryReady: boolean;
+  summaryApproved?: boolean;
   autonomous?: boolean;
+  baseBranch?: string;
   devCommands?: string[];
   buildCommands?: string[];
   runCommands?: string[];
@@ -24,10 +26,19 @@ export interface Project {
 
 export type VersionBump = 'major' | 'minor' | 'patch';
 
+export interface StageActivity {
+  operation: string;   // "chat" | "mock" | "beads-generate" | "beads-execute" | "summary"
+  status: 'running' | 'failed';
+  startedAt: string;
+  error?: string;
+  pendingBtw?: Array<{ message: string; sentAt: string }>;
+}
+
 export interface StageInfo {
   name: StageName;
   status: StageStatus;
   artifactPath: string;
+  activity?: StageActivity;
 }
 
 export interface PipelineState {
@@ -44,6 +55,7 @@ export interface Message {
 
 export interface ChatHistory {
   messages: Message[];
+  nextTurn: 'agent' | 'user';
 }
 
 export interface StreamEvent {
@@ -75,6 +87,53 @@ export interface Bead {
   journeyRefs?: string[];
   archRefs?: string[];
   tokens?: number;
+  preExecutionCommit?: string;
+}
+
+export interface BeadFileEntry {
+  path: string;
+  content: string;
+  language: string;
+}
+
+export interface BeadFilesResponse {
+  files: BeadFileEntry[];
+}
+
+export interface BeadDiffEntry {
+  path: string;
+  original: string;
+  modified: string;
+  language: string;
+}
+
+export interface BeadDiffResponse {
+  diffs: BeadDiffEntry[];
+}
+
+export interface InstructBead {
+  title: string;
+  description: string;
+  type: string;
+  epicId?: string;
+  deps?: string[];
+  targetFiles?: string[];
+  tags?: string[];
+  priority: number;
+}
+
+export interface InstructUpdate {
+  id: string;
+  description?: string;
+  title?: string;
+}
+
+export interface InstructionPlan {
+  reasoning: string;
+  buildPlanChanges?: string;
+  architectureChanges?: string;
+  newBeads?: InstructBead[];
+  updatedBeads?: InstructUpdate[];
 }
 
 export interface BeadGraph {
@@ -108,4 +167,69 @@ export interface GitStatus {
   dirty: number;
   hasRemote: boolean;
   remoteUrl: string;
+  branch: string;
+  remoteBranch: string;
+  gitUserName: string;
+  gitUserEmail: string;
+}
+
+// Session token tracking
+export type SessionKind = 'chat' | 'mock' | 'beads-generate' | 'beads-execute' | 'summary';
+
+export interface Session {
+  id: string;
+  stage: StageName;
+  kind: SessionKind;
+  iteration: number;
+  startedAt: string;
+  endedAt: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface StageSummary {
+  count: number;
+  tokens: number;
+}
+
+export interface SessionSummary {
+  sessions: Session[];
+  byStage: Partial<Record<StageName, StageSummary>>;
+  grandTotal: number;
+}
+
+// Skills
+export interface SkillParam {
+  name: string;
+  description: string;
+  default?: string;
+}
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  version: number;
+  parameters?: SkillParam[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+}
+
+export interface SkillSuggestion {
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  parameters?: SkillParam[];
+  promptTemplate: string;
+  approved: boolean;
+  sourceBeads?: string[];
+}
+
+export interface SkillSuggestions {
+  suggestions: SkillSuggestion[];
 }

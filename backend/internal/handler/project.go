@@ -12,10 +12,16 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/michelroberge/claudine/backend/internal/git"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/repository"
+	"github.com/michelroberge/paulette/backend/internal/git"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/repository"
 )
+
+// OrchestratorI is the subset of autopilot.Orchestrator used by ProjectHandler.
+type OrchestratorI interface {
+	Ensure(projectID string)
+	Cancel(projectID string)
+}
 
 type ProjectHandler struct {
 	registry     repository.RegistryRepo
@@ -23,6 +29,7 @@ type ProjectHandler struct {
 	artifactRepo repository.ArtifactRepo
 	git          *git.Service
 	reposPath    string
+	orchestrator OrchestratorI // may be nil before wired
 }
 
 func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service, reposPath string) *ProjectHandler {
@@ -33,6 +40,10 @@ func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.
 		git:          gitSvc,
 		reposPath:    reposPath,
 	}
+}
+
+func (h *ProjectHandler) SetOrchestrator(o OrchestratorI) {
+	h.orchestrator = o
 }
 
 type createProjectRequest struct {
@@ -97,7 +108,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Initialize .claudine directory structure
+	// Initialize .paulette directory structure
 	if err := h.projectRepo.Init(req.HostDir); err != nil {
 		http.Error(w, "failed to init project directory: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -139,12 +150,18 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Self-heal: if autonomous and pipeline is not complete, ensure orchestrator is running
+	if project.Autonomous && project.CurrentStage != model.StageComplete && h.orchestrator != nil {
+		h.orchestrator.Ensure(project.ID)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(project)
 }
 
 type patchProjectRequest struct {
-	Autonomous *bool `json:"autonomous"`
+	Autonomous *bool   `json:"autonomous"`
+	BaseBranch *string `json:"baseBranch"`
 }
 
 func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
@@ -161,8 +178,19 @@ func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.BaseBranch != nil {
+		project.BaseBranch = *req.BaseBranch
+	}
+
 	if req.Autonomous != nil {
 		project.Autonomous = *req.Autonomous
+		if h.orchestrator != nil {
+			if *req.Autonomous {
+				h.orchestrator.Ensure(project.ID)
+			} else {
+				h.orchestrator.Cancel(project.ID)
+			}
+		}
 	}
 
 	project.UpdatedAt = time.Now()

@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
-const frameworkRelPath = ".claudine/ux/framework.json"
+const frameworkRelPath = ".paulette/ux/framework.json"
 
 // FrameworkPath returns the absolute path to framework.json for a project.
 func FrameworkPath(hostDir string) string {

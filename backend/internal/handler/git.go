@@ -8,9 +8,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/git"
-	"github.com/michelroberge/claudine/backend/internal/pipeline"
-	"github.com/michelroberge/claudine/backend/internal/repository"
+	"github.com/michelroberge/paulette/backend/internal/git"
+	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/repository"
 )
 
 type GitHandler struct {
@@ -43,13 +43,20 @@ func (h *GitHandler) Log(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	limit := 50
+	limit := 10
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil && n > 0 {
 			limit = n
 		}
 	}
-	entries, err := h.git.Log(dir, limit)
+	offset := 0
+	if q := r.URL.Query().Get("offset"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	branch := r.URL.Query().Get("branch")
+	entries, err := h.git.Log(dir, limit, offset, branch)
 	if err != nil {
 		http.Error(w, "git log failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -57,7 +64,7 @@ func (h *GitHandler) Log(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []git.CommitEntry{}
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(entries)
 }
 
@@ -72,7 +79,7 @@ func (h *GitHandler) Status(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "git status failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(status)
 }
 
@@ -116,12 +123,43 @@ func (h *GitHandler) Reset(w http.ResponseWriter, r *http.Request) {
 		log.Printf("failed to update registry after git reset: %v", err)
 	}
 
-	state := pipeline.BuildPipelineState(project.CurrentStage)
-	w.Header().Set("Content-Type", "application/json")
+	state := pipeline.BuildPipelineState(project.CurrentStage, nil, project.SummaryApproved)
+	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(resetResponse{
 		Project:  project,
 		Pipeline: state,
 	})
+}
+
+// WorkingDiff returns all uncommitted changes as a list of file diffs.
+func (h *GitHandler) WorkingDiff(w http.ResponseWriter, r *http.Request) {
+	_, dir, ok := h.projectDir(w, r)
+	if !ok {
+		return
+	}
+	entries, err := h.git.WorkingDiff(dir)
+	if err != nil {
+		http.Error(w, "git diff failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	type diffResponse struct {
+		Path     string `json:"path"`
+		Original string `json:"original"`
+		Modified string `json:"modified"`
+		Language string `json:"language"`
+	}
+	resp := make([]diffResponse, 0, len(entries))
+	for _, e := range entries {
+		resp = append(resp, diffResponse{
+			Path:     e.Path,
+			Original: e.Original,
+			Modified: e.Modified,
+			Language: languageFromPath(e.Path),
+		})
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(resp)
 }
 
 // Discard discards all uncommitted changes.
@@ -148,7 +186,7 @@ func (h *GitHandler) GetRemote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	url := h.git.RemoteGet(dir)
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]string{"url": url})
 }
 
@@ -183,17 +221,118 @@ func (h *GitHandler) RemoveRemote(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type renameBranchRequest struct {
+	Name string `json:"name"`
+}
+
+// RenameBranch renames the current local branch.
+func (h *GitHandler) RenameBranch(w http.ResponseWriter, r *http.Request) {
+	_, dir, ok := h.projectDir(w, r)
+	if !ok {
+		return
+	}
+	var req renameBranchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.git.RenameLocalBranch(dir, req.Name); err != nil {
+		http.Error(w, "rename failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type identityRequest struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+// SetIdentity sets the git user.name and user.email for the project repo.
+func (h *GitHandler) SetIdentity(w http.ResponseWriter, r *http.Request) {
+	_, dir, ok := h.projectDir(w, r)
+	if !ok {
+		return
+	}
+	var req identityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Email == "" {
+		http.Error(w, "name and email are required", http.StatusBadRequest)
+		return
+	}
+	if err := h.git.SetIdentity(dir, req.Name, req.Email); err != nil {
+		http.Error(w, "set identity failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type commitRequest struct {
+	Message string `json:"message"`
+}
+
+// Commit stages all changes and commits with the given message.
+func (h *GitHandler) Commit(w http.ResponseWriter, r *http.Request) {
+	_, dir, ok := h.projectDir(w, r)
+	if !ok {
+		return
+	}
+	var req commitRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
+		http.Error(w, "message is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.git.AddAllAndCommit(dir, req.Message); err != nil {
+		http.Error(w, "commit failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type pushRequest struct {
+	LocalBranch  string `json:"localBranch"`
+	RemoteBranch string `json:"remoteBranch"`
+	Force        bool   `json:"force"`
+}
+
 // Push pushes to origin with tags.
 func (h *GitHandler) Push(w http.ResponseWriter, r *http.Request) {
 	_, dir, ok := h.projectDir(w, r)
 	if !ok {
 		return
 	}
-	if err := h.git.Push(dir); err != nil {
+	var req pushRequest
+	json.NewDecoder(r.Body).Decode(&req) //nolint:errcheck
+	if err := h.git.Push(dir, req.LocalBranch, req.RemoteBranch, req.Force); err != nil {
 		http.Error(w, "push failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// SSHKey returns (generating if needed) the container's SSH public key.
+func (h *GitHandler) SSHKey(w http.ResponseWriter, r *http.Request) {
+	pubKey, err := h.git.SSHPublicKey()
+	if err != nil {
+		http.Error(w, "ssh key error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(map[string]string{"publicKey": pubKey})
+}
+
+// ListBranches returns all local branches and the current branch.
+func (h *GitHandler) ListBranches(w http.ResponseWriter, r *http.Request) {
+	_, dir, ok := h.projectDir(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.git.ListBranches(dir)
+	if err != nil {
+		http.Error(w, "git branch: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	json.NewEncoder(w).Encode(result)
 }
 
 // Pull pulls from origin.
@@ -218,8 +357,8 @@ func (h *GitHandler) Pull(w http.ResponseWriter, r *http.Request) {
 		log.Printf("failed to update registry after pull: %v", err)
 	}
 
-	state := pipeline.BuildPipelineState(project.CurrentStage)
-	w.Header().Set("Content-Type", "application/json")
+	state := pipeline.BuildPipelineState(project.CurrentStage, nil, project.SummaryApproved)
+	w.Header().Set(headerContentType, contentTypeJSON)
 	json.NewEncoder(w).Encode(resetResponse{
 		Project:  project,
 		Pipeline: state,

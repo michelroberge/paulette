@@ -1,0 +1,14 @@
+paulette.exe
+paulette
+backend/static/
+frontend/node_modules/
+frontend/dist/
+.beads/
+.paulette/
+repos/
+*.db
+*.db-shm
+*.db-wal
+.dolt/
+.env
+.git/

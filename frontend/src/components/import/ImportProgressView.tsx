@@ -144,9 +144,11 @@ export function ImportProgressView({ project, onComplete }: Props) {
           <p style={{ color: '#22c55e', marginBottom: '1rem' }}>
             Import complete! Review each artifact and approve to continue.
           </p>
-          <button className="primary" onClick={onComplete}>
-            Start Review
-          </button>
+          <div className="form-actions" style={{ justifyContent: 'center' }}>
+            <button className="primary" onClick={onComplete}>
+              Start Review
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Project, StageName, VersionBump } from '../../types';
-import { regenerateSummary, getSummary, watchSummary } from '../../api/pipeline';
+import type { Project, StageName, VersionBump, StageActivity, SessionSummary } from '../../types';
+import { regenerateSummary, getSummary, watchSummary, approveSummary, downloadProject } from '../../api/pipeline';
+import { getSessions } from '../../api/sessions';
+import { BuildingAnimation } from '../ux/BuildingAnimation';
 
 const ARTIFACT_STAGES: { name: StageName; label: string }[] = [
   { name: 'vision', label: 'Vision' },
@@ -13,32 +15,51 @@ const ARTIFACT_STAGES: { name: StageName; label: string }[] = [
 
 interface Props {
   project: Project;
+  activity?: StageActivity;
   onNewProject: () => void;
   onViewStage: (stage: StageName) => void;
   onEnhance: (vision: string, bump: VersionBump) => void;
   onSummaryReady?: () => void;
 }
 
-export function CompletionView({ project, onNewProject, onViewStage, onEnhance, onSummaryReady }: Props) {
+export function CompletionView({ project, activity, onNewProject, onViewStage, onEnhance, onSummaryReady }: Props) {
   const [showEnhanceForm, setShowEnhanceForm] = useState(false);
   const [enhanceVision, setEnhanceVision] = useState('');
   const [versionBump, setVersionBump] = useState<VersionBump>('minor');
   const [submitting, setSubmitting] = useState(false);
-  const [retrying, setRetrying] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [summaryApproved, setSummaryApproved] = useState(project.summaryApproved ?? false);
   const [summaryContent, setSummaryContent] = useState('');
   const [summaryError, setSummaryError] = useState('');
+  const [tokenCount, setTokenCount] = useState(0);
+  const [sessionData, setSessionData] = useState<SessionSummary | null>(null);
+  const [showTokens, setShowTokens] = useState(false);
   const summaryAbortRef = useRef<AbortController | null>(null);
+  const streamRef = useRef<HTMLDivElement>(null);
 
-  // If summary already ready, fetch it; otherwise stream live chunks
+  const isGenerating = generating || !!activity;
+
+  // If summary already ready, fetch it
   useEffect(() => {
     if (project.summaryReady) {
       getSummary(project.id).then(res => {
         if (res.exists) setSummaryContent(res.content);
+        if (res.approved) setSummaryApproved(true);
       }).catch(console.error);
-      return;
     }
+  }, [project.id, project.summaryReady]);
 
-    // Connect to live stream
+  // Fetch session token data when summary is ready
+  useEffect(() => {
+    if (!project.summaryReady) return;
+    getSessions(project.id).then(setSessionData).catch(console.error);
+  }, [project.id, project.summaryReady]);
+
+  // Connect to live stream only while generating
+  useEffect(() => {
+    if (project.summaryReady || !isGenerating) return;
+
     setSummaryContent('');
     setSummaryError('');
     const controller = new AbortController();
@@ -47,28 +68,47 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance, 
     watchSummary(project.id, (event) => {
       if (event.type === 'chunk') {
         setSummaryContent(prev => prev + event.content);
+        if (streamRef.current) {
+          streamRef.current.scrollTop = streamRef.current.scrollHeight;
+        }
+      } else if (event.type === 'tokens') {
+        setTokenCount(Number.parseInt(event.content, 10));
       } else if (event.type === 'done') {
         if (event.content) setSummaryContent(event.content);
+        setGenerating(false);
         onSummaryReady?.();
       } else if (event.type === 'error') {
         setSummaryError(event.content || 'Summary generation failed');
+        setGenerating(false);
       }
-    }, controller.signal).catch(() => { /* stream ended or aborted */ });
+    }, controller.signal).catch(() => { setGenerating(false); });
 
     return () => {
       controller.abort();
       summaryAbortRef.current = null;
     };
-  }, [project.id, project.summaryReady]);
+  }, [project.id, project.summaryReady, isGenerating]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleRetry = async () => {
-    setRetrying(true);
+  const handleGenerate = async () => {
+    setGenerating(true);
     setSummaryError('');
     setSummaryContent('');
     try {
       await regenerateSummary(project.id);
+    } catch {
+      setGenerating(false);
+    }
+  };
+
+  const handleApproveSummary = async () => {
+    setApproving(true);
+    try {
+      await approveSummary(project.id);
+      setSummaryApproved(true);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to save summary to docs');
     } finally {
-      setRetrying(false);
+      setApproving(false);
     }
   };
 
@@ -82,19 +122,70 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance, 
     }
   };
 
+  if (!project.summaryReady && !isGenerating) {
+    return (
+      <div className="completion-view">
+        <div className="completion-layout">
+          <div className="completion-left">
+            <div className="completion-header">
+              <div className="completion-icon">✓</div>
+              <h2>Almost There</h2>
+              <p className="completion-subtitle">
+                All stages approved for <strong>{project.name}</strong> v{project.version}.
+                Generate a summary of this iteration to complete the pipeline.
+              </p>
+            </div>
+            {summaryError && (
+              <div className="summary-error-panel">
+                <span className="summary-error-icon">✗</span>
+                <span className="summary-error-text">{summaryError}</span>
+              </div>
+            )}
+            <div className="completion-actions">
+              <button className="approve-button" onClick={handleGenerate}>
+                Generate Summary
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!project.summaryReady && isGenerating) {
+    return (
+      <div className="completion-view">
+        <div className="mock-split-layout">
+          <div className="mock-main-column">
+            <BuildingAnimation />
+          </div>
+          <div className="mock-activity-panel">
+            <div className="mock-activity-header">
+              <span className="mock-stream-dot" />
+              <span>Generating Summary…</span>
+              {tokenCount > 0 && (
+                <span className="mock-stream-tokens">{tokenCount.toLocaleString()} tokens</span>
+              )}
+            </div>
+            <div className="mock-activity-content" ref={streamRef}>
+              {summaryContent}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="completion-view">
       <div className="completion-layout">
         <div className="completion-left">
           <div className="completion-header">
-            <div className="completion-icon">{project.summaryReady ? '✓' : '⏳'}</div>
-            <h2>{project.summaryReady ? 'Pipeline Complete' : 'Almost done!'}</h2>
+            <div className="completion-icon">✓</div>
+            <h2>Pipeline Complete</h2>
             <p className="completion-subtitle">
-              {project.summaryReady
-                ? <>All stages have been approved for <strong>{project.name}</strong> v{project.version}
-                    {project.iteration > 1 && <span> (iteration {project.iteration})</span>}.</>
-                : <>Generating iteration summary for <strong>{project.name}</strong> v{project.version}…</>
-              }
+              All stages have been approved for <strong>{project.name}</strong> v{project.version}
+              {project.iteration > 1 && <span> (iteration {project.iteration})</span>}.
             </p>
           </div>
 
@@ -112,57 +203,67 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance, 
             </ul>
           </div>
 
-          {!project.summaryReady && (
-            <div className="summary-generating">
-              {summaryError ? (
-                <>
-                  <span className="summary-error-icon">✗</span>
-                  <span className="summary-error-text">{summaryError}</span>
-                </>
-              ) : (
-                <>
-                  <span className="summary-spinner" />
-                  Generating iteration summary…
-                </>
-              )}
+          {sessionData && (
+            <div className="completion-tokens">
               <button
-                className="summary-retry-btn"
-                onClick={handleRetry}
-                disabled={retrying}
+                className="tokens-toggle"
+                onClick={() => setShowTokens(v => !v)}
               >
-                {retrying ? 'Retrying…' : 'Retry'}
+                {showTokens ? '▾' : '▸'} Token Usage — {sessionData.grandTotal.toLocaleString()} total
               </button>
+              {showTokens && (
+                <table className="tokens-table">
+                  <thead>
+                    <tr>
+                      <th>Stage</th>
+                      <th>Sessions</th>
+                      <th>Tokens</th>
+                      <th>%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ARTIFACT_STAGES.map(({ name, label }) => {
+                      const s = sessionData.byStage[name];
+                      if (!s) return null;
+                      const pct = sessionData.grandTotal > 0
+                        ? ((s.tokens / sessionData.grandTotal) * 100).toFixed(1)
+                        : '0';
+                      return (
+                        <tr key={name}>
+                          <td>{label}</td>
+                          <td>{s.count}</td>
+                          <td>{s.tokens.toLocaleString()}</td>
+                          <td>{pct}%</td>
+                        </tr>
+                      );
+                    })}
+                    {sessionData.byStage.complete && (
+                      <tr>
+                        <td>Summary</td>
+                        <td>{sessionData.byStage.complete.count}</td>
+                        <td>{sessionData.byStage.complete.tokens.toLocaleString()}</td>
+                        <td>
+                          {sessionData.grandTotal > 0
+                            ? ((sessionData.byStage.complete.tokens / sessionData.grandTotal) * 100).toFixed(1)
+                            : '0'}%
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td><strong>Total</strong></td>
+                      <td><strong>{sessionData.sessions.length}</strong></td>
+                      <td><strong>{sessionData.grandTotal.toLocaleString()}</strong></td>
+                      <td><strong>100%</strong></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
             </div>
           )}
 
-          {!showEnhanceForm ? (
-            <div className="completion-actions">
-              <button
-                className="approve-button"
-                onClick={() => setShowEnhanceForm(true)}
-                disabled={!project.summaryReady}
-                title={!project.summaryReady ? 'Waiting for summary to finish generating…' : undefined}
-              >
-                Enhance
-              </button>
-              {(() => {
-                const match = summaryContent.match(/## Suggested Enhancements\n([\s\S]*?)(?=\n## |$)/);
-                const suggestions = match?.[1]?.trim() ?? '';
-                return suggestions ? (
-                  <button
-                    className="approve-button"
-                    onClick={() => { setShowEnhanceForm(true); setEnhanceVision(suggestions); }}
-                    disabled={!project.summaryReady}
-                  >
-                    Quick Enhance
-                  </button>
-                ) : null;
-              })()}
-              <button className="approve-button secondary" onClick={onNewProject}>
-                Start New Project
-              </button>
-            </div>
-          ) : (
+          {showEnhanceForm ? (
             <div className="enhance-form">
               <h3>Enhance {project.name}</h3>
               <p className="enhance-description">
@@ -209,6 +310,49 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance, 
                 </button>
               </div>
             </div>
+          ) : (
+            <>
+              <div className="completion-actions">
+                {!summaryApproved && (
+                  <button
+                    className="approve-button"
+                    onClick={handleApproveSummary}
+                    disabled={approving}
+                  >
+                    {approving ? 'Saving…' : 'Save to Docs'}
+                  </button>
+                )}
+                {summaryApproved && (
+                  <>
+                    <button className="approve-button" onClick={() => setShowEnhanceForm(true)}>
+                      Enhance
+                    </button>
+                    {(() => {
+                      const match = /## Suggested Enhancements\n([\s\S]*?)(?=\n## |$)/.exec(summaryContent);
+                      const suggestions = match?.[1]?.trim() ?? '';
+                      return suggestions ? (
+                        <button
+                          className="approve-button"
+                          onClick={() => { setShowEnhanceForm(true); setEnhanceVision(suggestions); }}
+                        >
+                          Quick Enhance
+                        </button>
+                      ) : null;
+                    })()}
+                    <button className="approve-button secondary" onClick={onNewProject}>
+                      Start New Project
+                    </button>
+                  </>
+                )}
+              </div>
+              <button
+                className="approve-button secondary"
+                style={{ width: '100%', marginTop: '0.5rem' }}
+                onClick={() => downloadProject(project.id)}
+              >
+                Download
+              </button>
+            </>
           )}
         </div>
 
@@ -217,21 +361,9 @@ export function CompletionView({ project, onNewProject, onViewStage, onEnhance, 
             <h3>Iteration Summary</h3>
           </div>
           <div className="completion-summary-body">
-            {summaryContent ? (
-              <div className="artifact-content">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryContent}</ReactMarkdown>
-                {!project.summaryReady && (
-                  <div className="summary-streaming-indicator">
-                    <span className="summary-spinner" />
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="summary-generating-panel">
-                <span className="summary-spinner" />
-                <span>Generating summary…</span>
-              </div>
-            )}
+            <div className="artifact-content">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{summaryContent}</ReactMarkdown>
+            </div>
           </div>
         </div>
       </div>

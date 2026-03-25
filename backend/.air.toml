@@ -1,0 +1,17 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  # Ensure ./static exists so //go:embed all:static doesn't fail in dev
+  pre_cmd = ["mkdir -p ./static && touch ./static/.keep 2>/dev/null || true"]
+  cmd = "go build -o ./tmp/main ."
+  bin = "./tmp/main"
+  include_ext = ["go", "mod", "sum"]
+  exclude_dir = ["tmp", "vendor", "static"]
+  delay = 1000
+  # Polling is required on Windows bind mounts (inotify not reliable over virtio-fs)
+  poll = true
+  poll_interval = 500
+
+[log]
+  time = true

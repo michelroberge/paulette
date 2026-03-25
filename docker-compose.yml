@@ -1,0 +1,34 @@
+services:
+  paulette:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: paulette:latest
+    container_name: paulette
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      PORT: "8080"
+      REGISTRY_PATH: /home/paulette/.paulette
+      REPOS_PATH: /home/paulette/repos
+      CLAUDE_PATH: claude
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+    volumes:
+      # paulette registry — persists project list and settings across restarts
+      - registry-data:/home/paulette/.paulette
+      # generated project repos — named volume, survives container rebuilds
+      - repos-data:/home/paulette/repos
+      # paulette's own beads DB — named volume, survives container rebuilds
+      - beads-data:/home/paulette/.beads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/auth/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  registry-data:
+  repos-data:
+  beads-data:

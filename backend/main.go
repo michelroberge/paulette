@@ -11,10 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/michelroberge/claudine/backend/internal/cli"
-	"github.com/michelroberge/claudine/backend/internal/config"
-	fsrepo "github.com/michelroberge/claudine/backend/internal/repository/fs"
-	"github.com/michelroberge/claudine/backend/internal/server"
+	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/cli"
+	"github.com/michelroberge/paulette/backend/internal/config"
+	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
+	"github.com/michelroberge/paulette/backend/internal/server"
 )
 
 func main() {
@@ -29,6 +30,7 @@ func main() {
 	}
 
 	cfg := config.Load()
+	agent.SetClaudePath(cfg.ClaudePath)
 
 	registry, err := fsrepo.NewRegistryRepo(cfg.RegistryPath)
 	if err != nil {
@@ -55,11 +57,14 @@ func main() {
 
 	// Start server in a goroutine
 	go func() {
-		log.Printf("claudine listening on %s", addr)
+		log.Printf("paulette listening on %s", addr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
+
+	// Resume autonomous pipelines for any projects that were running before restart
+	go srv.Orchestrator().StartAll()
 
 	// Wait for SIGINT or SIGTERM
 	quit := make(chan os.Signal, 1)
@@ -67,7 +72,8 @@ func main() {
 	sig := <-quit
 	log.Printf("received %s, shutting down...", sig)
 
-	// Cancel all active Claude processes
+	// Cancel autonomous orchestrators, then active Claude processes
+	srv.Orchestrator().CancelAll()
 	srv.Runs().CancelAll()
 	log.Println("cancelled all active agent runs")
 

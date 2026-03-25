@@ -44,10 +44,10 @@ function getNodeStyle(bead: Bead, isReady: boolean) {
     boxShadow = `0 0 0 1px ${color}22`;
   } else if (bead.status === 'in_progress') {
     color = '#3b82f6';
-    boxShadow = `0 0 6px 2px ${color}44`;
+    boxShadow = 'none'; // pulsed via CSS animation class
   } else if (bead.status === 'reviewing') {
     color = '#ef4444';
-    boxShadow = `0 0 8px 2px ${color}55`;
+    boxShadow = 'none'; // pulsed via CSS animation class
   } else if (isReady) {
     color = '#f59e0b';
     boxShadow = `0 0 8px 2px ${color}55`;
@@ -138,9 +138,14 @@ function layoutGraph(beads: Bead[]): { nodes: Node[]; edges: Edge[] } {
     const w = bead.type === 'epic' ? NODE_WIDTH_EPIC : NODE_WIDTH_TASK;
     const h = bead.type === 'epic' ? NODE_HEIGHT_EPIC : NODE_HEIGHT_TASK;
     const isReady = readySet.has(bead.id);
+    const nodeClass =
+      bead.status === 'in_progress' ? 'bead-node-active' :
+      bead.status === 'reviewing'   ? 'bead-node-reviewing' :
+      undefined;
     return [{
       id: bead.id,
       position: { x: pos.x - w / 2, y: pos.y - h / 2 },
+      className: nodeClass,
       data: {
         label: (
           <div style={{ lineHeight: 1.3 }}>

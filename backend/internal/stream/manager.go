@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/michelroberge/claudine/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/agent"
 )
 
 // Run represents a managed agent operation whose events are buffered for reconnection.
@@ -41,22 +41,63 @@ type RunInfo struct {
 
 // Manager tracks active and recently-finished runs.
 type Manager struct {
-	mu     sync.Mutex
-	runs   map[string]*Run // key: "projectID:stage:operation"
-	byID   map[string]*Run // key: run ID
-	nextID int
+	mu          sync.Mutex
+	runs        map[string]*Run // key: "projectID:stage:operation"
+	byID        map[string]*Run // key: run ID
+	nextID      int
+	watchers    map[string]map[int]chan struct{} // projectID → subID → channel
+	nextWatcher int
 }
 
 // NewManager creates a new stream manager.
 func NewManager() *Manager {
 	return &Manager{
-		runs: make(map[string]*Run),
-		byID: make(map[string]*Run),
+		runs:     make(map[string]*Run),
+		byID:     make(map[string]*Run),
+		watchers: make(map[string]map[int]chan struct{}),
 	}
 }
 
 func runKey(projectID, stage, operation string) string {
 	return projectID + ":" + stage + ":" + operation
+}
+
+// Watch registers a buffered channel that receives a signal whenever a run starts or finishes
+// for the given project. Returns the channel and a subscription ID for Unwatch.
+func (m *Manager) Watch(projectID string) (<-chan struct{}, int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ch := make(chan struct{}, 1)
+	id := m.nextWatcher
+	m.nextWatcher++
+	if m.watchers[projectID] == nil {
+		m.watchers[projectID] = make(map[int]chan struct{})
+	}
+	m.watchers[projectID][id] = ch
+	return ch, id
+}
+
+// Unwatch removes a watcher registered with Watch.
+func (m *Manager) Unwatch(projectID string, id int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if subs, ok := m.watchers[projectID]; ok {
+		delete(subs, id)
+		if len(subs) == 0 {
+			delete(m.watchers, projectID)
+		}
+	}
+}
+
+// notify sends a non-blocking signal to all watchers of projectID.
+// Must be called with m.mu held.
+func (m *Manager) notify(projectID string) {
+	for _, ch := range m.watchers[projectID] {
+		select {
+		case ch <- struct{}{}:
+		default: // already has a pending signal; no need to queue another
+		}
+	}
 }
 
 // Start creates a new run. If one already exists for this key, it returns nil
@@ -87,6 +128,7 @@ func (m *Manager) Start(projectID, stage, operation string) *Run {
 
 	m.runs[key] = run
 	m.byID[run.ID] = run
+	m.notify(projectID)
 
 	return run
 }
@@ -186,6 +228,11 @@ func (r *Run) Finish(m *Manager) {
 	}
 	r.mu.Unlock()
 
+	// Notify pipeline watchers that a run has finished.
+	m.mu.Lock()
+	m.notify(r.ProjectID)
+	m.mu.Unlock()
+
 	// Keep the run around for 2 minutes so a reconnecting client can read buffered events
 	key := runKey(r.ProjectID, r.Stage, r.Operation)
 	time.AfterFunc(2*time.Minute, func() {
@@ -257,6 +304,10 @@ func (r *Run) StreamTo(w http.ResponseWriter, req *http.Request, fromIndex int) 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Send headers immediately so the client's fetch() resolves right away
+	// and can start reading the stream body, even before the first event arrives.
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
 
 	ch, _ := r.Subscribe(fromIndex)
 	defer r.Unsubscribe(ch)

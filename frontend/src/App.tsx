@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ProjectList } from './components/project/ProjectList';
 import { ImportProgressView } from './components/import/ImportProgressView';
 import { ProjectHeader } from './components/layout/ProjectHeader';
@@ -8,13 +8,22 @@ import { ChatPanel } from './components/chat/ChatPanel';
 import { ArtifactPreview } from './components/artifact/ArtifactPreview';
 import { UxPanel } from './components/ux/UxPanel';
 import { BuildPanel } from './components/build/BuildPanel';
+import { SkillAnalysisPanel } from './components/build/SkillAnalysisPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { VersionHistoryModal } from './components/git/VersionHistoryModal';
-import { getPipeline, approveStage, resetStage, getSummary } from './api/pipeline';
+import { ProfileModal } from './components/git/ProfileModal';
+import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
+import { getArtifact } from './api/artifacts';
+import { getMock } from './api/mock';
+import { getBeadGraph } from './api/beads';
 import { startEnhancement } from './api/enhance';
 import { getProject, patchProject } from './api/projects';
+import { getActiveRuns, sendBtw } from './api/activity';
+import type { ActiveRun } from './api/activity';
 import { useChat } from './hooks/useChat';
+import { useAgentStream } from './hooks/useAgentStream';
+import { AgentStreamingView } from './components/layout/AgentStreamingView';
 import type { Project, PipelineState, StageName, VersionBump } from './types';
 import './App.css';
 
@@ -30,7 +39,7 @@ interface StageTab {
   label: string;
 }
 
-function getTabsForStage(stage: StageName | null, imported?: boolean): StageTab[] {
+function getTabsForStage(stage: StageName | null, imported?: boolean, hasBeads?: boolean): StageTab[] {
   if (!stage || stage === 'complete') return [];
   if (stage === 'ux') return [
     { id: 'chat', label: 'Chat' },
@@ -41,8 +50,9 @@ function getTabsForStage(stage: StageName | null, imported?: boolean): StageTab[
     const tabs: StageTab[] = [
       { id: 'chat', label: 'Chat' },
       { id: 'artifact', label: 'Build Plan' },
+      { id: 'skills', label: 'Skills' },
     ];
-    if (!imported) tabs.push({ id: 'execute', label: 'Execute' });
+    if (!imported || hasBeads) tabs.push({ id: 'execute', label: 'Execute' });
     return tabs;
   }
   return [
@@ -59,9 +69,14 @@ function App() {
   const [activeTab, setActiveTab] = useState<string>('chat');
   const [stageTokens, setStageTokens] = useState<Partial<Record<StageName, number>>>({});
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const [showImportProgress, setShowImportProgress] = useState(false);
   const [mockGenerated, setMockGenerated] = useState(false);
   const [buildComplete, setBuildComplete] = useState(false);
+  const [hasBeads, setHasBeads] = useState(false);
+  const [activeRuns, setActiveRuns] = useState<ActiveRun[]>([]);
+  const [btwInput, setBtwInput] = useState('');
+  const [btwSending, setBtwSending] = useState(false);
 
   const addTokens = useCallback((stage: StageName, n: number) => {
     if (n <= 0) return;
@@ -73,8 +88,11 @@ function App() {
     [stageTokens],
   );
 
-  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, loadHistory, send, stop } =
+  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, loadHistory, send, resume, stop } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger, selectedStage ? (n) => addTokens(selectedStage, n) : undefined);
+
+  const { active: agentActive, streamingText: agentStreamingText, operation: agentOperation, stage: agentStage } =
+    useAgentStream(project?.id ?? null, activeRuns);
 
   const loadPipeline = useCallback(async () => {
     if (!project) return;
@@ -104,16 +122,71 @@ function App() {
     }
   }, [project, loadPipeline]);
 
+  // Subscribe to live pipeline updates via SSE
+  useEffect(() => {
+    if (!project) return;
+    const controller = new AbortController();
+    watchPipeline(project.id, setPipeline, controller.signal).catch(() => {});
+    return () => controller.abort();
+  }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll active runs so the sidebar knows which run IDs to use for /btw
+  useEffect(() => {
+    if (!project) { setActiveRuns([]); return; }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const runs = await getActiveRuns(project.id);
+        if (!cancelled) setActiveRuns(runs);
+      } catch { /* ignore */ }
+    };
+    poll();
+    const id = setInterval(poll, 3000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [project?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     loadHistory();
   }, [loadHistory]);
 
-  // Reset tab and gate states on stage change
+  // Smart tab default: show most advanced available content on stage navigation
   useEffect(() => {
-    setActiveTab('chat');
+    if (!project || !selectedStage || selectedStage === 'complete') {
+      setActiveTab('chat');
+      setMockGenerated(false);
+      setBuildComplete(false);
+      return;
+    }
     setMockGenerated(false);
     setBuildComplete(false);
-  }, [selectedStage]);
+    setHasBeads(false);
+
+    (async () => {
+      try {
+        const artifact = await getArtifact(project.id, selectedStage);
+        if (!artifact?.content?.trim()) { setActiveTab('chat'); return; }
+
+        if (selectedStage === 'ux') {
+          const mock = await getMock(project.id);
+          if (mock.exists) { setActiveTab('mock'); setMockGenerated(true); }
+          else setActiveTab('artifact');
+        } else if (selectedStage === 'build') {
+          const graph = await getBeadGraph(project.id);
+          if (graph?.beads?.length) {
+            setHasBeads(true);
+            setActiveTab('execute');
+            setBuildComplete(true);
+          } else {
+            setActiveTab('artifact');
+          }
+        } else {
+          setActiveTab('artifact');
+        }
+      } catch {
+        setActiveTab('chat');
+      }
+    })();
+  }, [selectedStage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll for summaryReady when at Complete stage
   useEffect(() => {
@@ -129,18 +202,27 @@ function App() {
     return () => clearInterval(id);
   }, [project?.id, project?.currentStage, project?.summaryReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-kickoff: when entering a stage with no history, send the opening message
-  // Skip for imported projects — artifacts are pre-populated, user reviews manually
+  // Auto-kickoff: when entering a stage, send the opening message or resume if interrupted.
+  // Skip for imported projects — artifacts are pre-populated, user reviews manually.
+  // Skip for autonomous mode — the backend orchestrator drives chat.
   useEffect(() => {
-    if (!historyLoaded || messages.length > 0 || streaming) return;
-    if (project?.imported) return;
+    if (!historyLoaded || streaming) return;
+    if (project?.imported || project?.autonomous) return;
     const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
     if (currentStageInfo?.status !== 'active') return;
-    let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
-    if (project?.enhancementVision && selectedStage === 'vision') {
-      kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
+    if (nextTurn !== 'agent') return;
+
+    if (messages.length === 0) {
+      // Fresh stage — send the opening kickoff message.
+      let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
+      if (project?.enhancementVision && selectedStage === 'vision') {
+        kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
+      }
+      if (kickoff) send(kickoff);
+    } else {
+      // Unanswered user message (e.g. server restarted mid-generation) — resume.
+      resume();
     }
-    if (kickoff) send(kickoff);
   }, [historyLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleReset = async (stage: StageName) => {
@@ -174,92 +256,24 @@ function App() {
 
   // ── Autonomous mode ──
 
+  const handleBtwSend = async (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    if (!project) return;
+    const agentRun = activeRuns.find(r => r.stage === agentStage && r.operation !== 'chat' && r.operation !== 'mock');
+    if (!agentRun || !btwInput.trim()) return;
+    setBtwSending(true);
+    try {
+      await sendBtw(project.id, agentRun.id, btwInput.trim());
+      setBtwInput('');
+    } catch { /* ignore */ }
+    finally { setBtwSending(false); }
+  };
+
   const handleToggleAutonomous = async () => {
     if (!project) return;
     const updated = await patchProject(project.id, { autonomous: !project.autonomous });
     setProject(updated);
   };
-
-  const approveAndAdvance = useCallback(async () => {
-    if (!project) return;
-    try {
-      await approveStage(project.id);
-      const state = await loadPipeline();
-      if (state) setSelectedStage(state.currentStage);
-      const updated = await getProject(project.id);
-      setProject(updated);
-    } catch (err) {
-      console.error('Auto-approve failed:', err);
-    }
-  }, [project?.id, loadPipeline]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-approve for vision & architecture (simple stages with no sub-steps)
-  const prevArtifactUpdated = useRef(0);
-  useEffect(() => {
-    if (!project?.autonomous || !artifactUpdated || streaming) return;
-    if (artifactUpdated === prevArtifactUpdated.current) return;
-    prevArtifactUpdated.current = artifactUpdated;
-    if (project.imported) return;
-    if (selectedStage === 'complete') return;
-    // UX and build have sub-steps; they approve via callbacks
-    if (selectedStage === 'ux' || selectedStage === 'build') {
-      // Auto-switch to the relevant tab
-      if (selectedStage === 'ux') setActiveTab('mock');
-      if (selectedStage === 'build') {
-        // Autonomous: go straight to execute (autoGenerate calls generate() directly)
-        // Non-autonomous: show plan first so user can review and click Generate Beads
-        setActiveTab(project.autonomous ? 'execute' : 'artifact');
-      }
-      return;
-    }
-    const timer = setTimeout(() => approveAndAdvance(), 2000);
-    return () => clearTimeout(timer);
-  }, [artifactUpdated, streaming]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // UX mock completion → enable approval (or auto-approve in autonomous mode)
-  const handleMockComplete = useCallback(() => {
-    setMockGenerated(true);
-    if (!project?.autonomous) return;
-    setTimeout(() => approveAndAdvance(), 2000);
-  }, [project?.autonomous, approveAndAdvance]);
-
-  // Build execution completion → enable approval (or auto-approve in autonomous mode)
-  const handleExecutionComplete = useCallback(() => {
-    setBuildComplete(true);
-    if (!project?.autonomous) return;
-    setTimeout(() => approveAndAdvance(), 2000);
-  }, [project?.autonomous, approveAndAdvance]);
-
-  // Auto-enhance after summary is ready
-  const autoEnhanceTriggered = useRef(false);
-  useEffect(() => {
-    if (!project?.autonomous || !project.summaryReady) {
-      autoEnhanceTriggered.current = false;
-      return;
-    }
-    if (project.currentStage !== 'complete') return;
-    if (project.iteration >= 10) return;
-    if (autoEnhanceTriggered.current) return;
-    autoEnhanceTriggered.current = true;
-
-    const doAutoEnhance = async () => {
-      try {
-        const { content, exists } = await getSummary(project.id);
-        if (!exists || !content) return;
-
-        const match = content.match(/## Suggested Enhancements\n([\s\S]*?)(?=\n## |$)/);
-        const suggestions = match?.[1]?.trim();
-        if (!suggestions) return;
-
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        await handleEnhance(suggestions, 'minor');
-      } catch (err) {
-        console.error('Auto-enhance failed:', err);
-      }
-    };
-
-    doAutoEnhance();
-  }, [project?.summaryReady, project?.autonomous, project?.currentStage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!project) {
     return <ProjectList onSelect={setProject} />;
@@ -267,7 +281,7 @@ function App() {
 
   const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
   const isActiveStage = currentStageInfo?.status === 'active';
-  const tabs = getTabsForStage(selectedStage, project?.imported);
+  const tabs = getTabsForStage(selectedStage, project?.imported, hasBeads);
 
   return (
     <div className="app-shell">
@@ -276,6 +290,7 @@ function App() {
         onBack={() => { setProject(null); setPipeline(null); }}
         totalTokens={grandTotal}
         onShowHistory={() => setShowVersionHistory(true)}
+        onShowProfile={() => setShowProfile(true)}
         autonomous={!!project.autonomous}
         onToggleAutonomous={handleToggleAutonomous}
       />
@@ -302,6 +317,7 @@ function App() {
           ) : pipeline?.currentStage === 'complete' && selectedStage === 'complete' ? (
             <CompletionView
               project={project}
+              activity={pipeline?.stages.find(s => s.name === 'complete')?.activity}
               onNewProject={() => { setProject(null); setPipeline(null); }}
               onViewStage={stage => setSelectedStage(stage)}
               onEnhance={handleEnhance}
@@ -323,6 +339,17 @@ function App() {
                   This artifact was auto-generated from your codebase. Review and refine via chat, then approve.
                 </div>
               )}
+              {agentActive && agentOperation !== 'chat' && agentStage === selectedStage && selectedStage !== 'ux' && selectedStage !== 'build' ? (
+                <AgentStreamingView
+                  streamingText={agentStreamingText}
+                  operation={agentOperation}
+                  btwInput={btwInput}
+                  btwSending={btwSending}
+                  onBtwChange={setBtwInput}
+                  onBtwSubmit={handleBtwSend}
+                  btwPendingCount={pipeline?.stages.find(s => s.name === agentStage)?.activity?.pendingBtw?.length ?? 0}
+                />
+              ) : (
               <StageView tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab}>
                 {activeTab === 'chat' && (
                   <ChatPanel
@@ -350,13 +377,16 @@ function App() {
                     onRequestMockTab={() => setActiveTab('mock')}
                     hidden={activeTab === 'chat'}
                     onMockTokens={(n) => addTokens('ux', n)}
-                    autoGenerate={!!project.autonomous && isActiveStage}
-                    onMockComplete={handleMockComplete}
+                    onMockComplete={() => setMockGenerated(true)}
                     onMockLoaded={() => setMockGenerated(true)}
                   />
                 )}
 
-                {selectedStage === 'build' && (
+                {selectedStage === 'build' && activeTab === 'skills' && (
+                  <SkillAnalysisPanel projectId={project.id} />
+                )}
+
+                {selectedStage === 'build' && activeTab !== 'skills' && (
                   <BuildPanel
                     projectId={project.id}
                     refreshTrigger={artifactUpdated}
@@ -364,13 +394,15 @@ function App() {
                     onRequestExecuteTab={() => setActiveTab('execute')}
                     hidden={activeTab === 'chat'}
                     onBeadTokens={(n) => addTokens('build', n)}
-                    autoGenerate={!!project.autonomous && isActiveStage}
-                    autoExecute={!!project.autonomous && isActiveStage}
-                    onExecutionComplete={handleExecutionComplete}
+                    onExecutionComplete={() => setBuildComplete(true)}
                     onBuildDone={() => setBuildComplete(true)}
+                    agentActive={agentActive}
+                    agentOperation={agentOperation}
+                    agentStreamingText={agentStreamingText}
                   />
                 )}
               </StageView>
+              )}
 
               {isActiveStage && (
                 <div className="approve-bar">
@@ -395,6 +427,13 @@ function App() {
           projectId={project.id}
           onClose={() => setShowVersionHistory(false)}
           onReset={handleGitReset}
+        />
+      )}
+      {showProfile && (
+        <ProfileModal
+          projectId={project.id}
+          initialName={project.author}
+          onClose={() => setShowProfile(false)}
         />
       )}
     </div>

@@ -1,24 +1,46 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { listProjects, createProject, deleteProject } from '../../api/projects';
 import { importProject } from '../../api/import';
 import { getConfig } from '../../api/config';
-import type { Project } from '../../types';
+import { getProjectsActivity } from '../../api/activity';
+import { getAuthStatus, startLogin, logout, sendLoginCode } from '../../api/auth';
+import type { AuthStatus } from '../../api/auth';
+import { StageRobot } from '../layout/StageRobot';
+import type { Project, StageName } from '../../types';
 
-const STAGE_ORDER = ['vision', 'ux', 'architecture', 'build', 'complete'];
+const STAGE_ORDER: StageName[] = ['vision', 'ux', 'architecture', 'build', 'complete'];
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function totalTokens(p: Project): number {
+  const stage = Object.values(p.stageTokens ?? {}).reduce((s, v) => s + (v ?? 0), 0);
+  return stage + (p.summaryTokens ?? 0);
+}
 const STAGE_LABELS: Record<string, string> = {
   vision: 'Vision', ux: 'UX', architecture: 'Arch', build: 'Build', complete: 'Done',
 };
 
-function StageProgress({ currentStage }: { currentStage: string }) {
-  const current = STAGE_ORDER.indexOf(currentStage);
+function StageProgress({ currentStage }: Readonly<{ currentStage: string }>) {
+  const current = STAGE_ORDER.indexOf(currentStage as StageName);
+  const getPipClass = (i: number) => {
+    if (i < current) return 'done';
+    if (i === current) return 'active';
+    return '';
+  };
   return (
     <div className="stage-progress">
       {STAGE_ORDER.slice(0, -1).map((s, i) => (
         <div
           key={s}
-          className={`stage-pip ${i < current ? 'done' : i === current ? 'active' : ''}`}
+          className={`stage-pip ${getPipClass(i)}`}
           title={STAGE_LABELS[s]}
-        />
+        >
+          <StageRobot stage={s} size="small" />
+        </div>
       ))}
       <span className="stage-label">{STAGE_LABELS[currentStage] ?? currentStage}</span>
     </div>
@@ -26,7 +48,7 @@ function StageProgress({ currentStage }: { currentStage: string }) {
 }
 
 interface Props {
-  onSelect: (project: Project) => void;
+  readonly onSelect: (project: Project) => void;
 }
 
 export function ProjectList({ onSelect }: Props) {
@@ -47,6 +69,15 @@ export function ProjectList({ onSelect }: Props) {
   const [reposPath, setReposPath] = useState('');
   const [appVersion, setAppVersion] = useState('');
   const [appAuthor, setAppAuthor] = useState('');
+  const [activityCounts, setActivityCounts] = useState<Record<string, number>>({});
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [showLoginPanel, setShowLoginPanel] = useState(false);
+  const [loginLines, setLoginLines] = useState<string[]>([]);
+  const [loginError, setLoginError] = useState('');
+  const [loginCode, setLoginCode] = useState('');
+  const [loginCodeSent, setLoginCodeSent] = useState(false);
+  const loginCleanup = useRef<(() => void) | null>(null);
+  const authPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     listProjects().then(setProjects).catch(console.error);
@@ -55,9 +86,19 @@ export function ProjectList({ onSelect }: Props) {
       setAppVersion(c.version);
       setAppAuthor(c.author);
     }).catch(console.error);
+    getAuthStatus().then(setAuthStatus).catch(console.error);
+    return () => { if (authPollTimer.current) clearInterval(authPollTimer.current); };
   }, []);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => getProjectsActivity().then(counts => { if (!cancelled) setActivityCounts(counts); }).catch(() => {});
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  const handleCreate = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     const project = await createProject({ name, author, ...(hostDir ? { hostDir } : {}), version });
     setProjects(prev => [...prev, project]);
@@ -69,7 +110,7 @@ export function ProjectList({ onSelect }: Props) {
     onSelect(project);
   };
 
-  const handleImport = async (e: React.FormEvent) => {
+  const handleImport = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setImporting(true);
     try {
@@ -99,10 +140,71 @@ export function ProjectList({ onSelect }: Props) {
     setConfirmDelete(null);
   };
 
+  const handleStartLogin = () => {
+    setLoginLines([]);
+    setLoginError('');
+    setLoginCode('');
+    setLoginCodeSent(false);
+    setShowLoginPanel(true);
+    loginCleanup.current = startLogin(
+      (line) => setLoginLines(prev => [...prev, line]),
+      () => { getAuthStatus().then(setAuthStatus).catch(console.error); setShowLoginPanel(false); },
+      (msg) => setLoginError(msg),
+    );
+  };
+
+  const handleLogout = async () => {
+    loginCleanup.current?.();
+    loginCleanup.current = null;
+    if (authPollTimer.current) { clearInterval(authPollTimer.current); authPollTimer.current = null; }
+    await logout().catch(console.error);
+    setAuthStatus({ authenticated: false });
+    setShowLoginPanel(false);
+    setLoginLines([]);
+  };
+
+  const handleSubmitCode = async (e: React.SyntheticEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!loginCode.trim()) return;
+    try {
+      await sendLoginCode(loginCode.trim());
+      setLoginCodeSent(true);
+      setLoginCode('');
+      // Close the SSE stream — no longer needed once code is submitted.
+      // Then poll auth status directly, since the SSE done event can be
+      // lost if the connection drops while the CLI exchanges the token.
+      loginCleanup.current?.();
+      loginCleanup.current = null;
+      let attempts = 0;
+      authPollTimer.current = setInterval(() => {
+        attempts++;
+        getAuthStatus().then(status => {
+          if (status.authenticated) {
+            clearInterval(authPollTimer.current!);
+            authPollTimer.current = null;
+            setAuthStatus(status);
+            setShowLoginPanel(false);
+          } else if (attempts >= 30) {
+            clearInterval(authPollTimer.current!);
+            authPollTimer.current = null;
+            setLoginError('Authentication timed out — please try again.');
+            setLoginCodeSent(false);
+          }
+        }).catch(console.error);
+      }, 2000);
+    } catch (err) {
+      setLoginError(`Failed to send code: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const handleSwitchAccount = () => {
+    handleLogout().then(handleStartLogin);
+  };
+
   return (
     <div className="project-list">
-      <div className="claudine-banner">
-        <pre className="claudine-ascii">
+      <div className="paulette-banner">
+        <pre className="paulette-ascii">
 {"        ♥\n"}
 {"       ╱│╲\n"}
 {"    ┌──────────┐\n"}
@@ -128,12 +230,77 @@ export function ProjectList({ onSelect }: Props) {
 {"       │    │\n"}
 {"      ═╧═  ═╧═"}
         </pre>
-        <div className="claudine-title-block">
-          <h1>claudine</h1>
-          <span className="claudine-subtitle">AI App Factory</span>
-          <span className="claudine-version">{appVersion ? `v${appVersion}` : ''}</span>
+        <div className="paulette-title-block">
+          <h1>paulette</h1>
+          <span className="paulette-subtitle">Claude's wannabe assistant</span>
+          <span className="paulette-version">{appVersion ? `v${appVersion}` : ''}</span>
         </div>
       </div>
+
+      {authStatus && (
+        <div className={`auth-banner ${authStatus.authenticated ? 'auth-ok' : 'auth-warn'}`}>
+          {authStatus.authenticated ? (
+            <>
+              <span className="auth-dot">●</span>
+              <span>Claude authenticated{authStatus.account && authStatus.account !== 'api-key' ? ` · ${authStatus.account}` : ''}</span>
+              <button className="auth-action" onClick={handleSwitchAccount}>Switch Account</button>
+            </>
+          ) : (
+            <>
+              <span className="auth-dot">●</span>
+              <span>Not authenticated</span>
+              <button className="auth-action" onClick={handleStartLogin}>Login</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {showLoginPanel && (
+        <div className="auth-login-panel">
+          <div className="auth-login-header">
+            <span>Claude Login</span>
+            <button className="auth-close" onClick={() => { loginCleanup.current?.(); setShowLoginPanel(false); }}>×</button>
+          </div>
+          <div className="auth-login-output">
+            {loginLines.length === 0 && !loginError && <span className="auth-waiting">Starting auth flow…</span>}
+            {loginLines.map((line, i) => {
+              const urlMatch = line.match(/https?:\/\/\S+/);
+              if (urlMatch) {
+                const before = line.slice(0, urlMatch.index);
+                const after = line.slice((urlMatch.index ?? 0) + urlMatch[0].length);
+                return (
+                  <div key={i} className="auth-line">
+                    {before}
+                    <a href={urlMatch[0]} target="_blank" rel="noreferrer" className="auth-url">{urlMatch[0]}</a>
+                    {after}
+                  </div>
+                );
+              }
+              return <div key={i} className="auth-line">{line}</div>;
+            })}
+            {loginError && <div className="auth-line auth-error">{loginError}</div>}
+          </div>
+          {loginLines.some(l => /https?:\/\//.test(l)) && !loginCodeSent && (
+            <form className="auth-code-form" onSubmit={handleSubmitCode}>
+              <input
+                className="auth-code-input"
+                placeholder="Paste the redirect URL from your browser address bar…"
+                value={loginCode}
+                onChange={e => setLoginCode(e.target.value)}
+                autoFocus
+              />
+              <button type="submit" className="auth-action" disabled={!loginCode.trim()}>Submit</button>
+            </form>
+          )}
+          {loginCodeSent && <p className="auth-hint">Completing auth — please wait…</p>}
+          {!loginCodeSent && (
+            <p className="auth-hint">
+              Open the link above and authorize. If the redirect page fails to load, copy the full URL from your browser&apos;s address bar and paste it above.
+            </p>
+          )}
+        </div>
+      )}
+
       <p>Select a project or create a new one.</p>
 
       <div className="project-grid">
@@ -150,6 +317,16 @@ export function ProjectList({ onSelect }: Props) {
               </button>
             </div>
             <StageProgress currentStage={p.currentStage} />
+            {(activityCounts[p.id] ?? 0) > 0 && (
+              <div className="project-card-activity">
+                <span className="activity-pulse" />
+                <span>{activityCounts[p.id]} agent{activityCounts[p.id] > 1 ? 's' : ''} running</span>
+              </div>
+            )}
+            <div className="project-card-stats">
+              <span title="Total tokens consumed">{fmtTokens(totalTokens(p))} tokens</span>
+              <span title="Completed iterations">{p.iteration} iter</span>
+            </div>
             <div className="project-meta">
               <span>{p.author}</span>
               <span>v{p.version} · {new Date(p.updatedAt).toLocaleDateString()}</span>

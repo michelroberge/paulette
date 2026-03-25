@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
 // importStep describes one stage of the import artifact generation.
@@ -30,7 +30,7 @@ type ImportResult struct {
 }
 
 // readExistingDoc checks for a pre-existing stage document on disk.
-// Lookup order: docs/{version}/{stage}/{stage}.md → .claudine/{stage}/{stage}.md.
+// Lookup order: docs/{version}/{stage}/{stage}.md → .paulette/{stage}/{stage}.md.
 // Returns the content and true if found, or "" and false otherwise.
 func readExistingDoc(hostDir, version string, stage model.StageName) (string, bool) {
 	// Priority 1: docs/{version}/{stage}/{stage}.md
@@ -38,9 +38,9 @@ func readExistingDoc(hostDir, version string, stage model.StageName) (string, bo
 	if b, err := os.ReadFile(docsPath); err == nil && len(strings.TrimSpace(string(b))) > 0 {
 		return string(b), true
 	}
-	// Priority 2: .claudine/{stage}/{stage}.md
-	claudinePath := filepath.Join(hostDir, ".claudine", string(stage), string(stage)+".md")
-	if b, err := os.ReadFile(claudinePath); err == nil && len(strings.TrimSpace(string(b))) > 0 {
+	// Priority 2: .paulette/{stage}/{stage}.md
+	paulettePath := filepath.Join(hostDir, ".paulette", string(stage), string(stage)+".md")
+	if b, err := os.ReadFile(paulettePath); err == nil && len(strings.TrimSpace(string(b))) > 0 {
 		return string(b), true
 	}
 	return "", false
@@ -48,7 +48,7 @@ func readExistingDoc(hostDir, version string, stage model.StageName) (string, bo
 
 // StreamImport analyzes an existing codebase and generates all pipeline artifacts.
 // It emits progress events via the emit callback and returns the generated artifacts.
-// Pre-existing docs are used when available (docs/{version} first, then .claudine),
+// Pre-existing docs are used when available (docs/{version} first, then .paulette),
 // falling back to AI generation only for missing stages.
 func StreamImport(ctx context.Context, hostDir, version, projectName string, emit func(StreamEvent)) (*ImportResult, error) {
 	// Lazy-build codebase digest only when AI generation is needed.
@@ -190,7 +190,7 @@ func buildCodebaseDigest(hostDir string) (string, error) {
 	// Collect all files, excluding common non-source directories
 	excludeDirs := map[string]bool{
 		".git": true, "node_modules": true, "vendor": true, "__pycache__": true,
-		".next": true, "dist": true, "build": true, ".claudine": true,
+		".next": true, "dist": true, "build": true, ".paulette": true,
 		".venv": true, "venv": true, "target": true, "bin": true, "obj": true,
 		".idea": true, ".vscode": true, "coverage": true, ".cache": true,
 	}
@@ -352,9 +352,9 @@ Analyze the codebase and produce a System Architecture document describing what 
 
 %s
 
-When ready, produce the architecture document wrapped in these exact delimiters:
-
-<!-- ARTIFACT:START -->
+When ready, produce the architecture document using this format:
+<response>
+<artifact>
 # System Architecture: {Product Name}
 
 ## Tech Stack
@@ -371,9 +371,10 @@ Describe the data structures and their relationships.
 
 ## Infrastructure
 Note any deployment, CI/CD, or infrastructure patterns observed.
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters. Be thorough — document what actually exists, not what should exist.`, digest, buildArchIDNote(version))
+Always wrap the document in exactly those tags. Be thorough — document what actually exists, not what should exist.`, digest, buildArchIDNote(version))
 }
 
 func buildImportUXPrompt(version, digest, archContent string) string {
@@ -393,9 +394,9 @@ Analyze the codebase (especially routes, pages, screens, UI components) and prod
 
 %s
 
-When ready, produce the UX document wrapped in these exact delimiters:
-
-<!-- ARTIFACT:START -->
+When ready, produce the UX document using this format:
+<response>
+<artifact>
 # UX Design: {Product Name}
 
 ## User Journeys
@@ -409,9 +410,10 @@ How do users navigate between screens?
 
 ## Interaction Patterns
 What UI patterns and interactions are used?
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters. Document what actually exists in the code.`, digest, archContent, buildJourneyIDNote(version))
+Always wrap the document in exactly those tags. Document what actually exists in the code.`, digest, archContent, buildJourneyIDNote(version))
 }
 
 func buildImportArchCrossRefPrompt(version, archContent, uxContent string) string {
@@ -431,13 +433,14 @@ Update the architecture document to add journey cross-references (JRN-v%s-NNN) t
 
 %s
 
-Produce the COMPLETE updated architecture document wrapped in these exact delimiters:
-
-<!-- ARTIFACT:START -->
+Produce the COMPLETE updated architecture document using this format:
+<response>
+<artifact>
 {complete updated architecture document with journey cross-references}
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters.`, archContent, uxContent, version, buildArchIDNote(version))
+Always wrap the document in exactly those tags.`, archContent, uxContent, version, buildArchIDNote(version))
 }
 
 func buildImportVisionPrompt(projectName, archContent, uxContent string) string {
@@ -455,9 +458,9 @@ Here is the UX analysis:
 
 Based on these analyses, synthesize a Product Vision document that captures what this product is, who it's for, and what it does.
 
-When ready, produce the vision document wrapped in these exact delimiters:
-
-<!-- ARTIFACT:START -->
+When ready, produce the vision document using this format:
+<response>
+<artifact>
 # Product Vision: %s
 
 ## Problem Statement
@@ -480,9 +483,10 @@ Technical, business, or other constraints observed.
 
 ## Out of Scope (V1)
 What is explicitly not included in the current version.
-<!-- ARTIFACT:END -->
+</artifact>
+</response>
 
-Always wrap the document in exactly those delimiters. Infer the vision from what the code actually does.`, archContent, uxContent, projectName)
+Always wrap the document in exactly those tags. Infer the vision from what the code actually does.`, archContent, uxContent, projectName)
 }
 
 func buildImportBuildArtifact(projectName, version string) string {

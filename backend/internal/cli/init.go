@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/michelroberge/claudine/backend/internal/config"
+	"github.com/michelroberge/paulette/backend/internal/config"
 )
 
 var dependencies = []Dependency{
@@ -48,11 +48,12 @@ var dependencies = []Dependency{
 	},
 }
 
-// parseReposPath extracts --repos-path=<path> from os.Args (if present).
-func parseReposPath() string {
+// parseFlag extracts --name=<value> from os.Args (if present).
+func parseFlag(name string) string {
+	prefix := "--" + name + "="
 	for _, arg := range os.Args[2:] {
-		if strings.HasPrefix(arg, "--repos-path=") {
-			return strings.TrimPrefix(arg, "--repos-path=")
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix)
 		}
 	}
 	return ""
@@ -62,11 +63,11 @@ func parseReposPath() string {
 // Accepts an optional --repos-path=<path> flag to configure where projects are stored.
 // Returns an exit code: 0 for success, 1 for failure.
 func RunInit() int {
-	fmt.Println("claudine init - checking dependencies...")
+	fmt.Println("paulette init - checking dependencies...")
 	fmt.Println()
 
 	// Handle optional --repos-path flag
-	if rp := parseReposPath(); rp != "" {
+	if rp := parseFlag("repos-path"); rp != "" {
 		absPath, err := filepath.Abs(rp)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Invalid repos path: %v\n", err)
@@ -79,6 +80,22 @@ func RunInit() int {
 			return 1
 		}
 		fmt.Printf("Repos path set to: %s\n\n", absPath)
+	}
+
+	// Handle optional --claude-path flag
+	if cp := parseFlag("claude-path"); cp != "" {
+		absPath, err := filepath.Abs(cp)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid claude path: %v\n", err)
+			return 1
+		}
+		settings := config.LoadSettings()
+		settings.ClaudePath = absPath
+		if err := config.SaveSettings(settings); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to save settings: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Claude path set to: %s\n\n", absPath)
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -101,7 +118,7 @@ func RunInit() int {
 		fmt.Println(" not found")
 
 		if dep.Required {
-			fmt.Printf("  %s is %s for claudine.\n", dep.Name, label)
+			fmt.Printf("  %s is %s for paulette.\n", dep.Name, label)
 		} else {
 			fmt.Printf("  %s is %s but recommended.\n", dep.Name, label)
 		}
@@ -111,7 +128,7 @@ func RunInit() int {
 		choice := promptChoice(reader, dep.InstallOpts)
 		if choice < 0 {
 			if dep.Required {
-				fmt.Printf("  %s is required. claudine cannot run without it.\n\n", dep.Name)
+				fmt.Printf("  %s is required. paulette cannot run without it.\n\n", dep.Name)
 				allOK = false
 			} else {
 				fmt.Printf("  Skipping %s (optional).\n\n", dep.Name)
@@ -132,7 +149,7 @@ func RunInit() int {
 			fmt.Printf("  %s is still not found in PATH.\n", dep.Binary)
 			fmt.Println("  You may need to restart your shell or add it to your PATH.")
 			if dep.Required {
-				fmt.Printf("  %s is required. claudine cannot run without it.\n\n", dep.Name)
+				fmt.Printf("  %s is required. paulette cannot run without it.\n\n", dep.Name)
 				allOK = false
 			} else {
 				fmt.Printf("  Skipping %s (optional).\n\n", dep.Name)
@@ -157,12 +174,12 @@ func RunInit() int {
 	fmt.Println()
 
 	if !allOK {
-		fmt.Println("Some required dependencies are missing. Please install them and run 'claudine init' again.")
+		fmt.Println("Some required dependencies are missing. Please install them and run 'paulette init' again.")
 		return 1
 	}
 
 	cfg := config.Load()
-	fmt.Println("All dependencies satisfied. You're ready to run claudine!")
+	fmt.Println("All dependencies satisfied. You're ready to run paulette!")
 	fmt.Printf("  Repos path: %s\n", cfg.ReposPath)
 	return 0
 }

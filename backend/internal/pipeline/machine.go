@@ -3,7 +3,7 @@ package pipeline
 import (
 	"fmt"
 
-	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
 var StageOrder = []model.StageName{
@@ -43,7 +43,9 @@ func NextStage(current model.StageName) (model.StageName, error) {
 }
 
 // BuildPipelineState returns the full pipeline state for a project.
-func BuildPipelineState(currentStage model.StageName) model.PipelineState {
+// activities maps stage names to their current or last-known activity (may be nil).
+// summaryApproved marks the complete stage as approved when the summary has been saved to docs.
+func BuildPipelineState(currentStage model.StageName, activities map[model.StageName]*model.StageActivity, summaryApproved bool) model.PipelineState {
 	currentIdx := stageIndex(currentStage)
 	stages := make([]model.StageInfo, len(StageOrder))
 
@@ -53,7 +55,11 @@ func BuildPipelineState(currentStage model.StageName) model.PipelineState {
 		case i < currentIdx:
 			status = model.StageStatusApproved
 		case i == currentIdx:
-			status = model.StageStatusActive
+			if summaryApproved && name == model.StageComplete {
+				status = model.StageStatusApproved
+			} else {
+				status = model.StageStatusActive
+			}
 		default:
 			status = model.StageStatusLocked
 		}
@@ -61,6 +67,7 @@ func BuildPipelineState(currentStage model.StageName) model.PipelineState {
 			Name:         name,
 			Status:       status,
 			ArtifactPath: ArtifactPaths[name],
+			Activity:     activities[name],
 		}
 	}
 

@@ -7,14 +7,23 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"regexp"
 	"strings"
 
-	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
 // ErrPlanLimit is returned when Claude hits its plan/turn limit.
 var ErrPlanLimit = errors.New("claude plan limit reached")
+
+// claudeBin is the path to the claude executable. Defaults to "claude" (PATH lookup).
+var claudeBin = "claude"
+
+// SetClaudePath overrides the claude executable path used by all agent functions.
+func SetClaudePath(path string) {
+	if path != "" {
+		claudeBin = path
+	}
+}
 
 // StreamEvent represents an event sent to the client via SSE.
 type StreamEvent struct {
@@ -47,7 +56,6 @@ type claudeContent struct {
 	Text string `json:"text"`
 }
 
-var artifactRegex = regexp.MustCompile(`(?s)<!-- ARTIFACT:START -->\s*(.*?)\s*<!-- ARTIFACT:END -->`)
 
 // Chat spawns a Claude CLI subprocess and streams the response.
 // modelID selects the Claude model (e.g. "claude-sonnet-4-6"); empty string uses the CLI default.
@@ -58,12 +66,13 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
+		"--include-partial-messages",
 		"--system-prompt", systemPrompt,
 	}
 	if modelID != "" {
 		args = append(args, "--model", modelID)
 	}
-	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd := exec.CommandContext(ctx, claudeBin, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = projectDir
 
@@ -83,6 +92,7 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 		defer cmd.Wait()
 
 		var fullResponse strings.Builder
+		var filter StreamFilter
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -103,7 +113,9 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 					for _, c := range event.Message.Content {
 						if c.Type == "text" && c.Text != "" {
 							fullResponse.WriteString(c.Text)
-							ch <- StreamEvent{Type: "chunk", Content: c.Text}
+							if visible := filter.Feed(c.Text); visible != "" {
+								ch <- StreamEvent{Type: "chunk", Content: visible}
+							}
 						}
 					}
 				}
@@ -119,7 +131,9 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 				// result is the final event; use it if assistant produced nothing
 				if fullResponse.Len() == 0 && event.Result != "" {
 					fullResponse.WriteString(event.Result)
-					ch <- StreamEvent{Type: "chunk", Content: event.Result}
+					if visible := filter.Feed(event.Result); visible != "" {
+						ch <- StreamEvent{Type: "chunk", Content: visible}
+					}
 				}
 			}
 		}
@@ -130,19 +144,19 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 	return ch, nil
 }
 
-// ExtractArtifact extracts content between ARTIFACT:START and ARTIFACT:END markers.
+// ExtractArtifact extracts the artifact section from a Claude XML envelope response.
 func ExtractArtifact(response string) (string, bool) {
-	matches := artifactRegex.FindStringSubmatch(response)
-	if len(matches) < 2 {
+	a := ParseResponse(response).Artifact
+	if a == "" {
 		return "", false
 	}
-	return strings.TrimSpace(matches[1]), true
+	return a, true
 }
 
-// StripArtifact removes the ARTIFACT:START...ARTIFACT:END block from a response string.
+// StripArtifact returns the discussion section of a Claude XML envelope response,
+// omitting the artifact block.
 func StripArtifact(response string) string {
-	stripped := artifactRegex.ReplaceAllString(response, "")
-	return strings.TrimSpace(stripped)
+	return ParseResponse(response).Discussion
 }
 
 func formatConversation(history []model.Message, newMessage string) string {

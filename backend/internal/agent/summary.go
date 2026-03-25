@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/michelroberge/claudine/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
 const summarySystemPrompt = `You are a technical writer summarizing a completed product development iteration.
@@ -18,7 +18,14 @@ You will receive the approved artifacts from all pipeline stages (Vision, UX, Ar
 
 Produce a concise summary document that captures the essential decisions and outcomes. This summary will be used as context for future enhancement iterations, so focus on what a future AI agent would need to understand to build upon this work.
 
-Output the summary directly (no delimiters needed):
+OUTPUT FORMAT: Wrap your entire response in <response>...</response> and put all content in <discussion>...</discussion>:
+<response>
+<discussion>
+...summary here...
+</discussion>
+</response>
+
+Output the summary inside the XML envelope:
 
 # Iteration Summary: {Product Name} v{version}
 
@@ -72,10 +79,11 @@ func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, pr
 		prompt.WriteString(fmt.Sprintf("## %s Artifact\n---\n%s\n---\n\n", s.label, content))
 	}
 
-	cmd := exec.CommandContext(ctx, "claude",
+	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
+		"--include-partial-messages",
 		"--model", "claude-sonnet-4-6",
 		"--system-prompt", summarySystemPrompt,
 	)
@@ -131,7 +139,11 @@ func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, pr
 			}
 		}
 
-		ch <- StreamEvent{Type: "done", Content: fullText.String()}
+		summary := ParseResponse(fullText.String()).Discussion
+		if summary == "" {
+			summary = strings.TrimSpace(fullText.String())
+		}
+		ch <- StreamEvent{Type: "done", Content: summary}
 	}()
 
 	return ch, nil

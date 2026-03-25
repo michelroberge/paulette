@@ -11,22 +11,24 @@ type Config struct {
 	Port         int
 	RegistryPath string
 	ReposPath    string
+	ClaudePath   string
 	Version      string
 	Author       string
 }
 
-// Settings represents user-persisted configuration saved by "claudine init".
+// Settings represents user-persisted configuration saved by "paulette init".
 type Settings struct {
-	ReposPath string `json:"reposPath,omitempty"`
+	ReposPath  string `json:"reposPath,omitempty"`
+	ClaudePath string `json:"claudePath,omitempty"`
 }
 
 // SettingsPath returns the path to the settings file.
 func SettingsPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claudine", "settings.json")
+	return filepath.Join(home, ".paulette", "settings.json")
 }
 
-// LoadSettings reads ~/.claudine/settings.json (returns zero value if missing).
+// LoadSettings reads ~/.paulette/settings.json (returns zero value if missing).
 func LoadSettings() Settings {
 	var s Settings
 	data, err := os.ReadFile(SettingsPath())
@@ -37,7 +39,7 @@ func LoadSettings() Settings {
 	return s
 }
 
-// SaveSettings writes settings to ~/.claudine/settings.json.
+// SaveSettings writes settings to ~/.paulette/settings.json.
 func SaveSettings(s Settings) error {
 	path := SettingsPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -61,7 +63,7 @@ func Load() *Config {
 
 	registryPath := os.Getenv("REGISTRY_PATH")
 	if registryPath == "" {
-		registryPath = filepath.Join(home, ".claudine")
+		registryPath = filepath.Join(home, ".paulette")
 	}
 
 	// Priority: env var > settings.json > default
@@ -70,7 +72,16 @@ func Load() *Config {
 		reposPath = settings.ReposPath
 	}
 	if reposPath == "" {
-		reposPath = filepath.Join(home, ".claudine", "repos")
+		reposPath = filepath.Join(home, ".paulette", "repos")
+	}
+
+	// Priority: env var > settings.json > default ("claude")
+	claudePath := os.Getenv("CLAUDE_PATH")
+	if claudePath == "" {
+		claudePath = settings.ClaudePath
+	}
+	if claudePath == "" {
+		claudePath = "claude"
 	}
 
 	version, author := loadProjectMeta()
@@ -79,6 +90,7 @@ func Load() *Config {
 		Port:         port,
 		RegistryPath: registryPath,
 		ReposPath:    reposPath,
+		ClaudePath:   claudePath,
 		Version:      version,
 		Author:       author,
 	}
@@ -89,7 +101,7 @@ func loadProjectMeta() (version, author string) {
 	if err != nil {
 		return "", ""
 	}
-	data, err := os.ReadFile(filepath.Join(cwd, ".claudine", "project.json"))
+	data, err := os.ReadFile(filepath.Join(cwd, ".paulette", "project.json"))
 	if err != nil {
 		return "", ""
 	}

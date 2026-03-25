@@ -1,0 +1,16 @@
+{
+  "id": "9287a19a-3bba-447e-a22b-7abdf79511de",
+  "name": "paulette",
+  "author": "Michel Roberge",
+  "version": "0.1.0",
+  "hostDir": "/root/repos/paulette",
+  "currentStage": "complete",
+  "iteration": 1,
+  "imported": true,
+  "summaryReady": true,
+  "summaryApproved": true,
+  "autonomous": false,
+  "baseBranch": "develop",
+  "createdAt": "2026-03-25T14:40:10.532830075Z",
+  "updatedAt": "2026-03-25T19:38:29.588556948Z"
+}

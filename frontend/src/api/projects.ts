@@ -20,7 +20,7 @@ export function deleteProject(id: string): Promise<void> {
   return apiFetch<void>(`/projects/${id}`, { method: 'DELETE' });
 }
 
-export function patchProject(id: string, data: { autonomous?: boolean }): Promise<Project> {
+export function patchProject(id: string, data: { autonomous?: boolean; baseBranch?: string }): Promise<Project> {
   return apiFetch<Project>(`/projects/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(data),

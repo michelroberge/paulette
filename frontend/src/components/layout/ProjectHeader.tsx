@@ -11,11 +11,12 @@ interface Props {
   onBack: () => void;
   totalTokens?: number;
   onShowHistory?: () => void;
+  onShowProfile?: () => void;
   autonomous?: boolean;
   onToggleAutonomous?: () => void;
 }
 
-export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, autonomous, onToggleAutonomous }: Props) {
+export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onShowProfile, autonomous, onToggleAutonomous }: Readonly<Props>) {
   return (
     <header className="project-header">
       <button className="back-button" onClick={onBack}>&larr;</button>
@@ -23,7 +24,10 @@ export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, aut
       <span className="version">
         v{project.version}{project.iteration > 1 && ` (iter ${project.iteration})`}
       </span>
-      <span className="author">{project.author}</span>
+      {onShowProfile
+        ? <button className="author-button" onClick={onShowProfile}>{project.author}</button>
+        : <span className="author">{project.author}</span>
+      }
       {(totalTokens ?? 0) > 0 && (
         <span className="header-token-total">{formatTokens(totalTokens!)} tok</span>
       )}
@@ -37,8 +41,8 @@ export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, aut
         </button>
       )}
       {onShowHistory && (
-        <button className="history-button" onClick={onShowHistory} title="Version History">
-          History
+        <button className="history-button" onClick={onShowHistory} title="Git">
+          Git
         </button>
       )}
     </header>

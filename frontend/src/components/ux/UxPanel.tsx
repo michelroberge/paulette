@@ -13,18 +13,17 @@ interface Props {
   onRequestMockTab?: () => void;
   hidden?: boolean;
   onMockTokens?: (n: number) => void;
-  autoGenerate?: boolean;
   onMockComplete?: () => void;
   onMockLoaded?: () => void;
 }
 
-export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hidden, onMockTokens, autoGenerate, onMockComplete, onMockLoaded }: Props) {
+export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hidden, onMockTokens, onMockComplete, onMockLoaded }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [refinement, setRefinement] = useState('');
 
   const streamRef = useRef<HTMLDivElement>(null);
-  const { html, generating, tokenCount, streamingText, loaded, load, generate, stop } = useMock(projectId);
+  const { html, generating, tokenCount, streamingText, loaded, error, load, generate, stop } = useMock(projectId);
 
   // Report final token count when a generation completes
   const prevGenerating = useRef(false);
@@ -64,12 +63,6 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
       onMockLoaded?.();
     }
   }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-generate mock in autonomous mode
-  useEffect(() => {
-    if (!autoGenerate || !artifactExists || html || generating || !loaded) return;
-    generate('');
-  }, [autoGenerate, artifactExists, html, generating, loaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Notify parent when mock generation completes
   const prevGeneratingForComplete = useRef(false);
@@ -150,7 +143,13 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
         {mode === 'mock' && (
           <div className="mock-split-layout">
             <div className="mock-main-column">
-              {!html && !generating && loaded && (
+              {error && !generating && (
+                <div className="artifact-preview empty">
+                  <p style={{ color: '#f87171' }}>Generation failed: {error}</p>
+                </div>
+              )}
+
+              {!html && !generating && !error && loaded && (
                 <div className="artifact-preview empty">
                   <p>No mock preview yet.</p>
                   <p>Click <strong>Generate Mock Preview</strong> to create wireframes from the UX artifact.</p>
@@ -180,7 +179,7 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
                 )}
               </div>
               <div className="mock-activity-content" ref={streamRef}>
-                {streamingText || html || ''}
+                {streamingText || html || (generating ? 'Generating wireframes…\n\nThis may take up to 30 seconds.' : '')}
               </div>
             </div>
           </div>

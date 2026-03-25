@@ -6,26 +6,28 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/agent"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/repository"
-	fsrepo "github.com/michelroberge/claudine/backend/internal/repository/fs"
-	"github.com/michelroberge/claudine/backend/internal/stream"
+	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/repository"
+	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
+	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
-const mockRelPath = ".claudine/ux/mock.html"
+const mockRelPath = ".paulette/ux/mock.html"
 
 type MockHandler struct {
 	registry     repository.RegistryRepo
 	artifactRepo repository.ArtifactRepo
+	activityRepo repository.ActivityRepo
 	runs         *stream.Manager
 }
 
-func NewMockHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager) *MockHandler {
-	return &MockHandler{registry: registry, artifactRepo: artifactRepo, runs: runs}
+func NewMockHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager) *MockHandler {
+	return &MockHandler{registry: registry, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs}
 }
 
 type mockGetResponse struct {
@@ -44,13 +46,21 @@ func (h *MockHandler) Get(w http.ResponseWriter, r *http.Request) {
 	p := filepath.Join(project.HostDir, mockRelPath)
 	b, err := os.ReadFile(p)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if !os.IsNotExist(err) {
+			http.Error(w, "failed to read mock: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Not in .paulette — fall back to docs/{version}/ux/mock.html
+		b, err = fsrepo.ReadMockDoc(project.HostDir, project.Version)
+		if err != nil {
+			http.Error(w, "failed to read mock: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if b == nil {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(mockGetResponse{Exists: false})
 			return
 		}
-		http.Error(w, "failed to read mock: "+err.Error(), http.StatusInternalServerError)
-		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -79,41 +89,57 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	var req generateMockRequest
 	json.NewDecoder(r.Body).Decode(&req) // optional body — ignore decode errors
 
+	run, err := h.StartMockRun(project, req.Refinement)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if run == nil {
+		http.Error(w, "mock generation is already running", http.StatusConflict)
+		return
+	}
+
+	run.StreamTo(w, r, 0)
+}
+
+// StartMockRun starts a mock generation run without HTTP plumbing.
+// Returns (nil, nil) on race condition.
+func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*stream.Run, error) {
 	// Use UX artifact if available, fall back to vision artifact
 	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
 	if uxContent == "" {
 		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
 	}
 	if uxContent == "" {
-		http.Error(w, "no artifact available — chat with the agent to generate content first", http.StatusBadRequest)
-		return
+		return nil, fmt.Errorf("no artifact available — chat with the agent to generate content first")
 	}
 
 	frameworkCfg, _ := fsrepo.ReadFramework(project.HostDir)
 
-	// Start a managed run
-	run := h.runs.Start(id, "ux", "mock")
+	run := h.runs.Start(project.ID, "ux", "mock")
 	if run == nil {
-		http.Error(w, "mock generation is already running", http.StatusConflict)
-		return
+		return nil, nil // race: already started
 	}
+	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
 
-	events, err := agent.GenerateMock(run.Context(), uxContent, req.Refinement, frameworkCfg)
+	events, err := agent.GenerateMock(run.Context(), uxContent, refinement, frameworkCfg)
 	if err != nil {
+		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
 		run.Finish(h.runs)
-		http.Error(w, "failed to start mock generation: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to start mock generation: %w", err)
 	}
 
-	// Background goroutine: process events, save result
 	go func() {
 		defer run.Finish(h.runs)
+		defer clearActivity(h.activityRepo, project.HostDir, model.StageUX)
 
 		var stageTokensAccum int
+		runStart := time.Now()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(model.StageUX, stageTokensAccum)
 				h.registry.Update(project)
+				recordSession(project.HostDir, model.StageUX, model.SessionMock, project.Iteration, runStart, stageTokensAccum)
 			}
 		}()
 
@@ -125,10 +151,11 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 			}
 			if event.Type == "done" {
 				html := agent.ExtractHTML(event.Content)
-				// Save to disk
-				p := filepath.Join(project.HostDir, mockRelPath)
-				if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
-					os.WriteFile(p, []byte(html), 0644)
+				if html != "" {
+					p := filepath.Join(project.HostDir, mockRelPath)
+					if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
+						os.WriteFile(p, []byte(html), 0644)
+					}
 				}
 				run.Emit(agent.StreamEvent{Type: "done", Content: html})
 			} else {
@@ -137,7 +164,7 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	run.StreamTo(w, r, 0)
+	return run, nil
 }
 
 // --- Framework endpoints ---

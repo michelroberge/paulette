@@ -12,12 +12,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/michelroberge/claudine/backend/internal/agent"
-	"github.com/michelroberge/claudine/backend/internal/model"
-	"github.com/michelroberge/claudine/backend/internal/pipeline"
-	"github.com/michelroberge/claudine/backend/internal/repository"
-	fsrepo "github.com/michelroberge/claudine/backend/internal/repository/fs"
-	"github.com/michelroberge/claudine/backend/internal/stream"
+	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/repository"
+	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
+	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
 // stageModels maps each pipeline stage to the Claude model to use for chat.
@@ -32,14 +32,16 @@ type ChatHandler struct {
 	registry     repository.RegistryRepo
 	chatRepo     repository.ChatRepo
 	artifactRepo repository.ArtifactRepo
+	activityRepo repository.ActivityRepo
 	runs         *stream.Manager
 }
 
-func NewChatHandler(registry repository.RegistryRepo, chatRepo repository.ChatRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager) *ChatHandler {
+func NewChatHandler(registry repository.RegistryRepo, chatRepo repository.ChatRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager) *ChatHandler {
 	return &ChatHandler{
 		registry:     registry,
 		chatRepo:     chatRepo,
 		artifactRepo: artifactRepo,
+		activityRepo: activityRepo,
 		runs:         runs,
 	}
 }
@@ -60,8 +62,13 @@ func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nextTurn := "agent"
+	if len(messages) > 0 && messages[len(messages)-1].Role == model.RoleAssistant {
+		nextTurn = "user"
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(model.ChatHistory{Messages: messages})
+	json.NewEncoder(w).Encode(model.ChatHistory{Messages: messages, NextTurn: nextTurn})
 }
 
 type sendMessageRequest struct {
@@ -91,15 +98,171 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	run, err := h.StartChatRun(project, stage, req.Message)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if run == nil {
+		http.Error(w, "an agent is already running for this stage", http.StatusConflict)
+		return
+	}
+
+	// Stream to this client (blocks until run finishes or client disconnects)
+	run.StreamTo(w, r, 0)
+}
+
+// Resume re-invokes the agent for a stage where the last message is from the user but
+// no agent response was produced (e.g. due to a server restart mid-generation).
+func (h *ChatHandler) Resume(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	stage := model.StageName(chi.URLParam(r, "stage"))
+
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	if existing := h.runs.Active(id, string(stage), "chat"); existing != nil {
+		existing.StreamTo(w, r, 0)
+		return
+	}
+
+	history, err := h.chatRepo.GetHistory(project.HostDir, stage)
+	if err != nil {
+		http.Error(w, "failed to get chat history: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if len(history) == 0 || history[len(history)-1].Role != model.RoleUser {
+		http.Error(w, "nothing to resume: last message is not from user", http.StatusBadRequest)
+		return
+	}
+
+	lastUserMsg := history[len(history)-1].Content
+	priorHistory := history[:len(history)-1]
+
+	run, err := h.resumeChatRun(project, stage, priorHistory, lastUserMsg)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if run == nil {
+		http.Error(w, "an agent is already running for this stage", http.StatusConflict)
+		return
+	}
+
+	run.StreamTo(w, r, 0)
+}
+
+// resumeChatRun starts a chat run using existing history and a prior user message,
+// without appending a new user message to the stored history.
+func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageName, history []model.Message, message string) (*stream.Run, error) {
+	previousArtifacts := make(map[model.StageName]string)
+	for _, s := range pipeline.StageOrder {
+		if s == stage {
+			break
+		}
+		content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, s)
+		if content != "" {
+			previousArtifacts[s] = content
+		}
+	}
+
+	var frameworkCfg *model.FrameworkConfig
+	if stage == model.StageUX {
+		frameworkCfg, _ = fsrepo.ReadFramework(project.HostDir)
+	}
+
+	var enhCtx *agent.EnhancementContext
+	if project.EnhancementVision != "" {
+		enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
+		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+		if data, err := os.ReadFile(summaryPath); err == nil {
+			enhCtx.Summary = string(data)
+		}
+		prevVersion := findPriorIterationVersion(project.HostDir)
+		if prevVersion != "" {
+			priorArtifactPath := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
+			if data, err := os.ReadFile(priorArtifactPath); err == nil {
+				enhCtx.PriorArtifact = string(data)
+			}
+		}
+	}
+
+	systemPrompt := agent.GetSystemPrompt(stage, project.Version, previousArtifacts, frameworkCfg, enhCtx)
+
+	run := h.runs.Start(project.ID, string(stage), "chat")
+	if run == nil {
+		return nil, nil // race
+	}
+	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
+
+	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, message, project.HostDir)
+	if err != nil {
+		clearActivity(h.activityRepo, project.HostDir, stage)
+		run.Finish(h.runs)
+		return nil, fmt.Errorf("failed to start agent: %w", err)
+	}
+
+	go func() {
+		defer run.Finish(h.runs)
+		defer clearActivity(h.activityRepo, project.HostDir, stage)
+
+		var stageTokensAccum int
+		runStart := time.Now()
+		defer func() {
+			if stageTokensAccum > 0 {
+				project.AddStageTokens(stage, stageTokensAccum)
+				h.registry.Update(project)
+				recordSession(project.HostDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
+			}
+		}()
+
+		for event := range events {
+			if event.Type == "tokens" {
+				var n int
+				fmt.Sscanf(event.Content, "%d", &n)
+				stageTokensAccum += n
+			}
+			if event.Type == "done" {
+				if artifact, found := agent.ExtractArtifact(event.Content); found {
+					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
+						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
+					} else {
+						run.Emit(agent.StreamEvent{Type: "artifact", Content: string(stage) + "/" + string(stage) + ".md"})
+					}
+				}
+
+				chatContent := agent.StripArtifact(event.Content)
+				assistantMsg := model.Message{
+					Role:      model.RoleAssistant,
+					Content:   chatContent,
+					Timestamp: time.Now(),
+				}
+				h.chatRepo.AppendMessage(project.HostDir, stage, assistantMsg)
+
+				run.Emit(agent.StreamEvent{Type: "done", Content: chatContent})
+			} else {
+				run.Emit(event)
+			}
+		}
+	}()
+
+	return run, nil
+}
+
+// StartChatRun starts a chat run without HTTP plumbing. The caller is responsible for
+// checking whether a run is already active before calling this. Returns (nil, nil) on race.
+func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName, message string) (*stream.Run, error) {
 	// Save user message
 	userMsg := model.Message{
 		Role:      model.RoleUser,
-		Content:   req.Message,
+		Content:   message,
 		Timestamp: time.Now(),
 	}
 	if err := h.chatRepo.AppendMessage(project.HostDir, stage, userMsg); err != nil {
-		http.Error(w, "failed to save message: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to save message: %w", err)
 	}
 
 	// Load previous artifacts for system prompt
@@ -123,15 +286,13 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	var enhCtx *agent.EnhancementContext
 	if project.EnhancementVision != "" {
 		enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-		// Load summary from current .claudine (it was archived but also kept)
-		summaryPath := filepath.Join(project.HostDir, ".claudine", "summary.md")
+		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 		if data, err := os.ReadFile(summaryPath); err == nil {
 			enhCtx.Summary = string(data)
 		}
-		// Load prior iteration's artifact for this stage
 		prevVersion := findPriorIterationVersion(project.HostDir)
 		if prevVersion != "" {
-			priorArtifactPath := filepath.Join(project.HostDir, ".claudine", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
+			priorArtifactPath := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
 			if data, err := os.ReadFile(priorArtifactPath); err == nil {
 				enhCtx.PriorArtifact = string(data)
 			}
@@ -143,8 +304,7 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	// Get chat history for context
 	history, err := h.chatRepo.GetHistory(project.HostDir, stage)
 	if err != nil {
-		http.Error(w, "failed to get chat history: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to get chat history: %w", err)
 	}
 	// Remove the last message (the one we just appended) since we pass it separately
 	if len(history) > 0 {
@@ -152,29 +312,33 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Start a managed run
-	run := h.runs.Start(id, string(stage), "chat")
+	run := h.runs.Start(project.ID, string(stage), "chat")
 	if run == nil {
-		http.Error(w, "an agent is already running for this stage", http.StatusConflict)
-		return
+		return nil, nil // race: already started
 	}
+	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
 
 	// Start Claude CLI subprocess using the run's context (survives client disconnect)
-	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, req.Message, project.HostDir)
+	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, message, project.HostDir)
 	if err != nil {
+		clearActivity(h.activityRepo, project.HostDir, stage)
 		run.Finish(h.runs)
-		http.Error(w, "failed to start agent: "+err.Error(), http.StatusInternalServerError)
-		return
+		return nil, fmt.Errorf("failed to start agent: %w", err)
 	}
 
-	// Background goroutine: process agent events, emit through run
+	// Background goroutine: process agent events, emit through run.
+	// LIFO defer: clearActivity runs first, then run.Finish — watcher sees clean state.
 	go func() {
 		defer run.Finish(h.runs)
+		defer clearActivity(h.activityRepo, project.HostDir, stage)
 
 		var stageTokensAccum int
+		runStart := time.Now()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(stage, stageTokensAccum)
 				h.registry.Update(project)
+				recordSession(project.HostDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
 			}
 		}()
 
@@ -210,8 +374,7 @@ func (h *ChatHandler) Send(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Stream to this client (blocks until run finishes or client disconnects)
-	run.StreamTo(w, r, 0)
+	return run, nil
 }
 
 func sseWrite(w http.ResponseWriter, flusher http.Flusher, event agent.StreamEvent) {
@@ -222,7 +385,7 @@ func sseWrite(w http.ResponseWriter, flusher http.Flusher, event agent.StreamEve
 
 // findPriorIterationVersion finds the most recent archived iteration version.
 func findPriorIterationVersion(hostDir string) string {
-	iterDir := filepath.Join(hostDir, ".claudine", "iterations")
+	iterDir := filepath.Join(hostDir, ".paulette", "iterations")
 	entries, err := os.ReadDir(iterDir)
 	if err != nil {
 		return ""
