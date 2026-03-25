@@ -49,8 +49,9 @@ export function startLogin(
   };
 
   es.onerror = () => {
-    es.close();
-    onError('Lost connection to auth stream');
+    // Do NOT close — EventSource will auto-reconnect, which triggers a new
+    // backend session.  The reconnect will stream a fresh OAuth URL.
+    onError('Connection lost — reconnecting… you may need to re-authorize with the new URL.');
   };
 
   return () => es.close();

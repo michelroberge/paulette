@@ -17,8 +17,8 @@ export function regenerateSummary(projectId: string): Promise<void> {
   return apiFetch<void>(`/projects/${projectId}/pipeline/summary`, { method: 'POST' });
 }
 
-export function getSummary(projectId: string): Promise<{ content: string; exists: boolean }> {
-  return apiFetch<{ content: string; exists: boolean }>(`/projects/${projectId}/pipeline/summary`);
+export function getSummary(projectId: string): Promise<{ content: string; exists: boolean; approved?: boolean }> {
+  return apiFetch<{ content: string; exists: boolean; approved?: boolean }>(`/projects/${projectId}/pipeline/summary`);
 }
 
 export function approveSummary(projectId: string): Promise<void> {

@@ -45,6 +45,7 @@ export function CompletionView({ project, activity, onNewProject, onViewStage, o
     if (project.summaryReady) {
       getSummary(project.id).then(res => {
         if (res.exists) setSummaryContent(res.content);
+        if (res.approved) setSummaryApproved(true);
       }).catch(console.error);
     }
   }, [project.id, project.summaryReady]);

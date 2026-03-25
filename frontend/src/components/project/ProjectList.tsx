@@ -13,14 +13,19 @@ const STAGE_LABELS: Record<string, string> = {
   vision: 'Vision', ux: 'UX', architecture: 'Arch', build: 'Build', complete: 'Done',
 };
 
-function StageProgress({ currentStage }: { currentStage: string }) {
+function StageProgress({ currentStage }: Readonly<{ currentStage: string }>) {
   const current = STAGE_ORDER.indexOf(currentStage as StageName);
+  const getPipClass = (i: number) => {
+    if (i < current) return 'done';
+    if (i === current) return 'active';
+    return '';
+  };
   return (
     <div className="stage-progress">
       {STAGE_ORDER.slice(0, -1).map((s, i) => (
         <div
           key={s}
-          className={`stage-pip ${i < current ? 'done' : i === current ? 'active' : ''}`}
+          className={`stage-pip ${getPipClass(i)}`}
           title={STAGE_LABELS[s]}
         >
           <StageRobot stage={s} size="small" />
@@ -32,7 +37,7 @@ function StageProgress({ currentStage }: { currentStage: string }) {
 }
 
 interface Props {
-  onSelect: (project: Project) => void;
+  readonly onSelect: (project: Project) => void;
 }
 
 export function ProjectList({ onSelect }: Props) {
@@ -61,6 +66,7 @@ export function ProjectList({ onSelect }: Props) {
   const [loginCode, setLoginCode] = useState('');
   const [loginCodeSent, setLoginCodeSent] = useState(false);
   const loginCleanup = useRef<(() => void) | null>(null);
+  const authPollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     listProjects().then(setProjects).catch(console.error);
@@ -70,6 +76,7 @@ export function ProjectList({ onSelect }: Props) {
       setAppAuthor(c.author);
     }).catch(console.error);
     getAuthStatus().then(setAuthStatus).catch(console.error);
+    return () => { if (authPollTimer.current) clearInterval(authPollTimer.current); };
   }, []);
 
   useEffect(() => {
@@ -80,7 +87,7 @@ export function ProjectList({ onSelect }: Props) {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreate = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     const project = await createProject({ name, author, ...(hostDir ? { hostDir } : {}), version });
     setProjects(prev => [...prev, project]);
@@ -92,7 +99,7 @@ export function ProjectList({ onSelect }: Props) {
     onSelect(project);
   };
 
-  const handleImport = async (e: React.FormEvent) => {
+  const handleImport = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     setImporting(true);
     try {
@@ -138,21 +145,44 @@ export function ProjectList({ onSelect }: Props) {
   const handleLogout = async () => {
     loginCleanup.current?.();
     loginCleanup.current = null;
+    if (authPollTimer.current) { clearInterval(authPollTimer.current); authPollTimer.current = null; }
     await logout().catch(console.error);
     setAuthStatus({ authenticated: false });
     setShowLoginPanel(false);
     setLoginLines([]);
   };
 
-  const handleSubmitCode = async (e: React.FormEvent) => {
+  const handleSubmitCode = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!loginCode.trim()) return;
     try {
       await sendLoginCode(loginCode.trim());
       setLoginCodeSent(true);
       setLoginCode('');
+      // Close the SSE stream — no longer needed once code is submitted.
+      // Then poll auth status directly, since the SSE done event can be
+      // lost if the connection drops while the CLI exchanges the token.
+      loginCleanup.current?.();
+      loginCleanup.current = null;
+      let attempts = 0;
+      authPollTimer.current = setInterval(() => {
+        attempts++;
+        getAuthStatus().then(status => {
+          if (status.authenticated) {
+            clearInterval(authPollTimer.current!);
+            authPollTimer.current = null;
+            setAuthStatus(status);
+            setShowLoginPanel(false);
+          } else if (attempts >= 30) {
+            clearInterval(authPollTimer.current!);
+            authPollTimer.current = null;
+            setLoginError('Authentication timed out — please try again.');
+            setLoginCodeSent(false);
+          }
+        }).catch(console.error);
+      }, 2000);
     } catch (err) {
-      setLoginError('Failed to send code — try closing and re-opening the login panel.');
+      setLoginError(`Failed to send code: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -191,7 +221,7 @@ export function ProjectList({ onSelect }: Props) {
         </pre>
         <div className="paulette-title-block">
           <h1>paulette</h1>
-          <span className="paulette-subtitle">AI App Factory</span>
+          <span className="paulette-subtitle">AI App Factory 1</span>
           <span className="paulette-version">{appVersion ? `v${appVersion}` : ''}</span>
         </div>
       </div>
@@ -243,7 +273,7 @@ export function ProjectList({ onSelect }: Props) {
             <form className="auth-code-form" onSubmit={handleSubmitCode}>
               <input
                 className="auth-code-input"
-                placeholder="Paste authorization code here…"
+                placeholder="Paste the redirect URL from your browser address bar…"
                 value={loginCode}
                 onChange={e => setLoginCode(e.target.value)}
                 autoFocus
@@ -251,10 +281,10 @@ export function ProjectList({ onSelect }: Props) {
               <button type="submit" className="auth-action" disabled={!loginCode.trim()}>Submit</button>
             </form>
           )}
-          {loginCodeSent && <p className="auth-hint">Code sent — waiting for confirmation…</p>}
+          {loginCodeSent && <p className="auth-hint">Completing auth — please wait…</p>}
           {!loginCodeSent && (
             <p className="auth-hint">
-              Open the link above, authorize, then paste the code you receive back here.
+              Open the link above and authorize. If the redirect page fails to load, copy the full URL from your browser&apos;s address bar and paste it above.
             </p>
           )}
         </div>

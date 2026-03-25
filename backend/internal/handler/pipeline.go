@@ -349,19 +349,27 @@ func (h *PipelineHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "project not found", http.StatusNotFound)
 		return
 	}
+	approved := project.SummaryApproved
 	summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 	b, err := os.ReadFile(summaryPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{"content": "", "exists": false})
+			// Fall back to the approved docs copy
+			docPath := filepath.Join(project.HostDir, "docs", project.Version, "summary.md")
+			b, err = os.ReadFile(docPath)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]interface{}{"content": "", "exists": false})
+				return
+			}
+			approved = true
+		} else {
+			http.Error(w, "failed to read summary: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		http.Error(w, "failed to read summary: "+err.Error(), http.StatusInternalServerError)
-		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"content": string(b), "exists": true})
+	json.NewEncoder(w).Encode(map[string]interface{}{"content": string(b), "exists": true, "approved": approved})
 }
 
 // RegenerateSummary allows the client to re-trigger summary generation if it failed.

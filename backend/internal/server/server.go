@@ -63,7 +63,16 @@ func (s *Server) Orchestrator() *autopilot.Orchestrator {
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(middleware.Logger)
+	r.Use(func(next http.Handler) http.Handler {
+		logger := middleware.Logger(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/projects/activity" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			logger.ServeHTTP(w, r)
+		})
+	})
 	r.Use(middleware.Recoverer)
 
 	c := cors.New(cors.Options{

@@ -54,6 +54,7 @@ export interface Message {
 
 export interface ChatHistory {
   messages: Message[];
+  nextTurn: 'agent' | 'user';
 }
 
 export interface StreamEvent {

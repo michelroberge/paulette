@@ -39,8 +39,19 @@ COPY --from=go-builder /paulette /usr/local/bin/paulette
 
 # Non-root user for runtime
 RUN useradd -m -s /bin/bash paulette && \
-    mkdir -p /home/paulette/.paulette /home/paulette/repos && \
-    chown -R paulette:paulette /home/paulette/.paulette /home/paulette/repos
+    mkdir -p /home/paulette/.paulette /home/paulette/repos \
+             /home/paulette/.claude && \
+    printf '%s' \
+        '{"permissions":{"allow":[' \
+        '"Write(/home/paulette/repos/**)",' \
+        '"Edit(/home/paulette/repos/**)",' \
+        '"Bash(*)",' \
+        '"Read(/home/paulette/repos/**)"' \
+        ']}}' \
+        > /home/paulette/.claude/settings.json && \
+    chown -R paulette:paulette /home/paulette/.paulette \
+                               /home/paulette/repos \
+                               /home/paulette/.claude
 USER paulette
 WORKDIR /home/paulette
 

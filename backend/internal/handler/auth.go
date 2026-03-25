@@ -1,28 +1,109 @@
 package handler
 
 import (
-	"bufio"
-	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
-// AuthHandler handles Claude CLI authentication status and login flows.
-type AuthHandler struct {
-	claudePath string
-	mu         sync.Mutex
-	loginStdin io.WriteCloser
+const (
+	contentTypeJSON = "application/json"
+	contentTypeSSE  = "text/event-stream"
+
+	claudeClientID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	claudeTokenURL    = "https://platform.claude.com/v1/oauth/token"
+	claudeRedirectURI = "https://platform.claude.com/oauth/code/callback"
+	claudeAuthBase    = "https://claude.ai/oauth/authorize"
+	claudeScope       = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+)
+
+// pkceSession holds an in-progress OAuth PKCE login flow.
+// It lives independently of any SSE connection so reconnecting clients
+// can replay the auth URL.
+type pkceSession struct {
+	authURL      string
+	codeVerifier string
+	state        string
+
+	mu   sync.Mutex
+	done bool
+	err  string
+	ch   chan struct{} // closed each time state changes
 }
 
-func NewAuthHandler(claudePath string) *AuthHandler {
-	return &AuthHandler{claudePath: claudePath}
+func newPKCESession() (*pkceSession, error) {
+	verifier, err := randomBase64URL(32)
+	if err != nil {
+		return nil, err
+	}
+	state, err := randomBase64URL(32)
+	if err != nil {
+		return nil, err
+	}
+	challenge := pkceChallenge(verifier)
+
+	params := url.Values{}
+	params.Set("code", "true") // signals headless / manual-redirect flow
+	params.Set("client_id", claudeClientID)
+	params.Set("response_type", "code")
+	params.Set("redirect_uri", claudeRedirectURI)
+	params.Set("scope", claudeScope)
+	params.Set("code_challenge", challenge)
+	params.Set("code_challenge_method", "S256")
+	params.Set("state", state)
+
+	return &pkceSession{
+		authURL:      claudeAuthBase + "?" + params.Encode(),
+		codeVerifier: verifier,
+		state:        state,
+		ch:           make(chan struct{}),
+	}, nil
+}
+
+func (s *pkceSession) finish(errMsg string) {
+	s.mu.Lock()
+	s.done = true
+	s.err = errMsg
+	ch := s.ch
+	s.ch = make(chan struct{})
+	s.mu.Unlock()
+	if errMsg != "" {
+		fmt.Printf("[auth] session finished with error: %q\n", errMsg)
+	} else {
+		fmt.Printf("[auth] session finished successfully\n")
+	}
+	close(ch)
+}
+
+func (s *pkceSession) wait() (done bool, errMsg string, ch chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.done, s.err, s.ch
+}
+
+// AuthHandler handles Claude OAuth authentication.
+// It implements its own PKCE flow so that the token exchange runs inside the
+// container (no subprocess), avoiding the need for claude CLI to be installed
+// on the host machine.
+type AuthHandler struct {
+	mu      sync.Mutex
+	session *pkceSession
+}
+
+// NewAuthHandler constructs an AuthHandler.  claudePath is accepted for
+// interface compatibility but no longer used.
+func NewAuthHandler(_ string) *AuthHandler {
+	return &AuthHandler{}
 }
 
 // authStatus is the JSON shape returned by GET /api/auth/status.
@@ -31,21 +112,18 @@ type authStatus struct {
 	Account       string `json:"account,omitempty"`
 }
 
-// Status checks whether the claude CLI is authenticated by inspecting
-// ~/.claude/.credentials.json.  It also accepts a fallback of ANTHROPIC_API_KEY.
+// Status checks whether Claude credentials are available.
 func (h *AuthHandler) Status(w http.ResponseWriter, r *http.Request) {
 	status := h.checkStatus()
-	w.Header().Set("Content-Type", "application/json")
+	fmt.Printf("[auth] status: authenticated=%v account=%q\n", status.Authenticated, status.Account)
+	w.Header().Set("Content-Type", contentTypeJSON)
 	json.NewEncoder(w).Encode(status)
 }
 
 func (h *AuthHandler) checkStatus() authStatus {
-	// Fast-path: ANTHROPIC_API_KEY is always usable.
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
 		return authStatus{Authenticated: true, Account: "api-key"}
 	}
-
-	// Check for OAuth credentials stored by the claude CLI.
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return authStatus{}
@@ -55,14 +133,14 @@ func (h *AuthHandler) checkStatus() authStatus {
 	if err != nil {
 		return authStatus{}
 	}
-
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil || len(raw) == 0 {
+	var raw claudeCredentials
+	if err := json.Unmarshal(data, &raw); err != nil || raw.ClaudeAiOauth == nil {
 		return authStatus{}
 	}
-
-	// Try to extract an account identifier from known credential fields.
-	account := extractAccount(raw)
+	if raw.ClaudeAiOauth.AccessToken == "" {
+		return authStatus{}
+	}
+	account := raw.ClaudeAiOauth.SubscriptionType // e.g. "max", "pro"
 	return authStatus{Authenticated: true, Account: account}
 }
 
@@ -72,7 +150,6 @@ func extractAccount(raw map[string]any) string {
 			return v
 		}
 	}
-	// Walk one level deep into nested objects.
 	for _, v := range raw {
 		if m, ok := v.(map[string]any); ok {
 			if acct := extractAccount(m); acct != "" {
@@ -83,15 +160,14 @@ func extractAccount(raw map[string]any) string {
 	return ""
 }
 
-// Login starts a claude auth login subprocess and streams its output as
-// Server-Sent Events so the frontend can display the OAuth URL and
-// any instructions the CLI prints.
+// Login streams the OAuth auth URL as Server-Sent Events then waits for the
+// exchange to complete.  Reconnecting clients get the same URL replayed.
 //
-// The SSE stream sends events of the form:
+// SSE events:
 //
-//	data: {"type":"output","line":"..."}   — a line from claude stdout/stderr
-//	data: {"type":"done"}                  — subprocess exited (auth complete or failed)
-//	data: {"type":"error","message":"..."}
+//	data: {"type":"output","line":"..."}   — informational line (auth URL)
+//	data: {"type":"done"}                  — exchange succeeded
+//	data: {"type":"error","line":"..."}    — exchange failed
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -99,140 +175,261 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Content-Type", contentTypeSSE)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	send := func(eventType, payload string) {
 		data, _ := json.Marshal(map[string]string{"type": eventType, "line": payload})
+		fmt.Printf("[auth] login event: type=%s\n", eventType)
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	}
 
-	claudeBin := h.claudePath
-	if claudeBin == "" {
-		claudeBin = "claude"
-	}
-
-	// Run: claude auth login
-	// The CLI will print an OAuth URL and wait for the browser callback.
-	// In a container the browser cannot open, so the user must copy the URL
-	// from the output below and open it manually.
-	cmd := exec.CommandContext(r.Context(), claudeBin, "auth", "login")
-	cmd.Env = append(os.Environ(), "BROWSER=echo") // prevents the CLI from trying to open a GUI browser
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		send("error", "could not start auth: "+err.Error())
-		return
-	}
 	h.mu.Lock()
-	h.loginStdin = stdin
-	h.mu.Unlock()
-	defer func() {
-		h.mu.Lock()
-		h.loginStdin = nil
-		h.mu.Unlock()
-		stdin.Close()
-	}()
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		send("error", "could not start auth: "+err.Error())
-		return
-	}
-	cmd.Stderr = cmd.Stdout // merge stderr into the same pipe
-
-	if err := cmd.Start(); err != nil {
-		send("error", "could not start auth: "+err.Error())
-		return
-	}
-
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line != "" {
-			send("output", stripANSI(line))
-		}
-		// If the client disconnects, stop the subprocess.
-		select {
-		case <-r.Context().Done():
-			cmd.Process.Kill()
+	if h.session == nil {
+		sess, err := newPKCESession()
+		if err != nil {
+			h.mu.Unlock()
+			http.Error(w, "failed to start auth session: "+err.Error(), http.StatusInternalServerError)
 			return
-		default:
+		}
+		h.session = sess
+		fmt.Printf("[auth] new PKCE session started\n")
+	}
+	sess := h.session
+	h.mu.Unlock()
+
+	// Always send the auth URL so reconnecting clients see it.
+	send("output", "If the browser didn't open, visit: "+sess.authURL)
+
+	// Wait for the exchange to complete (or client disconnect).
+	for {
+		done, errMsg, ch := sess.wait()
+		if done {
+			if errMsg != "" {
+				send("error", errMsg)
+			} else {
+				send("done", "")
+			}
+			return
+		}
+		select {
+		case <-ch:
+			// state changed — loop and check again
+		case <-r.Context().Done():
+			return
 		}
 	}
-
-	if err := cmd.Wait(); err != nil {
-		send("error", err.Error())
-		return
-	}
-
-	// Emit done — frontend will re-poll /api/auth/status.
-	doneData, _ := json.Marshal(map[string]string{"type": "done"})
-	fmt.Fprintf(w, "data: %s\n\n", doneData)
-	flusher.Flush()
 }
 
-// LoginInput sends a line of input to the running login subprocess (e.g. the
-// authorization code the user copies from the browser).
+// tokenResponse is the JSON body returned by the OAuth token endpoint.
+type tokenResponse struct {
+	AccessToken      string  `json:"access_token"`
+	RefreshToken     string  `json:"refresh_token"`
+	ExpiresIn        float64 `json:"expires_in"`
+	Scope            string  `json:"scope"`
+	SubscriptionType string  `json:"subscription_type"`
+	RateLimitTier    string  `json:"rate_limit_tier"`
+	Error            *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+// LoginInput receives the code pasted by the user from platform.claude.com.
+// The expected format is "CODE#STATE" as displayed on the callback page.
 func (h *AuthHandler) LoginInput(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 512))
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
 	if err != nil || len(body) == 0 {
-		http.Error(w, "missing code", http.StatusBadRequest)
+		http.Error(w, "missing input", http.StatusBadRequest)
 		return
 	}
+
 	h.mu.Lock()
-	stdin := h.loginStdin
+	sess := h.session
 	h.mu.Unlock()
-	if stdin == nil {
-		http.Error(w, "no active login session", http.StatusConflict)
+
+	input := strings.TrimSpace(string(body))
+	fmt.Printf("[auth] LoginInput: input=%q sess=%v\n", input, sess != nil)
+
+	if sess == nil {
+		http.Error(w, "no active login session — please reopen the login panel", http.StatusConflict)
 		return
 	}
-	stdin.Write(append(bytes.TrimSpace(body), '\n'))
+
+	sess.mu.Lock()
+	alreadyDone := sess.done
+	sess.mu.Unlock()
+	if alreadyDone {
+		http.Error(w, "login session already finished — please reopen the login panel", http.StatusConflict)
+		return
+	}
+
+	// Parse "CODE#STATE" — split on first '#'.
+	code, state, ok := strings.Cut(input, "#")
+	if !ok || code == "" {
+		// No '#' — treat the whole input as the code with no state verification.
+		code = input
+		state = sess.state // pretend it matches
+	}
+
+	fmt.Printf("[auth] LoginInput: code=%q state=%q expectedState=%q\n", code, state, sess.state)
+
+	if state != sess.state {
+		fmt.Printf("[auth] LoginInput: state mismatch — rejecting\n")
+		http.Error(w, "state mismatch — please restart the login flow", http.StatusBadRequest)
+		return
+	}
+
+	// Do the token exchange in the background so we can return 204 immediately.
+	go func() {
+		if err := h.exchangeToken(sess, code); err != nil {
+			fmt.Printf("[auth] token exchange failed: %v\n", err)
+			sess.finish(err.Error())
+		} else {
+			h.mu.Lock()
+			if h.session == sess {
+				h.session = nil
+			}
+			h.mu.Unlock()
+			sess.finish("")
+		}
+	}()
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Logout runs claude auth logout to clear stored credentials.
-func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	claudeBin := h.claudePath
-	if claudeBin == "" {
-		claudeBin = "claude"
-	}
+// exchangeToken POSTs to the Claude OAuth token endpoint and writes the
+// resulting credentials to ~/.claude/.credentials.json.
+func (h *AuthHandler) exchangeToken(sess *pkceSession, code string) error {
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("client_id", claudeClientID)
+	form.Set("code", code)
+	form.Set("code_verifier", sess.codeVerifier)
+	form.Set("redirect_uri", claudeRedirectURI)
 
-	out, err := exec.CommandContext(r.Context(), claudeBin, "auth", "logout").CombinedOutput()
+	fmt.Printf("[auth] exchangeToken: POST %s code=%q\n", claudeTokenURL, code)
+
+	req, err := http.NewRequest(http.MethodPost, claudeTokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		// Log but don't fail — credentials file may not exist.
-		_ = out
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("token exchange request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+	fmt.Printf("[auth] exchangeToken: status=%s body=%s\n", resp.Status, string(respBody))
+
+	var tok tokenResponse
+	if err := json.Unmarshal(respBody, &tok); err != nil {
+		return fmt.Errorf("parse response (status %s): %w", resp.Status, err)
 	}
 
-	// Also remove the credentials file directly in case the CLI command fails.
+	if tok.Error != nil {
+		return fmt.Errorf("token error %s: %s", tok.Error.Type, tok.Error.Message)
+	}
+	if tok.AccessToken == "" {
+		return fmt.Errorf("empty access_token in response (status %s)", resp.Status)
+	}
+
+	return h.writeCredentials(tok)
+}
+
+// claudeCredentials is the shape of ~/.claude/.credentials.json.
+type claudeCredentials struct {
+	ClaudeAiOauth *claudeOAuthToken `json:"claudeAiOauth"`
+}
+
+type claudeOAuthToken struct {
+	AccessToken      string   `json:"accessToken"`
+	RefreshToken     string   `json:"refreshToken"`
+	ExpiresAt        int64    `json:"expiresAt"` // ms since epoch
+	Scopes           []string `json:"scopes"`
+	SubscriptionType string   `json:"subscriptionType,omitempty"`
+	RateLimitTier    string   `json:"rateLimitTier,omitempty"`
+}
+
+func (h *AuthHandler) writeCredentials(tok tokenResponse) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("home dir: %w", err)
+	}
+
+	dir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("mkdir .claude: %w", err)
+	}
+
+	expiresAt := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).UnixMilli()
+	if tok.ExpiresIn == 0 {
+		expiresAt = time.Now().Add(time.Hour).UnixMilli() // sensible default
+	}
+
+	scopes := strings.Fields(tok.Scope)
+	if len(scopes) == 0 {
+		scopes = strings.Fields(claudeScope)
+	}
+
+	creds := claudeCredentials{
+		ClaudeAiOauth: &claudeOAuthToken{
+			AccessToken:      tok.AccessToken,
+			RefreshToken:     tok.RefreshToken,
+			ExpiresAt:        expiresAt,
+			Scopes:           scopes,
+			SubscriptionType: tok.SubscriptionType,
+			RateLimitTier:    tok.RateLimitTier,
+		},
+	}
+
+	data, err := json.MarshalIndent(creds, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal credentials: %w", err)
+	}
+
+	credsPath := filepath.Join(dir, ".credentials.json")
+	if err := os.WriteFile(credsPath, data, 0600); err != nil {
+		return fmt.Errorf("write credentials: %w", err)
+	}
+	fmt.Printf("[auth] credentials written to %s\n", credsPath)
+	return nil
+}
+
+// Logout removes stored credentials and clears any active login session.
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	h.session = nil
+	h.mu.Unlock()
+
 	if home, err := os.UserHomeDir(); err == nil {
 		_ = os.Remove(filepath.Join(home, ".claude", ".credentials.json"))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
-// stripANSI removes ANSI escape codes from a string so raw terminal output
-// is readable when sent to the browser.
-func stripANSI(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); {
-		if s[i] == 0x1B && i+1 < len(s) && s[i+1] == '[' {
-			i += 2
-			for i < len(s) && s[i] != 'm' {
-				i++
-			}
-			if i < len(s) {
-				i++ // skip 'm'
-			}
-			continue
-		}
-		b.WriteByte(s[i])
-		i++
+// ── PKCE helpers ──────────────────────────────────────────────────────────────
+
+func randomBase64URL(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
 	}
-	return b.String()
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func pkceChallenge(verifier string) string {
+	h := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(h[:])
 }

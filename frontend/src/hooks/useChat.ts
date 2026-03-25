@@ -9,6 +9,7 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
   const [streamingContent, setStreamingContent] = useState('');
   const [artifactUpdated, setArtifactUpdated] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [nextTurn, setNextTurn] = useState<'agent' | 'user'>('agent');
   const abortRef = useRef<AbortController | null>(null);
   const onTokensRef = useRef(onTokens);
   onTokensRef.current = onTokens;
@@ -59,10 +60,11 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     if (!projectId || !stage) return;
     setHistoryLoaded(false);
     setMessages([]);
-    const { messages } = await getChatHistory(projectId, stage);
-    setMessages(messages);
+    const history = await getChatHistory(projectId, stage);
+    setMessages(history.messages);
+    setNextTurn(history.nextTurn ?? 'agent');
     setHistoryLoaded(true);
-    return messages;
+    return history.messages;
   }, [projectId, stage, reloadTrigger]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Check for active runs and reconnect on mount

@@ -62,8 +62,13 @@ func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	nextTurn := "agent"
+	if len(messages) > 0 {
+		nextTurn = "user"
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(model.ChatHistory{Messages: messages})
+	json.NewEncoder(w).Encode(model.ChatHistory{Messages: messages, NextTurn: nextTurn})
 }
 
 type sendMessageRequest struct {

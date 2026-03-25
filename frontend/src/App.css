@@ -905,6 +905,63 @@ body {
   gap: 0.75rem;
 }
 
+.completion-tokens {
+  margin-top: 1rem;
+}
+
+.tokens-toggle {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.tokens-toggle:hover {
+  color: #cbd5e1;
+}
+
+.tokens-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.tokens-table th {
+  text-align: left;
+  font-weight: 500;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid #1e293b;
+}
+
+.tokens-table td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid #1e293b;
+}
+
+.tokens-table th:not(:first-child),
+.tokens-table td:not(:first-child) {
+  text-align: right;
+}
+
+.tokens-table tfoot td {
+  border-top: 1px solid #334155;
+  border-bottom: none;
+  color: #cbd5e1;
+}
+
 .approve-button.secondary {
   background: #334155;
   border-color: #475569;

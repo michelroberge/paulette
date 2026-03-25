@@ -17,4 +17,5 @@ type Message struct {
 
 type ChatHistory struct {
 	Messages []Message `json:"messages"`
+	NextTurn string    `json:"nextTurn"` // "agent" | "user"
 }

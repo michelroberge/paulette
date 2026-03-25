@@ -28,6 +28,10 @@ services:
       - ./:/root/repos/paulette
       # Shared beads DB — same named volume as docker-compose.yml (paulette_beads-data)
       - beads-data:/root/.beads
+      # Mount host Claude credentials so OAuth login works without going through
+      # the container (Cloudflare blocks docker IPs on the token exchange endpoint).
+      # Run `claude auth login` on your host machine once, then restart dev containers.
+      - ${USERPROFILE:-${HOME}}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
 
   frontend:
     image: node:22-bookworm-slim
