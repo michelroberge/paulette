@@ -448,8 +448,15 @@ func (h *PipelineHandler) ApproveSummary(w http.ResponseWriter, r *http.Request)
 			if err := h.git.Push(project.HostDir, branchName, branchName, false); err != nil {
 				log.Printf("push iteration branch failed: %v", err)
 			} else {
+				prBase := project.BaseBranch
+				if project.Iteration > 1 {
+					prevBranch := fmt.Sprintf("pauline/iteration-%d", project.Iteration-1)
+					if h.git.RemoteBranchExists(project.HostDir, prevBranch) {
+						prBase = prevBranch
+					}
+				}
 				prTitle := fmt.Sprintf("Iteration %d (v%s)", project.Iteration, project.Version)
-				if err := h.git.CreatePullRequest(project.HostDir, prTitle, project.BaseBranch); err != nil {
+				if err := h.git.CreatePullRequest(project.HostDir, prTitle, prBase); err != nil {
 					log.Printf("gh pr create failed: %v", err)
 				}
 			}

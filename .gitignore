@@ -9,6 +9,7 @@ frontend/dist/
 
 # Backend
 backend/static/
+backend/tmp/
 paulette
 paulette.exe
 repos/

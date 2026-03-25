@@ -217,8 +217,11 @@ func (s *Service) Status(dir string) (Status, error) {
 		return Status{}, err
 	}
 	dirty := 0
-	if out != "" {
-		dirty = len(strings.Split(out, "\n"))
+	for _, line := range strings.Split(out, "\n") {
+		// porcelain lines are always "XY filename" — two status chars then a space
+		if len(line) >= 3 && line[2] == ' ' {
+			dirty++
+		}
 	}
 
 	remoteURL := ""
@@ -577,6 +580,12 @@ func (s *Service) CreateAndCheckoutBranch(dir, name string) error {
 	defer mu.Unlock()
 	_, err := run(dir, "checkout", "-B", name)
 	return err
+}
+
+// RemoteBranchExists reports whether the given branch exists on the remote origin.
+func (s *Service) RemoteBranchExists(dir, branch string) bool {
+	out, err := run(dir, "ls-remote", "--heads", "origin", branch)
+	return err == nil && strings.TrimSpace(out) != ""
 }
 
 // CreatePullRequest opens a GitHub pull request from the current branch into baseBranch
