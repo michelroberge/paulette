@@ -2659,6 +2659,25 @@ body {
   margin: 0;
 }
 
+.refresh-btn {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  margin-left: auto;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  color: #e2e8f0;
+}
+
+.refresh-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .git-modal-tabs {
   display: flex;
   background: #1e293b;

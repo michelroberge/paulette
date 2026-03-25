@@ -213,6 +213,7 @@ export function VersionHistoryModal({ projectId, onClose, onReset }: Props) {
       <div className="modal git-modal" onClick={e => e.stopPropagation()}>
         <div className="git-modal-header">
           <h2>Git</h2>
+          <button className="refresh-btn" onClick={refresh} disabled={loading} title="Refresh">↺</button>
           <button className="close-btn" onClick={onClose}>&times;</button>
         </div>
 
