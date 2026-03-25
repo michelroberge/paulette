@@ -1,19 +1,16 @@
 {
-  "id": "45ded6c6-df4b-4de5-8d61-29646ebaeeeb",
-  "name": "Paulette",
+  "id": "9287a19a-3bba-447e-a22b-7abdf79511de",
+  "name": "paulette",
   "author": "Michel Roberge",
   "version": "0.1.0",
-  "hostDir": "/Users/michelroberge/dev/paulette",
+  "hostDir": "/root/repos/paulette",
   "currentStage": "complete",
   "iteration": 1,
   "imported": true,
   "summaryReady": true,
   "summaryApproved": true,
   "autonomous": false,
-  "summaryTokens": 1503,
-  "stageTokens": {
-    "complete": 1503
-  },
-  "createdAt": "2026-03-24T17:42:00.958887-04:00",
-  "updatedAt": "2026-03-24T17:47:44.143495-04:00"
+  "baseBranch": "develop",
+  "createdAt": "2026-03-25T14:40:10.532830075Z",
+  "updatedAt": "2026-03-25T19:38:29.588556948Z"
 }

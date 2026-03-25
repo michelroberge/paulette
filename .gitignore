@@ -12,3 +12,6 @@ backend/static/
 paulette
 paulette.exe
 repos/
+
+# Docker
+.env

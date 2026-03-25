@@ -1,5 +1,5 @@
 import { apiFetch, apiStreamUrl } from './client';
-import type { BeadGraph, BeadDetail, BuildStreamEvent, StreamEvent } from '../types';
+import type { BeadGraph, BeadDetail, BuildStreamEvent, StreamEvent, BeadFilesResponse, BeadDiffResponse, InstructionPlan } from '../types';
 
 export function getBeadGraph(projectId: string): Promise<BeadGraph> {
   return apiFetch<BeadGraph>(`/projects/${projectId}/stages/build/beads`);
@@ -167,4 +167,36 @@ export function sendBeadChat(
     onEvent as (event: BuildStreamEvent) => void,
     signal,
   );
+}
+
+export function getBeadFiles(projectId: string, beadId: string): Promise<BeadFilesResponse> {
+  return apiFetch<BeadFilesResponse>(`/projects/${projectId}/stages/build/beads/${beadId}/files`);
+}
+
+export function getBeadDiff(projectId: string, beadId: string): Promise<BeadDiffResponse> {
+  return apiFetch<BeadDiffResponse>(`/projects/${projectId}/stages/build/beads/${beadId}/diff`);
+}
+
+export function sendInstruction(
+  projectId: string,
+  message: string,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamBeads(
+    apiStreamUrl(`/projects/${projectId}/stages/build/beads/instruct`),
+    { message },
+    onEvent as (event: BuildStreamEvent) => void,
+    signal,
+  );
+}
+
+export function applyInstructionPlan(
+  projectId: string,
+  plan: InstructionPlan,
+): Promise<{ created: { requestedTitle: string; id: string }[]; graph: import('../types').BeadGraph }> {
+  return apiFetch(`/projects/${projectId}/stages/build/beads/instruct/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ plan }),
+  });
 }

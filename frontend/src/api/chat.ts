@@ -5,19 +5,16 @@ export function getChatHistory(projectId: string, stage: StageName): Promise<Cha
   return apiFetch<ChatHistory>(`/projects/${projectId}/stages/${stage}/chat`);
 }
 
-export async function sendMessage(
-  projectId: string,
-  stage: StageName,
-  message: string,
+async function streamSse(
+  url: string,
+  body: BodyInit,
   onEvent: (event: StreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const url = apiStreamUrl(`/projects/${projectId}/stages/${stage}/chat`);
-
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body,
     signal,
   });
 
@@ -46,8 +43,7 @@ export async function sendMessage(
           const data = line.slice(6).trim();
           if (data) {
             try {
-              const event: StreamEvent = JSON.parse(data);
-              onEvent(event);
+              onEvent(JSON.parse(data) as StreamEvent);
             } catch {
               // skip malformed JSON
             }
@@ -61,4 +57,25 @@ export async function sendMessage(
   } finally {
     reader.cancel();
   }
+}
+
+export function sendMessage(
+  projectId: string,
+  stage: StageName,
+  message: string,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = apiStreamUrl(`/projects/${projectId}/stages/${stage}/chat`);
+  return streamSse(url, JSON.stringify({ message }), onEvent, signal);
+}
+
+export function resumeChat(
+  projectId: string,
+  stage: StageName,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = apiStreamUrl(`/projects/${projectId}/stages/${stage}/chat/resume`);
+  return streamSse(url, '{}', onEvent, signal);
 }

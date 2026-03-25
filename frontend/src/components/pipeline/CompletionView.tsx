@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Project, StageName, VersionBump, StageActivity, SessionSummary } from '../../types';
-import { regenerateSummary, getSummary, watchSummary, approveSummary } from '../../api/pipeline';
+import { regenerateSummary, getSummary, watchSummary, approveSummary, downloadProject } from '../../api/pipeline';
 import { getSessions } from '../../api/sessions';
 import { BuildingAnimation } from '../ux/BuildingAnimation';
 
@@ -45,6 +45,7 @@ export function CompletionView({ project, activity, onNewProject, onViewStage, o
     if (project.summaryReady) {
       getSummary(project.id).then(res => {
         if (res.exists) setSummaryContent(res.content);
+        if (res.approved) setSummaryApproved(true);
       }).catch(console.error);
     }
   }, [project.id, project.summaryReady]);
@@ -310,39 +311,48 @@ export function CompletionView({ project, activity, onNewProject, onViewStage, o
               </div>
             </div>
           ) : (
-            <div className="completion-actions">
-              {!summaryApproved && (
-                <button
-                  className="approve-button"
-                  onClick={handleApproveSummary}
-                  disabled={approving}
-                >
-                  {approving ? 'Saving…' : 'Save to Docs'}
-                </button>
-              )}
-              {summaryApproved && (
-                <>
-                  <button className="approve-button" onClick={() => setShowEnhanceForm(true)}>
-                    Enhance
+            <>
+              <div className="completion-actions">
+                {!summaryApproved && (
+                  <button
+                    className="approve-button"
+                    onClick={handleApproveSummary}
+                    disabled={approving}
+                  >
+                    {approving ? 'Saving…' : 'Save to Docs'}
                   </button>
-                  {(() => {
-                    const match = /## Suggested Enhancements\n([\s\S]*?)(?=\n## |$)/.exec(summaryContent);
-                    const suggestions = match?.[1]?.trim() ?? '';
-                    return suggestions ? (
-                      <button
-                        className="approve-button"
-                        onClick={() => { setShowEnhanceForm(true); setEnhanceVision(suggestions); }}
-                      >
-                        Quick Enhance
-                      </button>
-                    ) : null;
-                  })()}
-                  <button className="approve-button secondary" onClick={onNewProject}>
-                    Start New Project
-                  </button>
-                </>
-              )}
-            </div>
+                )}
+                {summaryApproved && (
+                  <>
+                    <button className="approve-button" onClick={() => setShowEnhanceForm(true)}>
+                      Enhance
+                    </button>
+                    {(() => {
+                      const match = /## Suggested Enhancements\n([\s\S]*?)(?=\n## |$)/.exec(summaryContent);
+                      const suggestions = match?.[1]?.trim() ?? '';
+                      return suggestions ? (
+                        <button
+                          className="approve-button"
+                          onClick={() => { setShowEnhanceForm(true); setEnhanceVision(suggestions); }}
+                        >
+                          Quick Enhance
+                        </button>
+                      ) : null;
+                    })()}
+                    <button className="approve-button secondary" onClick={onNewProject}>
+                      Start New Project
+                    </button>
+                  </>
+                )}
+              </div>
+              <button
+                className="approve-button secondary"
+                style={{ width: '100%', marginTop: '0.5rem' }}
+                onClick={() => downloadProject(project.id)}
+              >
+                Download
+              </button>
+            </>
           )}
         </div>
 

@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
 	"github.com/michelroberge/paulette/backend/internal/repository"
@@ -40,10 +41,11 @@ type BeadHandler struct {
 	activityRepo repository.ActivityRepo
 	runs         *stream.Manager
 	skillRepo    *fsrepo.SkillRepo
+	gitSvc       *git.Service
 }
 
 func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, skillRepo *fsrepo.SkillRepo) *BeadHandler {
-	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs, skillRepo: skillRepo}
+	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs, skillRepo: skillRepo, gitSvc: git.NewService()}
 }
 
 // GetGraph returns the current bead graph JSON for a project,
@@ -574,6 +576,9 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 
 			sem <- struct{}{}
 
+			// Capture git commit hash before execution starts, for diff view
+			preCommit := h.gitSvc.CurrentHash(project.HostDir)
+
 			if err := bdClaim(ctx, project.HostDir, bead.ID); err != nil {
 				<-sem
 				run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] claim failed: %v", bead.ID, err)})
@@ -582,7 +587,11 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 			wg.Add(1)
 			b := *bead
 			b.Status = model.BeadStatusInProgress
-			updateGraphStatus(mu, project.HostDir, b.ID, model.BeadStatusInProgress)
+			b.PreExecutionCommit = preCommit
+			updateGraphBeadFields(mu, project.HostDir, b.ID, func(stored *model.Bead) {
+				stored.Status = model.BeadStatusInProgress
+				stored.PreExecutionCommit = preCommit
+			})
 			beadJSON, _ := json.Marshal(b)
 			run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 			run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Starting: %s", b.ID, b.Title)})
@@ -679,12 +688,21 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 							run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] close failed: %v", currentBead.ID, err)})
 							return
 						}
+						// Commit all changes made during this bead's execution so diffs are stable
+						commitMsg := fmt.Sprintf("build(%s): %s", b.ID, b.Title)
+						if commitErr := h.gitSvc.AddAllAndCommit(project.HostDir, commitMsg); commitErr != nil {
+							run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] warn: git commit failed: %v", b.ID, commitErr)})
+						}
+						postCommit := h.gitSvc.CurrentHash(project.HostDir)
 						currentBead.Status = model.BeadStatusClosed
-						updateGraphStatus(mu, project.HostDir, currentBead.ID, model.BeadStatusClosed)
-						beadJSON, _ = json.Marshal(currentBead)
+						updateGraphBeadFields(mu, project.HostDir, b.ID, func(stored *model.Bead) {
+							stored.PostExecutionCommit = postCommit
+						})
+						b.PostExecutionCommit = postCommit
+						beadJSON, _ = json.Marshal(b)
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
-						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", currentBead.ID, currentBead.Title)})
-						observer.RecordBead(currentBead, currentBead.Title, currentBead.Description)
+						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", b.ID, b.Title)})
+						observer.RecordBead(b, b.Title, b.Description)
 						return
 					}
 
@@ -966,6 +984,13 @@ func runBd(ctx context.Context, hostDir string, args ...string) (string, error) 
 }
 
 func updateGraphStatus(mu *sync.Mutex, hostDir, beadID string, status model.BeadStatus) {
+	updateGraphBeadFields(mu, hostDir, beadID, func(b *model.Bead) {
+		b.Status = status
+	})
+}
+
+// updateGraphBeadFields applies an arbitrary mutation to a single bead in the stored graph.
+func updateGraphBeadFields(mu *sync.Mutex, hostDir, beadID string, mutate func(*model.Bead)) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -975,7 +1000,7 @@ func updateGraphStatus(mu *sync.Mutex, hostDir, beadID string, status model.Bead
 	}
 	for i := range graph.Beads {
 		if graph.Beads[i].ID == beadID {
-			graph.Beads[i].Status = status
+			mutate(&graph.Beads[i])
 			break
 		}
 	}
@@ -1272,6 +1297,198 @@ func (h *BeadHandler) BeadChat(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	run.StreamTo(w, r, 0)
+}
+
+// ── Code tab endpoints ──
+
+type beadFileEntry struct {
+	Path     string `json:"path"`
+	Content  string `json:"content"`
+	Language string `json:"language"`
+}
+
+type beadFilesResponse struct {
+	Files []beadFileEntry `json:"files"`
+}
+
+// resolveBeadFilePath resolves a target file path (which may be absolute or relative)
+// to an absolute path for reading, and a clean relative display path for the response.
+func resolveBeadFilePath(hostDir, rawPath string) (absPath, displayPath string) {
+	if filepath.IsAbs(rawPath) {
+		absPath = rawPath
+		if rel, err := filepath.Rel(hostDir, rawPath); err == nil {
+			displayPath = rel
+		} else {
+			displayPath = filepath.Base(rawPath)
+		}
+	} else {
+		displayPath = rawPath
+		absPath = filepath.Join(hostDir, rawPath)
+	}
+	return
+}
+
+// GetBeadFiles returns the current content of all target files for a bead.
+func (h *BeadHandler) GetBeadFiles(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	beadID := chi.URLParam(r, "beadId")
+
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+	if err != nil {
+		http.Error(w, "failed to read bead graph", http.StatusInternalServerError)
+		return
+	}
+
+	var bead *model.Bead
+	for i := range graph.Beads {
+		if graph.Beads[i].ID == beadID {
+			bead = &graph.Beads[i]
+			break
+		}
+	}
+	if bead == nil {
+		http.Error(w, "bead not found", http.StatusNotFound)
+		return
+	}
+
+	resp := beadFilesResponse{Files: make([]beadFileEntry, 0, len(bead.TargetFiles))}
+	for _, rawPath := range bead.TargetFiles {
+		absPath, displayPath := resolveBeadFilePath(project.HostDir, rawPath)
+		data, readErr := os.ReadFile(absPath)
+		if readErr != nil {
+			// File doesn't exist yet — include entry with empty content
+			resp.Files = append(resp.Files, beadFileEntry{
+				Path:     displayPath,
+				Content:  "",
+				Language: languageFromPath(displayPath),
+			})
+			continue
+		}
+		resp.Files = append(resp.Files, beadFileEntry{
+			Path:     displayPath,
+			Content:  string(data),
+			Language: languageFromPath(displayPath),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+type beadDiffEntry struct {
+	Path     string `json:"path"`
+	Original string `json:"original"`
+	Modified string `json:"modified"`
+	Language string `json:"language"`
+}
+
+type beadDiffResponse struct {
+	Diffs []beadDiffEntry `json:"diffs"`
+}
+
+// GetBeadDiff returns git diff (original vs current) for each target file of a bead.
+func (h *BeadHandler) GetBeadDiff(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	beadID := chi.URLParam(r, "beadId")
+
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+
+	graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+	if err != nil {
+		http.Error(w, "failed to read bead graph", http.StatusInternalServerError)
+		return
+	}
+
+	var bead *model.Bead
+	for i := range graph.Beads {
+		if graph.Beads[i].ID == beadID {
+			bead = &graph.Beads[i]
+			break
+		}
+	}
+	if bead == nil {
+		http.Error(w, "bead not found", http.StatusNotFound)
+		return
+	}
+
+	resp := beadDiffResponse{Diffs: make([]beadDiffEntry, 0, len(bead.TargetFiles))}
+	for _, rawPath := range bead.TargetFiles {
+		_, displayPath := resolveBeadFilePath(project.HostDir, rawPath)
+		var original, modified string
+		var diffErr error
+		if bead.PreExecutionCommit != "" && bead.PostExecutionCommit != "" {
+			// Both refs known: stable diff between commits, unaffected by later changes
+			original, modified, diffErr = h.gitSvc.FileDiffBetweenRefs(project.HostDir, displayPath, bead.PreExecutionCommit, bead.PostExecutionCommit)
+		} else {
+			// Fallback: compare pre-execution commit against current working tree
+			original, modified, diffErr = h.gitSvc.FileDiff(project.HostDir, displayPath, bead.PreExecutionCommit)
+		}
+		if diffErr != nil {
+			continue
+		}
+		resp.Diffs = append(resp.Diffs, beadDiffEntry{
+			Path:     displayPath,
+			Original: original,
+			Modified: modified,
+			Language: languageFromPath(displayPath),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// languageFromPath infers a Monaco editor language ID from a file extension.
+func languageFromPath(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".go":
+		return "go"
+	case ".ts", ".tsx":
+		return "typescript"
+	case ".js", ".jsx":
+		return "javascript"
+	case ".py":
+		return "python"
+	case ".md":
+		return "markdown"
+	case ".json":
+		return "json"
+	case ".yaml", ".yml":
+		return "yaml"
+	case ".html":
+		return "html"
+	case ".css":
+		return "css"
+	case ".sh", ".bash":
+		return "shell"
+	case ".sql":
+		return "sql"
+	case ".toml":
+		return "ini"
+	case ".rs":
+		return "rust"
+	case ".java":
+		return "java"
+	case ".cs":
+		return "csharp"
+	case ".rb":
+		return "ruby"
+	case ".php":
+		return "php"
+	default:
+		return "plaintext"
+	}
 }
 
 // siblingBeads returns all task beads in the same epic as bead, excluding bead itself.

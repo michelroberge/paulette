@@ -234,5 +234,5 @@ export function useBeads(projectId: string | null) {
   const clearLog = useCallback(() => setExecutionLog([]), []);
   const clearPlanLimit = useCallback(() => setPlanLimitReached(false), []);
 
-  return { graph, phase, loading, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit };
+  return { graph, setGraph, phase, loading, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit };
 }

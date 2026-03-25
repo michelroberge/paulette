@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useBeadDetail } from '../../hooks/useBeadDetail';
-import type { Bead } from '../../types';
+import { BeadCodeTab } from './BeadCodeTab';
+import type { Bead, BeadGraph, InstructionPlan } from '../../types';
 
 interface Props {
   projectId: string;
@@ -11,16 +12,29 @@ interface Props {
   allBeads: Bead[];
   onBeadSelect: (id: string) => void;
   onClose: () => void;
+  onBeadsUpdated?: (graph: BeadGraph) => void;
 }
 
-export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelect, onClose }: Props) {
-  const { detail, loading, chatStreaming, chatStreamingContent, loadDetail, saveDetail, sendChat, stopChat, control } = useBeadDetail(projectId);
+type ChatMode = 'ask' | 'instruct';
+
+export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelect, onClose, onBeadsUpdated }: Props) {
+  const {
+    detail, loading,
+    chatStreaming, chatStreamingContent,
+    instructStreaming, instructStreamingContent, instructionProposal, applyingProposal,
+    loadDetail, saveDetail, sendChat, stopChat, sendInstruct, applyProposal, dismissProposal,
+    control,
+  } = useBeadDetail(projectId);
+
   const [description, setDescription] = useState(bead.description ?? '');
   const [notes, setNotes] = useState('');
   const [chatInput, setChatInput] = useState('');
   const [descDirty, setDescDirty] = useState(false);
   const [notesDirty, setNotesDirty] = useState(false);
-  const [activeTab, setActiveTab] = useState<'details' | 'context'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'context' | 'code'>('details');
+  const [chatMode, setChatMode] = useState<ChatMode>('ask');
+  const [selectedNewBeads, setSelectedNewBeads] = useState<Set<number>>(new Set());
+  const [selectedUpdates, setSelectedUpdates] = useState<Set<number>>(new Set());
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,7 +53,15 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
   // Auto-scroll chat
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [detail?.chatMessages?.length, chatStreamingContent]);
+  }, [detail?.chatMessages?.length, chatStreamingContent, instructStreamingContent]);
+
+  // Pre-select all items when proposal arrives
+  useEffect(() => {
+    if (instructionProposal) {
+      setSelectedNewBeads(new Set((instructionProposal.newBeads ?? []).map((_, i) => i)));
+      setSelectedUpdates(new Set((instructionProposal.updatedBeads ?? []).map((_, i) => i)));
+    }
+  }, [instructionProposal]);
 
   const isClosed = bead.status === 'closed';
   const isInProgress = bead.status === 'in_progress' || bead.status === 'reviewing';
@@ -57,8 +79,26 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
 
   const handleSendChat = () => {
     if (!chatInput.trim()) return;
-    sendChat(beadId, chatInput.trim());
+    const msg = chatInput.trim();
     setChatInput('');
+    if (chatMode === 'ask') {
+      sendChat(beadId, msg);
+    } else {
+      sendInstruct(msg);
+    }
+  };
+
+  const handleApproveProposal = async () => {
+    if (!instructionProposal) return;
+    const filteredPlan: InstructionPlan = {
+      ...instructionProposal,
+      newBeads: (instructionProposal.newBeads ?? []).filter((_, i) => selectedNewBeads.has(i)),
+      updatedBeads: (instructionProposal.updatedBeads ?? []).filter((_, i) => selectedUpdates.has(i)),
+    };
+    const updatedGraph = await applyProposal(filteredPlan);
+    if (updatedGraph && onBeadsUpdated) {
+      onBeadsUpdated(updatedGraph);
+    }
   };
 
   const statusColor: Record<string, string> = {
@@ -68,6 +108,8 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
     closed: '#22c55e',
     blocked: '#475569',
   };
+
+  const anyStreaming = chatStreaming || instructStreaming;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -90,8 +132,8 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
           <div className="bead-detail-loading">Loading...</div>
         ) : (
           <div className="bead-detail-body">
-            {/* Left column: details + execution */}
-            <div className="bead-detail-left">
+            {/* Left column: tabs + content */}
+            <div className={`bead-detail-left${activeTab === 'code' ? ' bead-detail-left--code' : ''}`}>
               {/* Tab bar */}
               <div className="bead-detail-tabs">
                 <button
@@ -106,6 +148,17 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
                 >
                   Context
                 </button>
+                {(bead.targetFiles && bead.targetFiles.length > 0) && (
+                  <button
+                    className={`bead-detail-tab${activeTab === 'code' ? ' bead-detail-tab--active' : ''}`}
+                    onClick={() => setActiveTab('code')}
+                  >
+                    Code
+                    {bead.status === 'in_progress' && (
+                      <span className="bead-tab-live-dot" title="Agent is writing code" />
+                    )}
+                  </button>
+                )}
               </div>
 
               {activeTab === 'details' && (
@@ -269,28 +322,105 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
                   )}
                 </div>
               )}
+
+              {activeTab === 'code' && (
+                <BeadCodeTab
+                  projectId={projectId}
+                  beadId={beadId}
+                  beadStatus={bead.status}
+                  targetFiles={bead.targetFiles ?? []}
+                />
+              )}
             </div>
 
             {/* Right column: chat */}
             <div className="bead-detail-right">
-              <h3>Chat</h3>
-              <div className="bead-detail-chat-messages">
-                {detail?.chatMessages?.map((msg, i) => (
-                  <div key={i} className={`bead-chat-msg bead-chat-${msg.role}`}>
-                    <span className="bead-chat-role">{msg.role === 'user' ? 'You' : 'AI'}</span>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
-                  </div>
-                ))}
-                {chatStreaming && chatStreamingContent && (
-                  <div className="bead-chat-msg bead-chat-assistant">
-                    <span className="bead-chat-role">AI</span>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{chatStreamingContent}</ReactMarkdown>
-                  </div>
+              {/* Chat mode toggle */}
+              <div className="bead-chat-header">
+                <div className="bead-chat-mode-toggle">
+                  <button
+                    className={`bead-chat-mode-btn${chatMode === 'ask' ? ' bead-chat-mode-btn--active' : ''}`}
+                    onClick={() => { setChatMode('ask'); dismissProposal(); }}
+                    disabled={anyStreaming}
+                  >
+                    Ask
+                  </button>
+                  <button
+                    className={`bead-chat-mode-btn${chatMode === 'instruct' ? ' bead-chat-mode-btn--active' : ''}`}
+                    onClick={() => setChatMode('instruct')}
+                    disabled={anyStreaming}
+                  >
+                    Instruct
+                  </button>
+                </div>
+                {chatMode === 'instruct' && (
+                  <span className="bead-chat-mode-hint">Describe additional work needed</span>
                 )}
+              </div>
+
+              <div className="bead-detail-chat-messages">
+                {chatMode === 'ask' && (
+                  <>
+                    {detail?.chatMessages?.map((msg, i) => (
+                      <div key={i} className={`bead-chat-msg bead-chat-${msg.role}`}>
+                        <span className="bead-chat-role">{msg.role === 'user' ? 'You' : 'AI'}</span>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                      </div>
+                    ))}
+                    {chatStreaming && chatStreamingContent && (
+                      <div className="bead-chat-msg bead-chat-assistant">
+                        <span className="bead-chat-role">AI</span>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{chatStreamingContent}</ReactMarkdown>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {chatMode === 'instruct' && (
+                  <>
+                    {/* Streaming planning text */}
+                    {instructStreaming && instructStreamingContent && (
+                      <div className="bead-chat-msg bead-chat-assistant">
+                        <span className="bead-chat-role">Planning…</span>
+                        <div className="bead-instruct-stream">{instructStreamingContent}</div>
+                      </div>
+                    )}
+
+                    {/* Instruction proposal */}
+                    {instructionProposal && !instructStreaming && (
+                      <InstructionProposalView
+                        plan={instructionProposal}
+                        selectedNewBeads={selectedNewBeads}
+                        selectedUpdates={selectedUpdates}
+                        onToggleNewBead={i => setSelectedNewBeads(prev => {
+                          const next = new Set(prev);
+                          if (next.has(i)) next.delete(i); else next.add(i);
+                          return next;
+                        })}
+                        onToggleUpdate={i => setSelectedUpdates(prev => {
+                          const next = new Set(prev);
+                          if (next.has(i)) next.delete(i); else next.add(i);
+                          return next;
+                        })}
+                        onApprove={handleApproveProposal}
+                        onDismiss={dismissProposal}
+                        applying={applyingProposal}
+                      />
+                    )}
+
+                    {!instructStreaming && !instructionProposal && (
+                      <div className="bead-instruct-hint">
+                        <p>Describe additional work, new requirements, or changes to the build plan. Claude will propose new beads and plan updates for your approval.</p>
+                      </div>
+                    )}
+                  </>
+                )}
+
                 <div ref={chatEndRef} />
               </div>
+
               <div className="bead-detail-chat-input">
-                {chatStreaming ? (
+                {anyStreaming ? (
                   <button className="stop-button" onClick={stopChat} style={{ width: '100%' }}>Stop</button>
                 ) : (
                   <>
@@ -299,11 +429,11 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
                       value={chatInput}
                       onChange={e => setChatInput(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter') handleSendChat(); }}
-                      placeholder="Ask about this bead..."
+                      placeholder={chatMode === 'ask' ? 'Ask about this bead...' : 'Describe additional work needed...'}
                       className="refinement-input"
                     />
                     <button className="generate-mock-button" onClick={handleSendChat} disabled={!chatInput.trim()}>
-                      Send
+                      {chatMode === 'ask' ? 'Send' : 'Plan'}
                     </button>
                   </>
                 )}
@@ -311,6 +441,129 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Instruction Proposal View ──
+
+interface ProposalProps {
+  plan: InstructionPlan;
+  selectedNewBeads: Set<number>;
+  selectedUpdates: Set<number>;
+  onToggleNewBead: (i: number) => void;
+  onToggleUpdate: (i: number) => void;
+  onApprove: () => void;
+  onDismiss: () => void;
+  applying: boolean;
+}
+
+function InstructionProposalView({
+  plan,
+  selectedNewBeads,
+  selectedUpdates,
+  onToggleNewBead,
+  onToggleUpdate,
+  onApprove,
+  onDismiss,
+  applying,
+}: ProposalProps) {
+  const [reasoningOpen, setReasoningOpen] = useState(false);
+  const hasChanges = selectedNewBeads.size > 0 || selectedUpdates.size > 0
+    || !!plan.buildPlanChanges || !!plan.architectureChanges;
+
+  return (
+    <div className="bead-instruct-proposal">
+      <div className="bead-instruct-proposal-header">
+        <span className="bead-instruct-proposal-title">Proposed Changes</span>
+        <button className="bead-instruct-dismiss" onClick={onDismiss} title="Dismiss">✕</button>
+      </div>
+
+      {/* Reasoning (collapsible) */}
+      {plan.reasoning && (
+        <div className="bead-instruct-section">
+          <button className="bead-instruct-collapse" onClick={() => setReasoningOpen(v => !v)}>
+            {reasoningOpen ? '▾' : '▸'} Reasoning
+          </button>
+          {reasoningOpen && (
+            <div className="bead-instruct-reasoning">{plan.reasoning}</div>
+          )}
+        </div>
+      )}
+
+      {/* Build plan changes */}
+      {plan.buildPlanChanges && (
+        <div className="bead-instruct-section">
+          <div className="bead-instruct-change-label">Build Plan Update</div>
+          <div className="bead-instruct-doc-preview">{plan.buildPlanChanges.slice(0, 300)}{plan.buildPlanChanges.length > 300 ? '…' : ''}</div>
+        </div>
+      )}
+
+      {/* Architecture changes */}
+      {plan.architectureChanges && (
+        <div className="bead-instruct-section">
+          <div className="bead-instruct-change-label">Architecture Update</div>
+          <div className="bead-instruct-doc-preview">{plan.architectureChanges.slice(0, 300)}{plan.architectureChanges.length > 300 ? '…' : ''}</div>
+        </div>
+      )}
+
+      {/* New beads */}
+      {plan.newBeads && plan.newBeads.length > 0 && (
+        <div className="bead-instruct-section">
+          <div className="bead-instruct-change-label">New Beads ({plan.newBeads.length})</div>
+          {plan.newBeads.map((nb, i) => (
+            <label key={i} className="bead-instruct-item">
+              <input
+                type="checkbox"
+                checked={selectedNewBeads.has(i)}
+                onChange={() => onToggleNewBead(i)}
+              />
+              <div className="bead-instruct-item-info">
+                <span className="bead-instruct-item-title">{nb.title}</span>
+                {nb.description && <span className="bead-instruct-item-desc">{nb.description.slice(0, 100)}{nb.description.length > 100 ? '…' : ''}</span>}
+                <div className="bead-instruct-item-meta">
+                  <span className="bead-context-tag">{nb.type}</span>
+                  {nb.tags?.map(t => <span key={t} className="bead-context-tag">{t}</span>)}
+                </div>
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {/* Bead updates */}
+      {plan.updatedBeads && plan.updatedBeads.length > 0 && (
+        <div className="bead-instruct-section">
+          <div className="bead-instruct-change-label">Bead Updates ({plan.updatedBeads.length})</div>
+          {plan.updatedBeads.map((ub, i) => (
+            <label key={i} className="bead-instruct-item">
+              <input
+                type="checkbox"
+                checked={selectedUpdates.has(i)}
+                onChange={() => onToggleUpdate(i)}
+              />
+              <div className="bead-instruct-item-info">
+                <span className="bead-instruct-item-title">{ub.title ?? ub.id}</span>
+                {ub.description && <span className="bead-instruct-item-desc">{ub.description.slice(0, 100)}{ub.description.length > 100 ? '…' : ''}</span>}
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="bead-instruct-actions">
+        <button
+          className="generate-mock-button"
+          onClick={onApprove}
+          disabled={applying || !hasChanges}
+        >
+          {applying ? 'Applying…' : 'Approve Selected'}
+        </button>
+        <button className="stop-button" onClick={onDismiss} disabled={applying}>
+          Discard
+        </button>
       </div>
     </div>
   );

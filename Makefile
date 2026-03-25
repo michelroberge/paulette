@@ -1,4 +1,4 @@
-.PHONY: build clean dev
+.PHONY: build clean dev docker-up dev-docker-build dev-docker-up
 
 ifeq ($(OS),Windows_NT)
   BINARY := paulette.exe
@@ -18,3 +18,14 @@ clean:
 
 dev:
 	cd frontend && npm run dev
+
+# Build and start the container — everything builds inside Docker, no local Go/Node needed.
+docker-up:
+	docker compose up --build
+
+# Dev: mount source from host, air hot-reloads Go, Vite HMR for frontend.
+dev-docker-build:
+	docker compose -f docker-compose.dev.yml build
+
+dev-docker-up:
+	docker compose -f docker-compose.dev.yml up

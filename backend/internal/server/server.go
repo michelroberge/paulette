@@ -63,7 +63,16 @@ func (s *Server) Orchestrator() *autopilot.Orchestrator {
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(middleware.Logger)
+	r.Use(func(next http.Handler) http.Handler {
+		logger := middleware.Logger(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/projects/activity" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			logger.ServeHTTP(w, r)
+		})
+	})
 	r.Use(middleware.Recoverer)
 
 	c := cors.New(cors.Options{
@@ -83,6 +92,7 @@ func (s *Server) Router() http.Handler {
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
 	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo)
+	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
 	acth := handler.NewActivityHandler(s.runs, s.activityRepo, s.registry)
@@ -103,6 +113,12 @@ func (s *Server) Router() http.Handler {
 	cfgH := handler.NewConfigHandler(s.cfg)
 	r.Get("/api/config", cfgH.GetInfo)
 
+	authH := handler.NewAuthHandler(s.cfg.ClaudePath)
+	r.Get("/api/auth/status", authH.Status)
+	r.Get("/api/auth/login", authH.Login)
+	r.Post("/api/auth/login/input", authH.LoginInput)
+	r.Post("/api/auth/logout", authH.Logout)
+
 	r.Route("/api/projects", func(r chi.Router) {
 		r.Get("/activity", acth.Summary)
 		r.Post("/", ph.Create)
@@ -118,12 +134,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/pipeline/summary/watch", plh.WatchSummary)
 		r.Post("/{id}/pipeline/summary", plh.RegenerateSummary)
 		r.Post("/{id}/pipeline/summary/approve", plh.ApproveSummary)
+		r.Get("/{id}/download", plh.DownloadProject)
 		r.Post("/{id}/pipeline/enhance", eh.Enhance)
 
 		r.Get("/{id}/stages/{stage}/artifact", ah.Get)
 
 		r.Get("/{id}/stages/{stage}/chat", ch.GetHistory)
 		r.Post("/{id}/stages/{stage}/chat", ch.Send)
+		r.Post("/{id}/stages/{stage}/chat/resume", ch.Resume)
 
 		r.Get("/{id}/stages/ux/mock", mh.Get)
 		r.Post("/{id}/stages/ux/mock", mh.Generate)
@@ -134,10 +152,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/stages/build/beads/watch", bh.Watch)
 		r.Post("/{id}/stages/build/beads/generate", bh.Generate)
 		r.Post("/{id}/stages/build/beads/execute", bh.Execute)
+		r.Post("/{id}/stages/build/beads/instruct", instructH.Plan)
+		r.Post("/{id}/stages/build/beads/instruct/apply", instructH.Apply)
 		r.Get("/{id}/stages/build/beads/{beadId}", bh.GetDetail)
 		r.Patch("/{id}/stages/build/beads/{beadId}", bh.UpdateBead)
 		r.Post("/{id}/stages/build/beads/{beadId}/control", bh.ControlBead)
 		r.Post("/{id}/stages/build/beads/{beadId}/chat", bh.BeadChat)
+		r.Get("/{id}/stages/build/beads/{beadId}/files", bh.GetBeadFiles)
+		r.Get("/{id}/stages/build/beads/{beadId}/diff", bh.GetBeadDiff)
 
 		r.Post("/{id}/stages/{stage}/reset", rh.Reset)
 
@@ -151,12 +173,18 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/{id}/git/log", gh.Log)
 		r.Get("/{id}/git/status", gh.Status)
+		r.Get("/{id}/git/diff", gh.WorkingDiff)
 		r.Post("/{id}/git/reset", gh.Reset)
 		r.Post("/{id}/git/discard", gh.Discard)
+		r.Post("/{id}/git/commit", gh.Commit)
+		r.Post("/{id}/git/branch/rename", gh.RenameBranch)
+		r.Post("/{id}/git/identity", gh.SetIdentity)
+		r.Get("/{id}/git/ssh-key", gh.SSHKey)
 		r.Put("/{id}/git/remote", gh.SetRemote)
 		r.Delete("/{id}/git/remote", gh.RemoveRemote)
 		r.Post("/{id}/git/push", gh.Push)
 		r.Post("/{id}/git/pull", gh.Pull)
+		r.Get("/{id}/git/branches", gh.ListBranches)
 
 		r.Get("/{id}/sessions", sh.ListSessions)
 

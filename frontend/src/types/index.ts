@@ -14,6 +14,7 @@ export interface Project {
   summaryReady: boolean;
   summaryApproved?: boolean;
   autonomous?: boolean;
+  baseBranch?: string;
   devCommands?: string[];
   buildCommands?: string[];
   runCommands?: string[];
@@ -54,6 +55,7 @@ export interface Message {
 
 export interface ChatHistory {
   messages: Message[];
+  nextTurn: 'agent' | 'user';
 }
 
 export interface StreamEvent {
@@ -85,6 +87,53 @@ export interface Bead {
   journeyRefs?: string[];
   archRefs?: string[];
   tokens?: number;
+  preExecutionCommit?: string;
+}
+
+export interface BeadFileEntry {
+  path: string;
+  content: string;
+  language: string;
+}
+
+export interface BeadFilesResponse {
+  files: BeadFileEntry[];
+}
+
+export interface BeadDiffEntry {
+  path: string;
+  original: string;
+  modified: string;
+  language: string;
+}
+
+export interface BeadDiffResponse {
+  diffs: BeadDiffEntry[];
+}
+
+export interface InstructBead {
+  title: string;
+  description: string;
+  type: string;
+  epicId?: string;
+  deps?: string[];
+  targetFiles?: string[];
+  tags?: string[];
+  priority: number;
+}
+
+export interface InstructUpdate {
+  id: string;
+  description?: string;
+  title?: string;
+}
+
+export interface InstructionPlan {
+  reasoning: string;
+  buildPlanChanges?: string;
+  architectureChanges?: string;
+  newBeads?: InstructBead[];
+  updatedBeads?: InstructUpdate[];
 }
 
 export interface BeadGraph {
@@ -118,6 +167,10 @@ export interface GitStatus {
   dirty: number;
   hasRemote: boolean;
   remoteUrl: string;
+  branch: string;
+  remoteBranch: string;
+  gitUserName: string;
+  gitUserEmail: string;
 }
 
 // Session token tracking

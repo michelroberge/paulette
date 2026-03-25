@@ -72,7 +72,7 @@ func (h *EnhanceHandler) Enhance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := pipeline.BuildPipelineState(project.CurrentStage, nil)
+	state := pipeline.BuildPipelineState(project.CurrentStage, nil, project.SummaryApproved)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(enhanceResponse{
 		Project:  *project,
@@ -126,6 +126,8 @@ func (h *EnhanceHandler) EnhanceInternal(projectID, vision, versionBump string) 
 	project.Version = newVersion
 	project.Iteration++
 	project.EnhancementVision = vision
+	project.SummaryReady = false
+	project.SummaryApproved = false
 	project.UpdatedAt = time.Now()
 
 	if err := h.registry.Update(project); err != nil {
@@ -143,6 +145,11 @@ func (h *EnhanceHandler) EnhanceInternal(projectID, vision, versionBump string) 
 	commitMsg := fmt.Sprintf("enhance: start iteration %d (v%s)", project.Iteration, newVersion)
 	if err := h.git.AddAllAndCommit(project.HostDir, commitMsg); err != nil {
 		log.Printf("git commit enhance failed: %v", err)
+	}
+
+	branchName := fmt.Sprintf("pauline/iteration-%d", project.Iteration)
+	if err := h.git.CreateAndCheckoutBranch(project.HostDir, branchName); err != nil {
+		log.Printf("git create branch %s failed: %v", branchName, err)
 	}
 
 	return project, nil
