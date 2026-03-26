@@ -315,7 +315,7 @@ func (h *ConnectionHandler) ListModels(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusNotFound, fmt.Sprintf("connection %q: %s", id, err.Error()))
 		return
 	}
-	h.fetchModels(w, prov)
+	h.fetchModels(w, r, prov)
 }
 
 // ListModelsNew handles POST /api/connections/models.
@@ -349,41 +349,69 @@ func (h *ConnectionHandler) ListModelsNew(w http.ResponseWriter, r *http.Request
 // Shared helper methods
 // ---------------------------------------------------------------------------
 
-// runTest probes a provider's connectivity (TestConnection) and then
-// opportunistically calls ListModels in the same 30-second context window.
+// runTest probes a provider's connectivity (TestConnection) and opportunistically
+// fetches the model list (ListModels) in parallel within a shared 30-second
+// deadline derived from the HTTP request context.  Running both calls
+// concurrently avoids doubling the round-trip latency for providers that expose
+// separate health-check and model-list endpoints (Anthropic, OpenAI, Gemini).
+//
 // The response is always a testResult; provider-level errors are embedded in
 // the JSON body rather than surfaced as HTTP error codes so the frontend can
 // render them inline next to the connection form.
-func (h *ConnectionHandler) runTest(w http.ResponseWriter, prov provider.Provider) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+//
+// Buffered channels (size 1) are used so the goroutines can always send their
+// result without blocking, even if the function has already returned due to
+// context cancellation — preventing goroutine leaks.
+func (h *ConnectionHandler) runTest(w http.ResponseWriter, r *http.Request, prov provider.Provider) {
+	// Derive the timeout from the request context so that a client disconnect
+	// cancels the in-flight provider calls immediately.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	if err := prov.TestConnection(ctx); err != nil {
+	// Buffered channels let both goroutines send exactly once without blocking.
+	testErrCh := make(chan error, 1)
+	modelsCh := make(chan modelsResult, 1)
+
+	go func() {
+		testErrCh <- prov.TestConnection(ctx)
+	}()
+
+	go func() {
+		models, err := prov.ListModels(ctx)
+		modelsCh <- modelsResult{models: models, err: err}
+	}()
+
+	// Collect both results (order doesn't matter; channels are buffered).
+	testErr := <-testErrCh
+	mr := <-modelsCh
+
+	if testErr != nil {
 		writeJSON(w, testResult{
 			Success: false,
-			Error:   err.Error(),
+			Error:   testErr.Error(),
 		})
 		return
 	}
 
-	// Opportunistically fetch the model list. A failure here does not
-	// invalidate connectivity — we still report success, just without models.
-	models, err := prov.ListModels(ctx)
-	if err != nil {
+	// Connectivity succeeded. Include models when the provider supports listing;
+	// a ListModels failure is non-fatal and does not invalidate the test result.
+	if mr.err != nil {
 		writeJSON(w, testResult{Success: true})
 		return
 	}
 
 	writeJSON(w, testResult{
 		Success: true,
-		Models:  models,
+		Models:  mr.models,
 	})
 }
 
 // fetchModels fetches the model list for a provider and writes it as a JSON array.
 // Returns 422 Unprocessable Entity when the provider does not support model listing.
-func (h *ConnectionHandler) fetchModels(w http.ResponseWriter, prov provider.Provider) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// The 30-second timeout is derived from r.Context() so that client disconnects
+// cancel the in-flight provider call promptly.
+func (h *ConnectionHandler) fetchModels(w http.ResponseWriter, r *http.Request, prov provider.Provider) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	models, err := prov.ListModels(ctx)

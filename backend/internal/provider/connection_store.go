@@ -331,10 +331,19 @@ var validProviderTypes = map[ProviderType]struct{}{
 	ProviderGitHubCopilot: {},
 }
 
+// providerTypesRequiringBaseURL lists the provider types for which a non-empty
+// BaseURL is mandatory. These providers communicate with a user-hosted service
+// (e.g. a local Ollama daemon) that has no sensible default address.
+var providerTypesRequiringBaseURL = map[ProviderType]struct{}{
+	ProviderOllama:   {},
+	ProviderLMStudio: {},
+}
+
 // validateConnectionInput checks the user-supplied fields of a Connection
 // before a Create or Update operation.  It returns a descriptive error when:
 //   - Name is empty or whitespace-only
 //   - ProviderType is not a recognised provider identifier
+//   - BaseURL is empty for provider types that require one (Ollama, LM Studio)
 //   - DefaultModel is empty (unless ProviderType is claude_cli, which uses its
 //     own hardcoded model map)
 //
@@ -345,6 +354,13 @@ func validateConnectionInput(conn *Connection) error {
 	}
 	if _, ok := validProviderTypes[conn.ProviderType]; !ok {
 		return fmt.Errorf("unknown provider type %q; must be one of: ollama, lmstudio, anthropic, openai, gemini, claude_cli, github_copilot", conn.ProviderType)
+	}
+	// Ollama and LM Studio point at a user-hosted service; there is no default
+	// URL we can fall back to, so an empty BaseURL is always a user error.
+	if _, needsURL := providerTypesRequiringBaseURL[conn.ProviderType]; needsURL {
+		if strings.TrimSpace(conn.BaseURL) == "" {
+			return fmt.Errorf("provider type %q requires a base URL", conn.ProviderType)
+		}
 	}
 	// claude_cli uses a hardcoded model map — an empty DefaultModel is fine.
 	if conn.ProviderType != ProviderClaudeCLI && strings.TrimSpace(conn.DefaultModel) == "" {

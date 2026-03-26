@@ -525,7 +525,7 @@
       "title": "Modify handler/mock.go — Route through provider layer",
       "description": "Same provider-resolution refactor as chat handler. Mock generation uses resolved provider. Error handling matches chat handler pattern.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
@@ -544,7 +544,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-007"
-      ]
+      ],
+      "preExecutionCommit": "d86e53087eacdf1a06d0d6f6a60ab26427e78ee1"
     },
     {
       "id": "paulette-59p",
@@ -706,7 +707,8 @@
       "status": "reviewing",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "6761587adb33837a2d0f4100a279684c4fe19204"
+      "preExecutionCommit": "6761587adb33837a2d0f4100a279684c4fe19204",
+      "postExecutionCommit": "d86e53087eacdf1a06d0d6f6a60ab26427e78ee1"
     },
     {
       "id": "paulette-g1c",
