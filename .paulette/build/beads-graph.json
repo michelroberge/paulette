@@ -373,10 +373,10 @@
       "title": "Backend API Handlers \u0026 Integration",
       "description": "Expose connection CRUD, test, model list, and stage config via HTTP API. Modify existing chat/mock handlers to route through the provider layer.",
       "type": "epic",
-      "status": "open",
+      "status": "in_progress",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
+      "preExecutionCommit": "9015742f3ca15fb667cfbcfb507a4297f31fd2eb"
     },
     {
       "id": "paulette-d6n",
@@ -561,7 +561,8 @@
       "status": "reviewing",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "88947e03472f72662452cd43873e4f7bc3f5cf7e"
+      "preExecutionCommit": "88947e03472f72662452cd43873e4f7bc3f5cf7e",
+      "postExecutionCommit": "9015742f3ca15fb667cfbcfb507a4297f31fd2eb"
     },
     {
       "id": "paulette-kh9",
@@ -1028,7 +1029,7 @@
       "title": "Test mixed provider configuration",
       "description": "Assign different connections to different stages, verify stage-specific resolution. Use Ollama at http://10.0.0.57:11434 with gemma3:4b for Vision/UX and codellama:7b for Architecture/Build. Each stage correctly routes to its assigned provider and model.",
       "type": "task",
-      "status": "in_progress",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-65f",
       "deps": [
