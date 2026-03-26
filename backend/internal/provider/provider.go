@@ -11,7 +11,6 @@ import (
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/model"
-	"github.com/michelroberge/paulette/backend/internal/repository"
 )
 
 // ErrModelListUnsupported is returned by ListModels when the provider
@@ -37,7 +36,7 @@ type Message = model.Message
 // and stream the response.
 type ChatRequest struct {
 	// Model is the provider-specific model identifier (e.g. "llama3:8b", "gpt-4o",
-	// "claude-sonnet-4-5"). Required.
+	// "claude-sonnet-4-6"). Required.
 	Model string
 
 	// SystemPrompt is the stage-specific instruction prompt prepended to every
@@ -80,11 +79,11 @@ type Provider interface {
 // stage configuration exists. This preserves v0.1.0 behaviour exactly:
 // lighter Sonnet for early stages, more capable Opus for Architecture/Build.
 var stageModels = map[model.StageName]string{
-	model.StageVision:       "claude-sonnet-4-5",
-	model.StageUX:           "claude-sonnet-4-5",
-	model.StageArchitecture: "claude-opus-4-5",
-	model.StageBuild:        "claude-opus-4-5",
-	model.StageComplete:     "claude-sonnet-4-5",
+	model.StageVision:       "claude-sonnet-4-6",
+	model.StageUX:           "claude-sonnet-4-6",
+	model.StageArchitecture: "claude-opus-4-6",
+	model.StageBuild:        "claude-opus-4-6",
+	model.StageComplete:     "claude-sonnet-4-6",
 }
 
 // Registry maps provider types to factory functions and resolves the
@@ -155,14 +154,10 @@ func (r *Registry) providerForConnection(conn *Connection) (Provider, error) {
 //
 // If stageConfig is nil, levels 1 and 2 are skipped and the function always
 // returns the Claude CLI fallback, making the upgrade path non-breaking.
-//
-// The projectRepo parameter is available for future use (e.g. looking up project
-// metadata from the registry); it is not consumed by the current implementation.
 func (r *Registry) ResolveForStage(
 	projectID string,
 	stage model.StageName,
 	stageConfig *StageConfigStore,
-	projectRepo repository.ProjectRepo,
 	hostDir string,
 ) (Provider, string, error) {
 	if stageConfig != nil {
@@ -192,7 +187,7 @@ func (r *Registry) ResolveForStage(
 	// Level 3: hardcoded Claude CLI fallback — identical to v0.1.0 behaviour.
 	claudeModel, ok := stageModels[stage]
 	if !ok {
-		claudeModel = "claude-sonnet-4-5"
+		claudeModel = "claude-sonnet-4-6"
 	}
 	return NewClaudeCLIProvider(), claudeModel, nil
 }

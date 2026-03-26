@@ -16,7 +16,7 @@
       "title": "Create provider/provider.go — Provider interface and Registry",
       "description": "Define Provider interface (Chat, TestConnection, ListModels), ChatRequest, ModelInfo, StreamEvent re-export, ErrModelListUnsupported, and Registry struct with ForConnection() and ResolveForStage() methods. ResolveForStage implements 3-level fallback (project override → global default → Claude CLI hardcoded).",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 0,
       "epicId": "paulette-6hc",
       "deps": [],
@@ -95,7 +95,7 @@
       "title": "Create provider/stage_config.go — Global defaults and per-project overrides",
       "description": "Implement global defaults (~/.paulette/config.json) and per-project overrides (\u003chostDir\u003e/.paulette/stage_config.json). Methods: GetGlobalDefaults, SetGlobalStageDefault, GetProjectOverrides, SetProjectStageOverride, ResetProjectOverrides, ClearConnectionReferences. Files written atomically.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 0,
       "epicId": "paulette-6hc",
       "deps": [
@@ -114,7 +114,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-019"
-      ]
+      ],
+      "preExecutionCommit": "f0a552e8d192ae12ea12035eae5498912751d2bf"
     },
     {
       "id": "paulette-3uw",
@@ -578,7 +579,8 @@
       "archRefs": [
         "ARCH-v0.2.0-031"
       ],
-      "preExecutionCommit": "4aaf93c137ad0c91f2e2e1c6c58b42ed98ec1b4b"
+      "preExecutionCommit": "4aaf93c137ad0c91f2e2e1c6c58b42ed98ec1b4b",
+      "postExecutionCommit": "f0a552e8d192ae12ea12035eae5498912751d2bf"
     },
     {
       "id": "paulette-77p",
