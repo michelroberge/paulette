@@ -20,15 +20,16 @@ import (
 )
 
 type ImportHandler struct {
-	registry     repository.RegistryRepo
-	projectRepo  repository.ProjectRepo
-	artifactRepo repository.ArtifactRepo
-	runs         *stream.Manager
-	git          *git.Service
-	reposPath    string
+	registry      repository.RegistryRepo
+	projectRepo   repository.ProjectRepo
+	artifactRepo  repository.ArtifactRepo
+	runs          *stream.Manager
+	git           *git.Service
+	reposPath     string
+	gitIdentity   *git.GlobalIdentityStore
 }
 
-func NewImportHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager, gitSvc *git.Service, reposPath string) *ImportHandler {
+func NewImportHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager, gitSvc *git.Service, reposPath string, gitIdentity *git.GlobalIdentityStore) *ImportHandler {
 	return &ImportHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
@@ -36,6 +37,7 @@ func NewImportHandler(registry repository.RegistryRepo, projectRepo repository.P
 		runs:         runs,
 		git:          gitSvc,
 		reposPath:    reposPath,
+		gitIdentity:  gitIdentity,
 	}
 }
 
@@ -93,6 +95,11 @@ func (h *ImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 	version := req.Version
 	if version == "" {
 		version = "1.0.0"
+	}
+
+	// Apply global git identity to the repo so commits work out of the box.
+	if id := h.gitIdentity.Get(); id.Name != "" && id.Email != "" {
+		_ = h.git.SetIdentity(req.HostDir, id.Name, id.Email)
 	}
 
 	// Initialize .paulette directory structure

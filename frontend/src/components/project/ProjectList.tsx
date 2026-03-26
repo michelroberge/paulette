@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { listProjects, createProject, deleteProject } from '../../api/projects';
 import { importProject } from '../../api/import';
 import { getConfig } from '../../api/config';
 import { getProjectsActivity } from '../../api/activity';
 import { getAuthStatus, startLogin, logout, sendLoginCode } from '../../api/auth';
 import type { AuthStatus } from '../../api/auth';
+import { getGlobalIdentity } from '../../api/git';
+import type { GlobalGitIdentity } from '../../api/git';
 import { StageRobot } from '../layout/StageRobot';
 import type { Project, StageName } from '../../types';
 
@@ -53,6 +56,7 @@ interface Props {
 }
 
 export function ProjectList({ onSelect, onConfigure }: Props) {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [showImportForm, setShowImportForm] = useState(false);
@@ -72,6 +76,8 @@ export function ProjectList({ onSelect, onConfigure }: Props) {
   const [appAuthor, setAppAuthor] = useState('');
   const [activityCounts, setActivityCounts] = useState<Record<string, number>>({});
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [gitIdentity, setGitIdentity] = useState<GlobalGitIdentity | null>(null);
+  const [gitIdentityLoaded, setGitIdentityLoaded] = useState(false);
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   const [loginLines, setLoginLines] = useState<string[]>([]);
   const [loginError, setLoginError] = useState('');
@@ -88,6 +94,7 @@ export function ProjectList({ onSelect, onConfigure }: Props) {
       setAppAuthor(c.author);
     }).catch(console.error);
     getAuthStatus().then(setAuthStatus).catch(console.error);
+    getGlobalIdentity().then(id => { setGitIdentity(id); setGitIdentityLoaded(true); }).catch(() => setGitIdentityLoaded(true));
     return () => { if (authPollTimer.current) clearInterval(authPollTimer.current); };
   }, []);
 
@@ -253,6 +260,24 @@ export function ProjectList({ onSelect, onConfigure }: Props) {
               <span className="auth-dot">●</span>
               <span>Not authenticated</span>
               <button className="auth-action" onClick={handleStartLogin}>Login</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {gitIdentityLoaded && (
+        <div className={`auth-banner ${gitIdentity?.name && gitIdentity?.email ? 'auth-ok' : 'auth-warn'}`}>
+          {gitIdentity?.name && gitIdentity?.email ? (
+            <>
+              <span className="auth-dot">●</span>
+              <span>Git identity: {gitIdentity.name} &lt;{gitIdentity.email}&gt;</span>
+              <button className="auth-action" onClick={() => navigate('/configure?tab=git')}>Configure</button>
+            </>
+          ) : (
+            <>
+              <span className="auth-dot">●</span>
+              <span>Git identity not set — SSH clone may fail</span>
+              <button className="auth-action" onClick={() => navigate('/configure?tab=git')}>Set Up Git</button>
             </>
           )}
         </div>

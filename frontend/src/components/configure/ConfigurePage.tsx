@@ -18,12 +18,13 @@ import type { CSSProperties } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionsTab } from './ConnectionsTab';
 import { StageDefaultsTab } from './StageDefaultsTab';
+import { GitTab } from './GitTab';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type TabId = 'connections' | 'defaults';
+type TabId = 'connections' | 'defaults' | 'git';
 
 // ---------------------------------------------------------------------------
 // Styles
@@ -140,7 +141,9 @@ export function ConfigurePage() {
   // without any dual-state synchronisation logic.
   const tabParam = searchParams.get('tab');
   const highlightParam = searchParams.get('highlight') ?? undefined;
-  const activeTab: TabId = tabParam === 'defaults' ? 'defaults' : 'connections';
+  let activeTab: TabId = 'connections';
+  if (tabParam === 'defaults') activeTab = 'defaults';
+  else if (tabParam === 'git') activeTab = 'git';
 
   /**
    * Navigate to a tab by updating the URL.
@@ -192,6 +195,12 @@ export function ConfigurePage() {
             active={activeTab === 'defaults'}
             onClick={() => handleTabClick('defaults')}
           />
+          <TabButton
+            id="git"
+            label="Git"
+            active={activeTab === 'git'}
+            onClick={() => handleTabClick('git')}
+          />
         </div>
 
         {/* Tab panels */}
@@ -212,6 +221,7 @@ export function ConfigurePage() {
             />
           )}
           {activeTab === 'defaults' && <StageDefaultsTab />}
+          {activeTab === 'git' && <GitTab />}
         </div>
       </div>
     </div>

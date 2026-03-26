@@ -32,6 +32,7 @@ type Server struct {
 	connStore        *provider.ConnectionStore
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
+	gitIdentity      *git.GlobalIdentityStore
 }
 
 func New(
@@ -57,6 +58,7 @@ func New(
 		connStore:        connStore,
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
+		gitIdentity:      git.NewGlobalIdentityStore(cfg.RegistryPath),
 	}
 }
 
@@ -107,7 +109,8 @@ func (s *Server) Router() http.Handler {
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
 	acth := handler.NewActivityHandler(s.runs, s.activityRepo, s.registry)
 	gh := handler.NewGitHandler(s.registry, s.projectRepo, gitSvc)
-	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath)
+	ggh := handler.NewGitGlobalHandler(gitSvc, s.gitIdentity)
+	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath, s.gitIdentity)
 	sh := handler.NewSessionHandler(s.registry)
 	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs)
 
@@ -137,6 +140,10 @@ func (s *Server) Router() http.Handler {
 	r.Get("/api/auth/login", authH.Login)
 	r.Post("/api/auth/login/input", authH.LoginInput)
 	r.Post("/api/auth/logout", authH.Logout)
+
+	r.Get("/api/git/ssh-key", ggh.SSHKey)
+	r.Get("/api/git/identity", ggh.GetIdentity)
+	r.Post("/api/git/identity", ggh.SetIdentity)
 
 	r.Route("/api/projects", func(r chi.Router) {
 		r.Get("/activity", acth.Summary)
