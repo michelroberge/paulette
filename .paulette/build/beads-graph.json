@@ -684,7 +684,7 @@
       "title": "Add Configure Paulette button to home page",
       "description": "Add 'Configure Paulette' button alongside 'New Project' and 'Import Project'. Button styled as secondary (bg-white border border-gray-300). Navigates to /configure. Appears alongside existing action buttons.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 2,
       "epicId": "paulette-59p",
       "deps": [
@@ -703,7 +703,7 @@
       "archRefs": [
         "ARCH-v0.2.0-033"
       ],
-      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
+      "preExecutionCommit": "722b0ff06c24e12820413a12817b2482f8555d73"
     },
     {
       "id": "paulette-1kh",
@@ -1018,7 +1018,8 @@
       "journeyRefs": [
         "JRN-v0.2.0-001"
       ],
-      "preExecutionCommit": "d05db573e2d62aae625c2931d5bddba0b695a3db"
+      "preExecutionCommit": "d05db573e2d62aae625c2931d5bddba0b695a3db",
+      "postExecutionCommit": "722b0ff06c24e12820413a12817b2482f8555d73"
     },
     {
       "id": "paulette-951",
