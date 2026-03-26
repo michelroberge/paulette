@@ -303,7 +303,7 @@
       "title": "Create provider/gemini.go — Gemini provider",
       "description": "Implement Gemini provider using streamGenerateContent endpoint with API key as query param. Parse candidates[0].content.parts[0].text from NDJSON array. ListModels uses GET /v1beta/models. Default base URL https://generativelanguage.googleapis.com.",
       "type": "task",
-      "status": "in_progress",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -722,7 +722,8 @@
       "archRefs": [
         "ARCH-v0.2.0-022"
       ],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86",
+      "postExecutionCommit": "6f82803fe117e911ee905962b2d74af0c3d649f7"
     },
     {
       "id": "paulette-hlr",
@@ -784,7 +785,7 @@
       "title": "Create StageDefaultsTab.tsx — Five-stage configuration table",
       "description": "Five-stage table with connection picker and model field, auto-save per row. Each row shows stage pip + label, connection dropdown (all connections + Claude CLI default), model field (dropdown or free-text). Changes auto-save on blur/change. Saved ✓ fades in/out per row. Note about global vs project scope at bottom.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -802,7 +803,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-025"
-      ]
+      ],
+      "preExecutionCommit": "6f82803fe117e911ee905962b2d74af0c3d649f7"
     },
     {
       "id": "paulette-bxp",
