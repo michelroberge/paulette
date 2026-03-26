@@ -298,7 +298,7 @@
       "title": "Create provider/gemini.go — Gemini provider",
       "description": "Implement Gemini provider using streamGenerateContent endpoint with API key as query param. Parse candidates[0].content.parts[0].text from NDJSON array. ListModels uses GET /v1beta/models. Default base URL https://generativelanguage.googleapis.com.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -318,7 +318,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-016"
-      ]
+      ],
+      "preExecutionCommit": "89c3e6022cd313f99b7218edc9c7d3fee3c58e67"
     },
     {
       "id": "paulette-t23",
@@ -690,7 +691,7 @@
       "title": "Create ConfigurePage.tsx — Two-tab layout",
       "description": "Create two-tab layout (Connections, Stage Defaults) with breadcrumb, query param support for ?tab= and ?highlight=. Tabs switch content. ← Home breadcrumb navigates back. max-w-4xl centered layout.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -711,7 +712,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-022"
-      ]
+      ],
+      "preExecutionCommit": "89c3e6022cd313f99b7218edc9c7d3fee3c58e67"
     },
     {
       "id": "paulette-hlr",
@@ -818,7 +820,8 @@
       "archRefs": [
         "ARCH-v0.2.0-026"
       ],
-      "preExecutionCommit": "0816e9abeca2165944a73eae38b800ad7b2858d5"
+      "preExecutionCommit": "0816e9abeca2165944a73eae38b800ad7b2858d5",
+      "postExecutionCommit": "89c3e6022cd313f99b7218edc9c7d3fee3c58e67"
     },
     {
       "id": "paulette-peh",
@@ -850,7 +853,7 @@
       "title": "Create ConnectionErrorBanner.tsx — Inline error banner",
       "description": "Inline error banner with 'Go to Configure →' deep-link and 'Change stage connection' shortcut. Renders on StreamEvent{type: error} with connection info. Links to /configure?tab=connections\u0026highlight={id}. Opens ProjectStageSettings. Banner persists until user navigates or retries.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [

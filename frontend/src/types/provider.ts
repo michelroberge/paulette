@@ -152,6 +152,29 @@ export interface DeleteResult {
 }
 
 // ---------------------------------------------------------------------------
+// ConnectionError — structured payload in StreamEvent{type: 'error'} content
+// ---------------------------------------------------------------------------
+
+/**
+ * Structured data embedded in a StreamEvent{type: 'error'} `content` field
+ * when the error originates from a failing provider connection.
+ *
+ * The backend JSON-encodes this object into the SSE content string so that
+ * the frontend can distinguish connection errors from generic errors and
+ * render the actionable ConnectionErrorBanner (SCR-012 / IACT-011).
+ */
+export interface ConnectionError {
+  /** Discriminant — always `true` for connection errors. */
+  isConnectionError: true;
+  /** UUID of the failing connection. */
+  connectionId: string;
+  /** Human-readable name of the failing connection, e.g. "Local Llama3". */
+  connectionName: string;
+  /** Short error reason, e.g. "Connection refused at http://localhost:11434". */
+  reason: string;
+}
+
+// ---------------------------------------------------------------------------
 // Stage assignment & config
 // ---------------------------------------------------------------------------
 
