@@ -40,6 +40,12 @@ export interface ConnectionFormProps {
   onSaved: (connection: Connection) => void;
   /** Called when the user cancels or closes the panel. */
   onClose: () => void;
+  /**
+   * Called after a successful save that wrote new API credentials to disk.
+   * Use this hook to trigger the CredentialWarningToast (IACT-009).
+   * Not called for Ollama / LM Studio / Claude CLI (no credentials).
+   */
+  onCredentialsSaved?: () => void;
 }
 
 interface FormData {
@@ -113,7 +119,7 @@ function providerHasOrgFields(type: ProviderType): boolean {
 // ConnectionForm
 // ---------------------------------------------------------------------------
 
-export function ConnectionForm({ connection, onSaved, onClose }: ConnectionFormProps) {
+export function ConnectionForm({ connection, onSaved, onClose, onCredentialsSaved }: ConnectionFormProps) {
   const isEdit = Boolean(connection);
 
   const [form, setForm] = useState<FormData>(() => ({

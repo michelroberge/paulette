@@ -99,7 +99,7 @@ export function StageDefaultsTab() {
    * the model column falls back to a free-text <input> (IACT-008).
    */
   const [stageModels, setStageModels] = useState<Record<StageName, ModelInfo[]>>(
-    () => Object.fromEntries(STAGES.map(s => [s, []])) as Record<StageName, ModelInfo[]>,
+    () => Object.fromEntries(STAGES.map(s => [s, [] as ModelInfo[]])) as Record<StageName, ModelInfo[]>,
   );
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);

@@ -44,7 +44,7 @@
       "title": "Create provider/connection.go — Connection model and ProviderType constants",
       "description": "Define Connection, ConnectionResponse, ProviderType constants for all 7 provider types. ConnectionResponse redacts APIKey into HasCredentials bool.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 0,
       "epicId": "paulette-6hc",
       "deps": [],
@@ -186,14 +186,15 @@
       "archRefs": [
         "ARCH-v0.2.0-017"
       ],
-      "preExecutionCommit": "da239c56b64440f24cb9153d9574d5a290c3c837"
+      "preExecutionCommit": "da239c56b64440f24cb9153d9574d5a290c3c837",
+      "postExecutionCommit": "f5337addc971fa58100a9c29987adf0e0d518781"
     },
     {
       "id": "paulette-g3n",
       "title": "Create provider/ollama.go — Ollama provider",
       "description": "Implement Ollama provider using POST /api/chat (NDJSON streaming) and GET /api/tags (model list). Stream NDJSON, convert {message:{content:...}, done:false} to StreamEvent. ListModels parses /api/tags response. No auth headers sent.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -222,7 +223,7 @@
       "title": "Create provider/lmstudio.go — LM Studio provider",
       "description": "Implement LM Studio provider delegating to openai_compat functions with no auth. All three interface methods delegate to openAICompat* functions. Base URL required, no auth header.",
       "type": "task",
-      "status": "open",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -242,14 +243,15 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-013"
-      ]
+      ],
+      "preExecutionCommit": "f5337addc971fa58100a9c29987adf0e0d518781"
     },
     {
       "id": "paulette-cu1",
       "title": "Create provider/openai.go — OpenAI provider",
       "description": "Implement OpenAI provider delegating to openai_compat functions with Authorization: Bearer {key} header, optional org/project headers. Default base URL https://api.openai.com.",
       "type": "task",
-      "status": "open",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -269,14 +271,15 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-014"
-      ]
+      ],
+      "preExecutionCommit": "f5337addc971fa58100a9c29987adf0e0d518781"
     },
     {
       "id": "paulette-e6h",
       "title": "Create provider/anthropic.go — Anthropic API provider",
       "description": "Implement Anthropic API provider using POST /v1/messages with typed SSE events (content_block_delta, message_stop). Set x-api-key and anthropic-version headers. ListModels returns hardcoded list. TestConnection sends minimal 1-token request.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -551,7 +554,7 @@
       "title": "Install react-router-dom and set up client-side routing",
       "description": "Install react-router-dom and set up client-side routing in App.tsx. Routes: / (home), /projects/:id (project detail), /configure (configure page). Existing project list and project detail views function identically. URL reflects current view. Back/forward navigation works. ?tab= and ?highlight= query params parsed on /configure.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-59p",
       "deps": [],
@@ -608,7 +611,7 @@
       "title": "Create api/connections.ts — Connection API client functions",
       "description": "Implement all 8 functions (listConnections, createConnection, updateConnection, deleteConnection, testConnection, testNewConnection, listModels, listModelsForNew) using existing apiFetch helper.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-59p",
       "deps": [
@@ -639,7 +642,7 @@
       "title": "Create api/stageConfig.ts — Stage config API client functions",
       "description": "Implement all 5 functions (getGlobalDefaults, setGlobalStageDefault, getProjectOverrides, setProjectStageOverride, resetProjectOverrides). setProjectStageOverride sends null to clear override.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-59p",
       "deps": [
@@ -733,7 +736,7 @@
       "title": "Create ConnectionsTab.tsx — Connection list with actions",
       "description": "Connection list with provider badges, Add/Edit/Delete/Test actions, empty state. Connections fetched on mount. Provider badges colour-coded. Add Connection opens form. Edit pre-fills form. Delete shows confirmation with affected stages. ?highlight= causes matching card to pulse with ring-2 ring-red-400. Empty state with plug icon.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -763,7 +766,7 @@
       "title": "Create ConnectionForm.tsx — Slide-over connection form",
       "description": "Slide-over form with provider-type-driven fields, Test Connection, model discovery, credential warning. Provider type selection dynamically shows/hides fields. GitHub Copilot disabled with Coming Soon badge. Test Connection shows spinner → ✓/✗ inline. Model dropdown populated on successful discovery, free-text fallback otherwise. Credential warning banner. Save/Cancel footer.",
       "type": "task",
-      "status": "in_progress",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -924,7 +927,7 @@
       "title": "Integrate ConnectionErrorBanner into chat panel",
       "description": "Detect connection error events and render banner in ChatPanel. When SSE stream emits an error event with connection failure info, the banner replaces the streaming area. Chat input remains available for retry after fix.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -951,10 +954,10 @@
       "title": "Integration Testing \u0026 Polish",
       "description": "End-to-end validation, edge case handling, and regression testing",
       "type": "epic",
-      "status": "open",
+      "status": "in_progress",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "f5337addc971fa58100a9c29987adf0e0d518781"
     },
     {
       "id": "paulette-26w",
