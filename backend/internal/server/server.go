@@ -100,7 +100,7 @@ func (s *Server) Router() http.Handler {
 	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, gitSvc)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
-	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
+	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
 	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo)
 	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
@@ -122,6 +122,15 @@ func (s *Server) Router() http.Handler {
 
 	cfgH := handler.NewConfigHandler(s.cfg)
 	r.Get("/api/config", cfgH.GetInfo)
+
+	// Connection CRUD, test, and model-discovery endpoints.
+	connH := handler.NewConnectionHandler(s.connStore, s.providerRegistry, s.stageConfig, s.registry)
+	r.Route("/api/connections", connH.RegisterRoutes)
+
+	// Stage-config global defaults: GET /api/config/stages, PUT /api/config/stages/:stage
+	scfgH := handler.NewStageConfigHandler(s.stageConfig, s.connStore, s.registry)
+	r.Get("/api/config/stages", scfgH.GetGlobalDefaults)
+	r.Put("/api/config/stages/{stage}", scfgH.SetGlobalStageDefault)
 
 	authH := handler.NewAuthHandler(s.cfg.ClaudePath)
 	r.Get("/api/auth/status", authH.Status)
@@ -202,6 +211,11 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/stages/build/skills/suggestions", skh.GetSuggestions)
 		r.Get("/{id}/stages/build/skills/observed", skh.GetObserved)
 		r.Post("/{id}/stages/build/skills/approve", skh.ApproveSuggestions)
+
+		// Per-project stage-config overrides.
+		r.Get("/{id}/config/stages", scfgH.GetProjectOverrides)
+		r.Put("/{id}/config/stages/{stage}", scfgH.SetProjectStageOverride)
+		r.Post("/{id}/config/stages/reset", scfgH.ResetProjectOverrides)
 	})
 
 	r.Route("/api/skills", func(r chi.Router) {

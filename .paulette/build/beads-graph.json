@@ -407,7 +407,8 @@
       "archRefs": [
         "ARCH-v0.2.0-020"
       ],
-      "preExecutionCommit": "bd88664a162045fab0dad17f9a52d61780235abd"
+      "preExecutionCommit": "bd88664a162045fab0dad17f9a52d61780235abd",
+      "postExecutionCommit": "dc735fabfec8982045873538b0ef16b2cbd0a1af"
     },
     {
       "id": "paulette-l1w",
@@ -442,7 +443,7 @@
       "title": "Mount new routes in server/server.go",
       "description": "Add /api/connections/* and /api/config/* route groups. All new endpoints reachable. Existing routes unchanged. Server struct accepts connStore, providerRegistry, stageConfig.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
@@ -467,7 +468,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-002"
-      ]
+      ],
+      "preExecutionCommit": "dc735fabfec8982045873538b0ef16b2cbd0a1af"
     },
     {
       "id": "paulette-tlq",
@@ -525,7 +527,7 @@
       "title": "Modify handler/mock.go — Route through provider layer",
       "description": "Same provider-resolution refactor as chat handler. Mock generation uses resolved provider. Error handling matches chat handler pattern.",
       "type": "task",
-      "status": "in_progress",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
