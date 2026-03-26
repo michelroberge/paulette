@@ -98,6 +98,17 @@
       "inputTokens": 0,
       "outputTokens": 0,
       "totalTokens": 208793
+    },
+    {
+      "id": "ea726f30-437b-4cdb-8ff1-5adcbeeb48ef",
+      "stage": "build",
+      "kind": "skills-observe",
+      "iteration": 2,
+      "startedAt": "2026-03-26T12:17:24.829398634Z",
+      "endedAt": "2026-03-26T12:38:23.651373873Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 5985
     }
   ]
 }

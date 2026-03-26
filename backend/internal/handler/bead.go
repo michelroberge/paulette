@@ -697,8 +697,10 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						postCommit := h.gitSvc.CurrentHash(project.HostDir)
 						currentBead.Status = model.BeadStatusClosed
 						updateGraphBeadFields(mu, project.HostDir, b.ID, func(stored *model.Bead) {
+							stored.Status = model.BeadStatusClosed
 							stored.PostExecutionCommit = postCommit
 						})
+						b.Status = model.BeadStatusClosed
 						b.PostExecutionCommit = postCommit
 						beadJSON, _ = json.Marshal(b)
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})

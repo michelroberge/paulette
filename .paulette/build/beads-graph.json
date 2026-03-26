@@ -165,7 +165,7 @@
       "title": "Create provider/openai_compat.go — Shared OpenAI-compatible implementation",
       "description": "Implement openAICompatChat(), openAICompatListModels(), openAICompatTestConnection(), SSE line parsing (data: {...} → StreamEvent), message format conversion. Handle data: [DONE] sentinel, parse choices[0].delta.content, support optional auth header and base URL. 30s test timeout, 10min chat timeout.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -186,7 +186,7 @@
       "archRefs": [
         "ARCH-v0.2.0-017"
       ],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "da239c56b64440f24cb9153d9574d5a290c3c837"
     },
     {
       "id": "paulette-g3n",
@@ -214,7 +214,8 @@
       "archRefs": [
         "ARCH-v0.2.0-012"
       ],
-      "preExecutionCommit": "664d72a26f089362ceb7ee45309ce86fe0594018"
+      "preExecutionCommit": "664d72a26f089362ceb7ee45309ce86fe0594018",
+      "postExecutionCommit": "da239c56b64440f24cb9153d9574d5a290c3c837"
     },
     {
       "id": "paulette-xfq",
