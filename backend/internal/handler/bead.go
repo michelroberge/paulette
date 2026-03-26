@@ -1061,8 +1061,15 @@ func (h *BeadHandler) ControlBead(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+	case "close":
+		// Manual close: mark bead as verified/done without running the agent
+		if err := bdClose(r.Context(), project.HostDir, beadID); err != nil {
+			http.Error(w, "failed to close bead", http.StatusInternalServerError)
+			return
+		}
+
 	default:
-		http.Error(w, "invalid action: must be 'pause' or 'restart'", http.StatusBadRequest)
+		http.Error(w, "invalid action: must be 'pause', 'restart', or 'close'", http.StatusBadRequest)
 		return
 	}
 

@@ -213,6 +213,13 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
                           Save &amp; Restart
                         </button>
                       )}
+                      <button
+                        className="close-verified-button"
+                        onClick={() => control(beadId, 'close')}
+                        title="Mark this bead as verified and close it"
+                      >
+                        ✓ Close (Verified)
+                      </button>
                     </div>
                   )}
 

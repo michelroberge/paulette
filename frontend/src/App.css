@@ -605,6 +605,23 @@ body {
   background: #b91c1c;
 }
 
+.close-verified-button {
+  padding: 0.35rem 0.9rem;
+  background: #15803d;
+  color: white;
+  border: 1px solid #16a34a;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.close-verified-button:hover {
+  background: #166534;
+}
+
 .chat-input .stop-button {
   padding: 0.75rem 1.5rem;
   font-size: 0.9rem;
