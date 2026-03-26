@@ -352,3 +352,20 @@ Milestone 6 (Integration Testing)
 8. **Frontend compiles and builds**: `npm run build` succeeds with no TypeScript errors
 9. **Backend compiles and builds**: `go build` succeeds with no errors
 10. **GitHub Copilot** shows as "Coming Soon" in provider dropdown — not selectable
+
+---
+*Added by Further Instructions — 2026-03-26*
+
+---
+
+## Testing Environment
+
+### Ollama Instance
+| Setting | Value |
+|---|---|
+| Base URL | `http://10.0.0.57:11434` |
+| Available Models | `gemma3:4b`, `codellama:7b` |
+
+**Suggested stage assignments for testing:**
+- Vision / UX / Complete stages → `gemma3:4b` (general-purpose, good for natural language)
+- Architecture / Build stages → `codellama:7b` (code-oriented)

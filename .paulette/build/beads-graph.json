@@ -165,7 +165,7 @@
       "title": "Create provider/openai_compat.go — Shared OpenAI-compatible implementation",
       "description": "Implement openAICompatChat(), openAICompatListModels(), openAICompatTestConnection(), SSE line parsing (data: {...} → StreamEvent), message format conversion. Handle data: [DONE] sentinel, parse choices[0].delta.content, support optional auth header and base URL. 30s test timeout, 10min chat timeout.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -339,7 +339,7 @@
       "title": "Wire Registry.ForConnection() — Provider factory method",
       "description": "Implement the factory method that instantiates the correct provider type based on Connection.ProviderType. All 6 active provider types instantiated correctly. github_copilot returns error 'not yet supported'. Unknown types return error.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 0,
       "epicId": "paulette-8qp",
       "deps": [
@@ -443,7 +443,7 @@
       "title": "Mount new routes in server/server.go",
       "description": "Add /api/connections/* and /api/config/* route groups. All new endpoints reachable. Existing routes unchanged. Server struct accepts connStore, providerRegistry, stageConfig.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
@@ -477,7 +477,7 @@
       "title": "Modify main.go — Initialize provider stores and registry",
       "description": "Initialize ConnectionStore, Registry, StageConfigStore on startup and pass to server constructor. connections.json and config.json loaded at boot. Missing files handled gracefully with empty defaults.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
@@ -501,7 +501,7 @@
       "title": "Modify handler/chat.go — Route through provider layer",
       "description": "Replace direct agent.Chat() call with registry.ResolveForStage() → provider.Chat(). Emit structured error StreamEvent on provider failure. stageModels map remains as fallback. StartChatRun resolves provider + model via registry. Connection errors produce StreamEvent{Type: error} with connection name and reason. Existing Claude CLI path still works when no config exists.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 0,
       "epicId": "paulette-aza",
       "deps": [
@@ -530,7 +530,7 @@
       "title": "Modify handler/mock.go — Route through provider layer",
       "description": "Same provider-resolution refactor as chat handler. Mock generation uses resolved provider. Error handling matches chat handler pattern.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
@@ -710,7 +710,7 @@
       "title": "Frontend Configure Page \u0026 Components",
       "description": "Build the full Configure Paulette UI — Connections tab, Connection form, Stage Defaults tab, Project Stage Settings panel, and error/toast components",
       "type": "epic",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 2,
       "deps": [],
       "preExecutionCommit": "6761587adb33837a2d0f4100a279684c4fe19204",
@@ -864,7 +864,7 @@
       "title": "Modify project header — Add gear icon and override indicators",
       "description": "Add ⚙ gear icon button to project header. Show ring-2 ring-yellow-400 accent on pips with overrides. Gear icon opens ProjectStageSettings panel. Tooltip 'Stage connection settings'.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 2,
       "epicId": "paulette-1kh",
       "deps": [
@@ -918,7 +918,7 @@
       "title": "Create CredentialWarningToast.tsx — Toast notification",
       "description": "Toast notification for credential saves, auto-dismiss after 6s. Fixed bottom-right position. Yellow warning styling. Auto-dismisses after 6s with fade-out. Only shown for providers that have credentials (not Ollama/LM Studio/Claude CLI).",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 2,
       "epicId": "paulette-1kh",
       "deps": [],
@@ -971,17 +971,17 @@
       "title": "Integration Testing \u0026 Polish",
       "description": "End-to-end validation, edge case handling, and regression testing",
       "type": "epic",
-      "status": "open",
+      "status": "in_progress",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
+      "preExecutionCommit": "1e1d7841b8e20569a3b1fbf92d872a55d929b975"
     },
     {
       "id": "paulette-26w",
       "title": "Verify Claude CLI fallback — Zero regression test",
       "description": "Confirm that with no connections.json or config.json, the pipeline works identically to v0.1.0. New project → Vision stage fires with Claude Sonnet via CLI; Architecture fires with Claude Opus; no configuration required.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 0,
       "epicId": "paulette-65f",
       "deps": [
@@ -1004,9 +1004,9 @@
     {
       "id": "paulette-yq8",
       "title": "Test Ollama end-to-end",
-      "description": "Create Ollama connection, assign to all stages, run full pipeline. User with no Claude CLI can complete a full pipeline using Ollama alone. Connection test passes in \u003c3s for local Ollama.",
+      "description": "Create Ollama connection at http://10.0.0.57:11434, assign to all stages using available models (gemma3:4b and codellama:7b), run full pipeline. User with no Claude CLI can complete a full pipeline using Ollama alone. Connection test passes in \u003c3s.",
       "type": "task",
-      "status": "in_progress",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-65f",
       "deps": [
@@ -1023,7 +1023,7 @@
     {
       "id": "paulette-951",
       "title": "Test mixed provider configuration",
-      "description": "Assign different connections to different stages, verify stage-specific resolution. Vision/UX use Ollama, Architecture/Build use OpenAI; each stage correctly routes to its assigned provider and model.",
+      "description": "Assign different connections to different stages, verify stage-specific resolution. Use Ollama at http://10.0.0.57:11434 with gemma3:4b for Vision/UX and codellama:7b for Architecture/Build. Each stage correctly routes to its assigned provider and model.",
       "type": "task",
       "status": "open",
       "priority": 1,
@@ -1094,12 +1094,13 @@
       "archRefs": [
         "ARCH-v0.2.0-018"
       ],
-      "preExecutionCommit": "d05db573e2d62aae625c2931d5bddba0b695a3db"
+      "preExecutionCommit": "d05db573e2d62aae625c2931d5bddba0b695a3db",
+      "postExecutionCommit": "1e1d7841b8e20569a3b1fbf92d872a55d929b975"
     },
     {
       "id": "paulette-iza",
       "title": "Verify autonomous mode with custom providers",
-      "description": "Run full autonomous pipeline with non-Claude provider. Autonomous mode drives through all stages using configured provider. Error mid-pipeline surfaces correctly.",
+      "description": "Run full autonomous pipeline with Ollama provider at http://10.0.0.57:11434 (gemma3:4b or codellama:7b). Autonomous mode drives through all stages using configured provider. Error mid-pipeline surfaces correctly.",
       "type": "task",
       "status": "open",
       "priority": 1,
