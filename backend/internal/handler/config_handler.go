@@ -2,6 +2,8 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -10,14 +12,6 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 )
-
-// jsonError writes a JSON-encoded error response with the given HTTP status code.
-// Errors follow the shape { "error": "message" } for all v0.2.0 endpoints.
-func jsonError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
-}
 
 // StageConfigHandler handles HTTP requests for global and per-project stage
 // configuration (which connection + model to use for each pipeline stage).
@@ -29,10 +23,16 @@ func jsonError(w http.ResponseWriter, status int, message string) {
 //	GET  /api/projects/:id/config/stages              → GetProjectOverrides
 //	PUT  /api/projects/:id/config/stages/:stage       → SetProjectStageOverride
 //	POST /api/projects/:id/config/stages/reset        → ResetProjectOverrides
+//
+// Note: the struct is named StageConfigHandler (not ConfigHandler) to avoid a
+// naming clash with the existing ConfigHandler in config.go, which handles the
+// /api/config info endpoint.
 type StageConfigHandler struct {
 	stageConfig *provider.StageConfigStore
-	connStore   *provider.ConnectionStore
-	registry    repository.RegistryRepo
+	// connStore is used to validate that connectionId values in stage
+	// assignments refer to real, stored connections.
+	connStore *provider.ConnectionStore
+	registry  repository.RegistryRepo
 }
 
 // NewStageConfigHandler constructs a StageConfigHandler with its dependencies.
@@ -84,8 +84,7 @@ func (h *StageConfigHandler) RegisterRoutes(global chi.Router, project chi.Route
 //	}
 func (h *StageConfigHandler) GetGlobalDefaults(w http.ResponseWriter, r *http.Request) {
 	cfg := h.stageConfig.GetGlobalDefaults()
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(cfg)
+	writeJSON(w, cfg)
 }
 
 // SetGlobalStageDefault writes a connection + model assignment for a single
@@ -97,6 +96,10 @@ func (h *StageConfigHandler) GetGlobalDefaults(w http.ResponseWriter, r *http.Re
 //
 //	{ "connectionId": "uuid", "model": "llama3:8b" }
 //
+// If connectionId is non-empty it must refer to an existing connection.
+// An empty connectionId is allowed and reverts the stage to the built-in
+// Claude CLI fallback.
+//
 // Response 200 — full updated GlobalConfig (same shape as GetGlobalDefaults).
 func (h *StageConfigHandler) SetGlobalStageDefault(w http.ResponseWriter, r *http.Request) {
 	stage := model.StageName(chi.URLParam(r, "stage"))
@@ -107,15 +110,21 @@ func (h *StageConfigHandler) SetGlobalStageDefault(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Stage name validation is performed inside SetGlobalStageDefault.
+	// Validate that the referenced connection actually exists (if specified).
+	if assignment.ConnectionID != "" {
+		if _, err := h.connStore.Get(assignment.ConnectionID); err != nil {
+			jsonError(w, http.StatusBadRequest, "unknown connectionId: "+assignment.ConnectionID)
+			return
+		}
+	}
+
 	if err := h.stageConfig.SetGlobalStageDefault(stage, assignment); err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	cfg := h.stageConfig.GetGlobalDefaults()
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(cfg)
+	writeJSON(w, cfg)
 }
 
 // ---------------------------------------------------------------------------
@@ -146,25 +155,28 @@ func (h *StageConfigHandler) GetProjectOverrides(w http.ResponseWriter, r *http.
 	}
 
 	overrides := h.stageConfig.GetProjectOverrides(project.HostDir)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(overrides)
+	writeJSON(w, overrides)
 }
 
 // SetProjectStageOverride sets or clears a per-stage override for the project
 // identified by {id}.
 //
-// Sending a JSON null body (or omitting content) clears the override for the
-// stage, reverting it to inherit the global default.
+// Sending a JSON null body, an empty HTTP body, or omitting the Content-Type
+// header all clear the override for the stage, reverting it to inherit the
+// global default.
 //
 // PUT /api/projects/:id/config/stages/:stage
 //
-// Request body (override):
+// Request body (set override):
 //
 //	{ "connectionId": "uuid", "model": "gpt-4o" }
 //
-// Request body (clear / inherit):
+// Request body (clear / inherit — any of the following work):
 //
 //	null
+//	(empty body)
+//
+// If connectionId is non-empty it must refer to an existing connection.
 //
 // Response 200 — full updated ProjectStageConfig (same shape as GetProjectOverrides).
 func (h *StageConfigHandler) SetProjectStageOverride(w http.ResponseWriter, r *http.Request) {
@@ -177,26 +189,38 @@ func (h *StageConfigHandler) SetProjectStageOverride(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Decode into a raw JSON value first so we can distinguish between a JSON
-	// null (meaning "inherit") and a missing/empty body (a client error).
+	// Decode into a raw JSON value first so we can distinguish between:
+	//   - a JSON object  → set override
+	//   - a JSON null    → clear override (inherit from global)
+	//   - an empty body  → also clear override (Content-Length: 0 is a natural
+	//                      way for API clients to express "clear", and the AC
+	//                      states that "PUT with null body clears override")
 	var raw json.RawMessage
-	if decErr := json.NewDecoder(r.Body).Decode(&raw); decErr != nil {
+	decErr := json.NewDecoder(r.Body).Decode(&raw)
+	if decErr != nil && !errors.Is(decErr, io.EOF) {
+		// Real parse error — the body was present but malformed JSON.
 		jsonError(w, http.StatusBadRequest, "invalid request body: "+decErr.Error())
 		return
 	}
 
-	// A JSON null means "clear the override; revert this stage to inherit".
+	// A JSON null literal or an empty body both mean "inherit from global".
 	var assignment *provider.StageAssignment
-	if string(raw) != "null" {
+	if decErr == nil && string(raw) != "null" {
 		var a provider.StageAssignment
 		if unmarshalErr := json.Unmarshal(raw, &a); unmarshalErr != nil {
 			jsonError(w, http.StatusBadRequest, "invalid stage assignment: "+unmarshalErr.Error())
 			return
 		}
+		// Validate that the referenced connection exists (if specified).
+		if a.ConnectionID != "" {
+			if _, connErr := h.connStore.Get(a.ConnectionID); connErr != nil {
+				jsonError(w, http.StatusBadRequest, "unknown connectionId: "+a.ConnectionID)
+				return
+			}
+		}
 		assignment = &a
 	}
-	// assignment == nil when raw was "null" — SetProjectStageOverride treats nil
-	// as "inherit from global".
+	// assignment == nil when body was empty or raw was "null" — treated as inherit.
 
 	if setErr := h.stageConfig.SetProjectStageOverride(project.HostDir, stage, assignment); setErr != nil {
 		// Returns an error only for invalid stage names.
@@ -205,8 +229,7 @@ func (h *StageConfigHandler) SetProjectStageOverride(w http.ResponseWriter, r *h
 	}
 
 	overrides := h.stageConfig.GetProjectOverrides(project.HostDir)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(overrides)
+	writeJSON(w, overrides)
 }
 
 // ResetProjectOverrides removes all per-project stage overrides, reverting
@@ -231,6 +254,5 @@ func (h *StageConfigHandler) ResetProjectOverrides(w http.ResponseWriter, r *htt
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	writeJSON(w, map[string]string{"status": "ok"})
 }

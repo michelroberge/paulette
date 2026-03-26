@@ -396,7 +396,7 @@
       "title": "Create handler/config_handler.go — Stage config handlers",
       "description": "Implement stage config handlers: GetGlobalDefaults, SetGlobalStageDefault, GetProjectOverrides, SetProjectStageOverride, ResetProjectOverrides. PUT .../stages/:stage validates stage name. PUT with null body clears override. POST .../reset clears all project overrides.",
       "type": "task",
-      "status": "in_progress",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
@@ -558,7 +558,8 @@
       "archRefs": [
         "ARCH-v0.2.0-032"
       ],
-      "preExecutionCommit": "72d2bdd5a0fb6f329dc9ba58188168a7b855153c"
+      "preExecutionCommit": "72d2bdd5a0fb6f329dc9ba58188168a7b855153c",
+      "postExecutionCommit": "0816e9abeca2165944a73eae38b800ad7b2858d5"
     },
     {
       "id": "paulette-1sk",
@@ -796,7 +797,7 @@
       "title": "Create ProjectStageSettings.tsx — Project override panel",
       "description": "Slide-over panel with Inherit toggles, per-stage connection/model override, Reset all action. Inherit toggle ON → read-only muted values. OFF → editable pickers pre-populated from global. Override rows have bg-yellow-50 tint. Reset all with confirmation dialog. Auto-save per row.",
       "type": "task",
-      "status": "open",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -815,7 +816,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-026"
-      ]
+      ],
+      "preExecutionCommit": "0816e9abeca2165944a73eae38b800ad7b2858d5"
     },
     {
       "id": "paulette-peh",
