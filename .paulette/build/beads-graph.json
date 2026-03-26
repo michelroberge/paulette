@@ -365,7 +365,8 @@
       "archRefs": [
         "ARCH-v0.2.0-010"
       ],
-      "preExecutionCommit": "6566b30765bca5492745c4b591e5864bf2fa10bf"
+      "preExecutionCommit": "6566b30765bca5492745c4b591e5864bf2fa10bf",
+      "postExecutionCommit": "cdebac13a4561c665fab042943533505886a2de2"
     },
     {
       "id": "paulette-aza",
@@ -852,7 +853,7 @@
       "title": "Modify project header — Add gear icon and override indicators",
       "description": "Add ⚙ gear icon button to project header. Show ring-2 ring-yellow-400 accent on pips with overrides. Gear icon opens ProjectStageSettings panel. Tooltip 'Stage connection settings'.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 2,
       "epicId": "paulette-1kh",
       "deps": [
@@ -871,7 +872,7 @@
       "archRefs": [
         "ARCH-v0.2.0-034"
       ],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "cdebac13a4561c665fab042943533505886a2de2"
     },
     {
       "id": "paulette-3gw",
