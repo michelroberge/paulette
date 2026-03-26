@@ -57,12 +57,6 @@ export interface Connection {
   projectId?: string;
   /** Default model used when no per-stage model override is set. */
   defaultModel: string;
-  /**
-   * Models discovered from the provider's model-list endpoint on the last
-   * successful Test Connection call. Populated opportunistically (IACT-008);
-   * absent when model discovery is not supported or has not been attempted.
-   */
-  discoveredModels?: ModelInfo[];
   createdAt: string;
   updatedAt: string;
 }

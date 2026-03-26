@@ -230,6 +230,7 @@ func (s *StageConfigStore) readGlobal() GlobalConfig {
 	data, err := os.ReadFile(s.globalPath)
 	if err != nil {
 		// Missing file is expected on first run — return empty defaults.
+		cfg.StageDefaults = make(map[model.StageName]StageAssignment)
 		return cfg
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
