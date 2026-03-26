@@ -193,7 +193,7 @@
       "title": "Create provider/ollama.go — Ollama provider",
       "description": "Implement Ollama provider using POST /api/chat (NDJSON streaming) and GET /api/tags (model list). Stream NDJSON, convert {message:{content:...}, done:false} to StreamEvent. ListModels parses /api/tags response. No auth headers sent.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -214,7 +214,7 @@
       "archRefs": [
         "ARCH-v0.2.0-012"
       ],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "664d72a26f089362ceb7ee45309ce86fe0594018"
     },
     {
       "id": "paulette-xfq",
@@ -753,7 +753,8 @@
       "archRefs": [
         "ARCH-v0.2.0-023"
       ],
-      "preExecutionCommit": "fe1090fb266f027fb432b01b5b543290901e077a"
+      "preExecutionCommit": "fe1090fb266f027fb432b01b5b543290901e077a",
+      "postExecutionCommit": "664d72a26f089362ceb7ee45309ce86fe0594018"
     },
     {
       "id": "paulette-dbm",
