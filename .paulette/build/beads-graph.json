@@ -416,7 +416,8 @@
       "archRefs": [
         "ARCH-v0.2.0-021"
       ],
-      "preExecutionCommit": "38ca136795570b1dab9f460bf83bca4a4fae3a12"
+      "preExecutionCommit": "38ca136795570b1dab9f460bf83bca4a4fae3a12",
+      "postExecutionCommit": "1efe913160fdb94f22af736c0f2292e5f60b739e"
     },
     {
       "id": "paulette-hkl",
@@ -849,7 +850,7 @@
       "title": "Create ConnectionErrorBanner.tsx — Inline error banner",
       "description": "Inline error banner with 'Go to Configure →' deep-link and 'Change stage connection' shortcut. Renders on StreamEvent{type: error} with connection info. Links to /configure?tab=connections\u0026highlight={id}. Opens ProjectStageSettings. Banner persists until user navigates or retries.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -867,7 +868,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-027"
-      ]
+      ],
+      "preExecutionCommit": "1efe913160fdb94f22af736c0f2292e5f60b739e"
     },
     {
       "id": "paulette-n0i",

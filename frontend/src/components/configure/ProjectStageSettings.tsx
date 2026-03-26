@@ -14,6 +14,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { StageName } from '../../types';
 import type { Connection, GlobalStageConfig } from '../../types/provider';
 import { listConnections } from '../../api/connections';
@@ -449,7 +450,14 @@ export function ProjectStageSettings({ projectId, projectName, onClose, onOverri
                       </span>
 
                       {/* Save status indicator */}
-                      <SaveStatusLabel status={row.saveStatus} />
+                      <SaveStatusLabel
+                        status={row.saveStatus}
+                        onRetry={
+                          row.saveStatus === 'error'
+                            ? () => saveRow(stage, row.connectionId, row.model)
+                            : undefined
+                        }
+                      />
 
                       {/* Inherit toggle */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', flexShrink: 0 }}>
@@ -534,6 +542,12 @@ export function ProjectStageSettings({ projectId, projectName, onClose, onOverri
         </div>
 
         {/* ── Footer ── */}
+        {/*
+         * Per SCR-011 / JRN-v0.2.0-007 the "Reset all" link is always
+         * present in the footer — it must not be swapped out for a different
+         * element, so the footer remains stable and predictable regardless of
+         * override state.  We mute it visually when there is nothing to reset.
+         */}
         <div
           style={{
             borderTop: '1px solid #334155',
@@ -541,26 +555,23 @@ export function ProjectStageSettings({ projectId, projectName, onClose, onOverri
             flexShrink: 0,
           }}
         >
-          {hasAnyOverride ? (
-            <button
-              onClick={() => setShowResetConfirm(true)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#ef4444',
-                cursor: 'pointer',
-                fontSize: '0.8125rem',
-                textDecoration: 'underline',
-                padding: 0,
-              }}
-            >
-              Reset all to global defaults
-            </button>
-          ) : (
-            <p style={{ fontSize: '0.75rem', color: '#475569', margin: 0 }}>
-              All stages inherit global defaults.
-            </p>
-          )}
+          <button
+            onClick={() => setShowResetConfirm(true)}
+            disabled={!hasAnyOverride}
+            title={!hasAnyOverride ? 'All stages already inherit global defaults' : undefined}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: hasAnyOverride ? '#ef4444' : '#475569',
+              cursor: hasAnyOverride ? 'pointer' : 'default',
+              fontSize: '0.8125rem',
+              textDecoration: hasAnyOverride ? 'underline' : 'none',
+              padding: 0,
+              transition: 'color 0.2s',
+            }}
+          >
+            Reset all to global defaults
+          </button>
         </div>
       </aside>
 
@@ -710,7 +721,7 @@ function InheritToggle({
 }
 
 /** Inline label to the left of a form field inside a stage row. */
-function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+function FieldRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
       <span
@@ -729,15 +740,72 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-/** Fading "Saved ✓" / "Saving…" / "Save failed" label per row. */
-function SaveStatusLabel({ status }: { status: SaveStatus }) {
-  if (status === 'idle') return null;
+/**
+ * Fading "Saved ✓" / "Saving…" / "Save failed — retry?" label per row.
+ *
+ * The element is always present in the DOM so the CSS opacity transition
+ * (transition-opacity duration-500 equivalent) plays correctly both when
+ * a status appears (idle → saved) and when it fades out (saved → idle).
+ * Returning null when idle would prevent the fade-out animation.
+ *
+ * Per IACT-010: on error, a "retry?" link is shown so the user can
+ * re-trigger the save without starting over.
+ */
+function SaveStatusLabel({
+  status,
+  onRetry,
+}: {
+  status: SaveStatus;
+  onRetry?: () => void;
+}) {
+  const isVisible = status !== 'idle';
   const colour =
     status === 'saved' ? '#22c55e' : status === 'saving' ? '#64748b' : '#ef4444';
-  const text =
-    status === 'saved' ? 'Saved ✓' : status === 'saving' ? 'Saving…' : 'Save failed';
+
   return (
-    <span style={{ fontSize: '0.6875rem', color: colour, flexShrink: 0 }}>{text}</span>
+    <span
+      style={{
+        fontSize: '0.6875rem',
+        color: colour,
+        flexShrink: 0,
+        opacity: isVisible ? 1 : 0,
+        transition: 'opacity 500ms',
+        pointerEvents: isVisible ? 'auto' : 'none',
+        whiteSpace: 'nowrap',
+        // Reserve space so the row height doesn't shift during animation.
+        minWidth: '4.5rem',
+        display: 'inline-block',
+        textAlign: 'right',
+      }}
+      aria-live="polite"
+    >
+      {status === 'saved' && 'Saved ✓'}
+      {status === 'saving' && 'Saving…'}
+      {status === 'error' && (
+        <>
+          Save failed
+          {onRetry && (
+            <>
+              {' — '}
+              <button
+                onClick={onRetry}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#ef4444',
+                  cursor: 'pointer',
+                  fontSize: '0.6875rem',
+                  textDecoration: 'underline',
+                  padding: 0,
+                }}
+              >
+                retry?
+              </button>
+            </>
+          )}
+        </>
+      )}
+    </span>
   );
 }
 
@@ -745,7 +813,7 @@ function SaveStatusLabel({ status }: { status: SaveStatus }) {
 // Shared input / select styles
 // ---------------------------------------------------------------------------
 
-const baseFieldStyle: React.CSSProperties = {
+const baseFieldStyle: CSSProperties = {
   width: '100%',
   background: '#0f172a',
   color: '#e2e8f0',
@@ -756,12 +824,12 @@ const baseFieldStyle: React.CSSProperties = {
   outline: 'none',
 };
 
-const selectStyle: React.CSSProperties = {
+const selectStyle: CSSProperties = {
   ...baseFieldStyle,
   cursor: 'pointer',
   appearance: 'auto',
 };
 
-const inputStyle: React.CSSProperties = {
+const inputStyle: CSSProperties = {
   ...baseFieldStyle,
 };
