@@ -396,7 +396,7 @@
       "title": "Create handler/config_handler.go — Stage config handlers",
       "description": "Implement stage config handlers: GetGlobalDefaults, SetGlobalStageDefault, GetProjectOverrides, SetProjectStageOverride, ResetProjectOverrides. PUT .../stages/:stage validates stage name. PUT with null body clears override. POST .../reset clears all project overrides.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
@@ -415,7 +415,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-021"
-      ]
+      ],
+      "preExecutionCommit": "38ca136795570b1dab9f460bf83bca4a4fae3a12"
     },
     {
       "id": "paulette-hkl",
@@ -538,7 +539,7 @@
       "title": "Install react-router-dom and set up client-side routing",
       "description": "Install react-router-dom and set up client-side routing in App.tsx. Routes: / (home), /projects/:id (project detail), /configure (configure page). Existing project list and project detail views function identically. URL reflects current view. Back/forward navigation works. ?tab= and ?highlight= query params parsed on /configure.",
       "type": "task",
-      "status": "in_progress",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-59p",
       "deps": [],
@@ -617,7 +618,8 @@
       "archRefs": [
         "ARCH-v0.2.0-029"
       ],
-      "preExecutionCommit": "044e033a37a21ad7acd01f431ad98b4e2711a4c4"
+      "preExecutionCommit": "044e033a37a21ad7acd01f431ad98b4e2711a4c4",
+      "postExecutionCommit": "38ca136795570b1dab9f460bf83bca4a4fae3a12"
     },
     {
       "id": "paulette-p13",

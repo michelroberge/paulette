@@ -49,9 +49,10 @@ function StageProgress({ currentStage }: Readonly<{ currentStage: string }>) {
 
 interface Props {
   readonly onSelect: (project: Project) => void;
+  readonly onConfigure?: () => void;
 }
 
-export function ProjectList({ onSelect }: Props) {
+export function ProjectList({ onSelect, onConfigure }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [showImportForm, setShowImportForm] = useState(false);
@@ -343,6 +344,13 @@ export function ProjectList({ onSelect }: Props) {
           <span className="plus" style={{ fontSize: '1.5rem' }}>&#8615;</span>
           <span>Import Repo</span>
         </div>
+
+        {onConfigure && (
+          <div className="project-card new-project" onClick={onConfigure}>
+            <span className="plus" style={{ fontSize: '1.5rem' }}>⚙</span>
+            <span>Configure Paulette</span>
+          </div>
+        )}
       </div>
 
       {confirmDelete && (

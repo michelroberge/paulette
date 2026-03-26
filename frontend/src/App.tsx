@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import { ProjectList } from './components/project/ProjectList';
 import { ImportProgressView } from './components/import/ImportProgressView';
 import { ProjectHeader } from './components/layout/ProjectHeader';
@@ -13,6 +14,7 @@ import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { VersionHistoryModal } from './components/git/VersionHistoryModal';
 import { ProfileModal } from './components/git/ProfileModal';
+import { ConfigurePage } from './components/configure/ConfigurePage';
 import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
 import { getArtifact } from './api/artifacts';
 import { getMock } from './api/mock';
@@ -67,8 +69,26 @@ function getTabsForStage(stage: StageName | null): StageTab[] {
   ];
 }
 
-function App() {
+// ── Project List Page ──────────────────────────────────────────────────────────
+
+function ProjectListPage() {
+  const navigate = useNavigate();
+  return (
+    <ProjectList
+      onSelect={(p) => navigate(`/projects/${p.id}`)}
+      onConfigure={() => navigate('/configure')}
+    />
+  );
+}
+
+// ── Project Detail Page ────────────────────────────────────────────────────────
+
+function ProjectDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+
   const [project, setProject] = useState<Project | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
   const [selectedStage, setSelectedStage] = useState<StageName | null>(null);
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0);
@@ -83,6 +103,17 @@ function App() {
   const [activeRuns, setActiveRuns] = useState<ActiveRun[]>([]);
   const [btwInput, setBtwInput] = useState('');
   const [btwSending, setBtwSending] = useState(false);
+
+  // Load project from URL param on mount / ID change
+  useEffect(() => {
+    if (!id) { navigate('/'); return; }
+    setLoadError(false);
+    setProject(null);
+    setPipeline(null);
+    getProject(id).then(setProject).catch(() => {
+      setLoadError(true);
+    });
+  }, [id, navigate]);
 
   const addTokens = useCallback((stage: StageName, n: number) => {
     if (n <= 0) return;
@@ -298,8 +329,25 @@ function App() {
     setProject(updated);
   };
 
+  // ── Loading / error states ──
+
+  if (loadError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: '1rem' }}>
+        <p style={{ color: '#ef4444' }}>Project not found.</p>
+        <button onClick={() => navigate('/')} style={{ color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer' }}>
+          ← Back to projects
+        </button>
+      </div>
+    );
+  }
+
   if (!project) {
-    return <ProjectList onSelect={setProject} />;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <span style={{ color: '#64748b' }}>Loading…</span>
+      </div>
+    );
   }
 
   const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
@@ -310,7 +358,7 @@ function App() {
     <div className="app-shell">
       <ProjectHeader
         project={project}
-        onBack={() => { setProject(null); setPipeline(null); }}
+        onBack={() => navigate('/')}
         totalTokens={grandTotal}
         onShowHistory={() => setShowVersionHistory(true)}
         onShowProfile={() => setShowProfile(true)}
@@ -341,7 +389,7 @@ function App() {
             <CompletionView
               project={project}
               activity={pipeline?.stages.find(s => s.name === 'complete')?.activity}
-              onNewProject={() => { setProject(null); setPipeline(null); }}
+              onNewProject={() => navigate('/')}
               onViewStage={stage => setSelectedStage(stage)}
               onEnhance={handleEnhance}
               onSummaryReady={async () => {
@@ -473,4 +521,14 @@ function App() {
   );
 }
 
-export default App;
+// ── App Router ─────────────────────────────────────────────────────────────────
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<ProjectListPage />} />
+      <Route path="/projects/:id" element={<ProjectDetailPage />} />
+      <Route path="/configure" element={<ConfigurePage />} />
+    </Routes>
+  );
+}
