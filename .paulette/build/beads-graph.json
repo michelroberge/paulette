@@ -469,7 +469,8 @@
       "archRefs": [
         "ARCH-v0.2.0-002"
       ],
-      "preExecutionCommit": "dc735fabfec8982045873538b0ef16b2cbd0a1af"
+      "preExecutionCommit": "dc735fabfec8982045873538b0ef16b2cbd0a1af",
+      "postExecutionCommit": "c2ef67257457257b583f5429fe0eb8dd2990f38f"
     },
     {
       "id": "paulette-tlq",
@@ -1074,7 +1075,7 @@
       "title": "Verify chmod 600 on connections.json",
       "description": "Confirm file permissions on every save operation. stat ~/.paulette/connections.json shows 0600 permissions after create, update, and delete operations.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 2,
       "epicId": "paulette-65f",
       "deps": [
@@ -1086,7 +1087,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-018"
-      ]
+      ],
+      "preExecutionCommit": "c2ef67257457257b583f5429fe0eb8dd2990f38f"
     },
     {
       "id": "paulette-iza",
