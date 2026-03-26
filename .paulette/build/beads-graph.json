@@ -324,7 +324,8 @@
       "archRefs": [
         "ARCH-v0.2.0-016"
       ],
-      "preExecutionCommit": "7b35dd3f6973e1a281c23d4bbe669c2e9aacd057"
+      "preExecutionCommit": "7b35dd3f6973e1a281c23d4bbe669c2e9aacd057",
+      "postExecutionCommit": "fe1090fb266f027fb432b01b5b543290901e077a"
     },
     {
       "id": "paulette-t23",
@@ -730,7 +731,7 @@
       "title": "Create ConnectionsTab.tsx — Connection list with actions",
       "description": "Connection list with provider badges, Add/Edit/Delete/Test actions, empty state. Connections fetched on mount. Provider badges colour-coded. Add Connection opens form. Edit pre-fills form. Delete shows confirmation with affected stages. ?highlight= causes matching card to pulse with ring-2 ring-red-400. Empty state with plug icon.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -751,7 +752,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-023"
-      ]
+      ],
+      "preExecutionCommit": "fe1090fb266f027fb432b01b5b543290901e077a"
     },
     {
       "id": "paulette-dbm",
@@ -785,7 +787,7 @@
       "title": "Create StageDefaultsTab.tsx — Five-stage configuration table",
       "description": "Five-stage table with connection picker and model field, auto-save per row. Each row shows stage pip + label, connection dropdown (all connections + Claude CLI default), model field (dropdown or free-text). Changes auto-save on blur/change. Saved ✓ fades in/out per row. Note about global vs project scope at bottom.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [

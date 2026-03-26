@@ -20,11 +20,11 @@
  * Architecture: ARCH-v0.2.0-025, SCR-010, IACT-010
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import type { StageName } from '../../types';
-import type { Connection, StageAssignment } from '../../types/provider';
-import { listConnections } from '../../api/connections';
+import type { Connection, ModelInfo, StageAssignment } from '../../types/provider';
+import { listConnections, listModels } from '../../api/connections';
 import { getGlobalDefaults, setGlobalStageDefault } from '../../api/stageConfig';
 
 // ---------------------------------------------------------------------------
@@ -93,8 +93,29 @@ function buildDefaultRows(): RowStates {
 export function StageDefaultsTab() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [rows, setRows] = useState<RowStates>(buildDefaultRows);
+  /**
+   * Per-stage discovered models, populated by `listModels()` when the user
+   * picks a connection. An empty array means "no models discovered yet" and
+   * the model column falls back to a free-text <input> (IACT-008).
+   */
+  const [stageModels, setStageModels] = useState<Record<StageName, ModelInfo[]>>(
+    () => Object.fromEntries(STAGES.map(s => [s, []])) as Record<StageName, ModelInfo[]>,
+  );
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  /**
+   * Per-stage save sequence counter.
+   *
+   * Each call to `saveRow` increments its stage's counter and captures the
+   * new value. When the async save resolves, it only applies state updates if
+   * the captured value still matches the current counter — i.e. no newer save
+   * has started in the meantime. This prevents a slow first PUT from
+   * overwriting the result of a fast second PUT on the same row.
+   */
+  const saveSeqRef = useRef<Record<StageName, number>>(
+    Object.fromEntries(STAGES.map(s => [s, 0])) as Record<StageName, number>,
+  );
 
   // ── Data loading ───────────────────────────────────────────────────────────
 
@@ -144,16 +165,32 @@ export function StageDefaultsTab() {
   /**
    * Persist the global default for a stage and animate the save-status label.
    * The "Saved ✓" label fades out automatically after 2 seconds (IACT-010).
+   *
+   * Uses a per-stage sequence number so that if the user makes rapid consecutive
+   * changes, only the *last* in-flight save applies its state updates. A slow
+   * earlier PUT that resolves after a newer one is silently discarded.
    */
   const saveRow = useCallback(
     async (stage: StageName, connectionId: string, model: string) => {
+      // Increment and capture the sequence for this save attempt.
+      saveSeqRef.current[stage] = (saveSeqRef.current[stage] ?? 0) + 1;
+      const mySeq = saveSeqRef.current[stage];
+
       updateRow(stage, { saveStatus: 'saving' });
       const assignment: StageAssignment = { connectionId, model };
       try {
         await setGlobalStageDefault(stage, assignment);
+        // Bail out if a newer save has already started for this stage.
+        if (saveSeqRef.current[stage] !== mySeq) return;
         updateRow(stage, { saveStatus: 'saved' });
-        setTimeout(() => updateRow(stage, { saveStatus: 'idle' }), 2000);
+        setTimeout(() => {
+          // Only revert to idle if no newer save has taken over by now.
+          if (saveSeqRef.current[stage] === mySeq) {
+            updateRow(stage, { saveStatus: 'idle' });
+          }
+        }, 2000);
       } catch (err) {
+        if (saveSeqRef.current[stage] !== mySeq) return;
         console.error(`[StageDefaultsTab] Save failed for stage ${stage}:`, err);
         updateRow(stage, { saveStatus: 'error' });
       }
@@ -164,14 +201,32 @@ export function StageDefaultsTab() {
   // ── Field change handlers ──────────────────────────────────────────────────
 
   /**
-   * When the user picks a new connection, update the model to the connection's
-   * defaultModel (so the row is immediately sensible) and save right away.
+   * When the user picks a new connection:
+   *   1. Pre-populate the model field with the connection's defaultModel.
+   *   2. Clear any previously-discovered models for this stage.
+   *   3. Kick off save and model-discovery in parallel (IACT-008).
+   *      Model discovery is best-effort — a failure silently falls back to
+   *      free-text input without blocking or surfacing an error.
    */
   const handleConnectionChange = useCallback(
     async (stage: StageName, connectionId: string) => {
       const conn = connections.find(c => c.id === connectionId);
       const newModel = conn?.defaultModel ?? '';
       updateRow(stage, { connectionId, model: newModel });
+
+      // Clear stale models from the previous selection immediately.
+      setStageModels(prev => ({ ...prev, [stage]: [] }));
+
+      // Opportunistically discover models for the newly selected connection.
+      // Do not await — discovery runs in the background so it never blocks the save.
+      if (connectionId) {
+        listModels(connectionId)
+          .then(models => setStageModels(prev => ({ ...prev, [stage]: models })))
+          .catch(() => {
+            // Silently ignore — the model field stays as free-text (IACT-008).
+          });
+      }
+
       await saveRow(stage, connectionId, newModel);
     },
     [connections, updateRow, saveRow],
@@ -242,8 +297,10 @@ export function StageDefaultsTab() {
         <div role="rowgroup">
           {STAGES.map((stage, idx) => {
             const row = rows[stage];
-            const selectedConn = connections.find(c => c.id === row.connectionId);
-            const discoveredModels = selectedConn?.discoveredModels ?? [];
+            // Derive discoverable models from local state, not from the Connection
+            // object — the backend never includes discoveredModels in list responses.
+            // The state is populated by listModels() in handleConnectionChange.
+            const discoveredModels = stageModels[stage] ?? [];
             const hasDiscoveredModels = discoveredModels.length > 0;
             const isLast = idx === STAGES.length - 1;
 
@@ -276,7 +333,7 @@ export function StageDefaultsTab() {
                 <div role="cell" style={{ ...styles.cell, ...styles.colConnection }}>
                   <select
                     value={row.connectionId}
-                    onChange={e => handleConnectionChange(stage, e.target.value)}
+                    onChange={e => void handleConnectionChange(stage, e.target.value)}
                     aria-label={`Connection for ${STAGE_LABELS[stage]}`}
                     style={selectStyle}
                   >
@@ -294,7 +351,7 @@ export function StageDefaultsTab() {
                   {hasDiscoveredModels ? (
                     <select
                       value={row.model}
-                      onChange={e => handleModelSelect(stage, e.target.value)}
+                      onChange={e => void handleModelSelect(stage, e.target.value)}
                       aria-label={`Model for ${STAGE_LABELS[stage]}`}
                       style={selectStyle}
                     >
@@ -313,7 +370,7 @@ export function StageDefaultsTab() {
                       type="text"
                       value={row.model}
                       onChange={e => handleModelInput(stage, e.target.value)}
-                      onBlur={() => handleModelBlur(stage)}
+                      onBlur={() => void handleModelBlur(stage)}
                       placeholder="e.g. llama3:8b"
                       aria-label={`Model for ${STAGE_LABELS[stage]}`}
                       style={inputStyle}
@@ -327,7 +384,7 @@ export function StageDefaultsTab() {
                     status={row.saveStatus}
                     onRetry={
                       row.saveStatus === 'error'
-                        ? () => saveRow(stage, row.connectionId, row.model)
+                        ? () => void saveRow(stage, row.connectionId, row.model)
                         : undefined
                     }
                   />
