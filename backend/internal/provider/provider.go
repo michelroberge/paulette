@@ -126,7 +126,7 @@ func (r *Registry) providerForConnection(conn *Connection) (Provider, error) {
 		if conn.BaseURL == "" {
 			return nil, fmt.Errorf("lmstudio provider requires a base URL")
 		}
-		return NewLMStudioProvider(conn.BaseURL)
+		return NewLMStudioProvider(conn.BaseURL), nil
 
 	case ProviderOpenAI:
 		return NewOpenAIProvider(conn.BaseURL, conn.APIKey, conn.OrgID, conn.ProjectID)

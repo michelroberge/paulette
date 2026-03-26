@@ -21,6 +21,7 @@ import type { CSSProperties } from 'react';
 import type { Connection, ProviderType, TestResult } from '../../types/provider';
 import { listConnections, deleteConnection, testConnection } from '../../api/connections';
 import { ConnectionForm } from './ConnectionForm';
+import { CredentialWarningToast } from './CredentialWarningToast';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -186,6 +187,9 @@ export function ConnectionsTab({ highlight, clearHighlight }: ConnectionsTabProp
 
   // Per-row test states
   const [testStates, setTestStates] = useState<Record<string, RowTestState>>({});
+
+  // Credential warning toast (IACT-009) — shown after a save that wrote credentials
+  const [showCredToast, setShowCredToast] = useState(false);
 
   // Highlight state — true while the pulse animation is active
   const [highlightActive, setHighlightActive] = useState(!!highlight);
@@ -449,8 +453,15 @@ export function ConnectionsTab({ highlight, clearHighlight }: ConnectionsTabProp
           connection={formMode.mode === 'edit' ? formMode.connection : undefined}
           onSaved={handleSaved}
           onClose={closeForm}
+          onCredentialsSaved={() => setShowCredToast(true)}
         />
       )}
+
+      {/* Credential warning toast — shown after a connection save writes API keys to disk */}
+      <CredentialWarningToast
+        visible={showCredToast}
+        onDismiss={() => setShowCredToast(false)}
+      />
 
       {/* Delete confirmation dialog */}
       {deleteState && (

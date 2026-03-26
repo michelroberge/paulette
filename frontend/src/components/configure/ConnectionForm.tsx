@@ -224,12 +224,17 @@ export function ConnectionForm({ connection, onSaved, onClose, onCredentialsSave
         ? await updateConnection(connection.id, input)
         : await createConnection(input);
       onSaved(saved);
+      // Notify caller to show the credential warning toast when API keys were
+      // written to disk (IACT-009). Not triggered for credential-free providers.
+      if (providerNeedsApiKey(form.providerType) && form.apiKey.trim()) {
+        onCredentialsSaved?.();
+      }
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save connection.');
     } finally {
       setSaving(false);
     }
-  }, [form, isEdit, connection, onSaved]);
+  }, [form, isEdit, connection, onSaved, onCredentialsSaved]);
 
   // ── Field helpers ───────────────────────────────────────────────────────────
 
