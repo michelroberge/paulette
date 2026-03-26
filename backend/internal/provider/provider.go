@@ -161,24 +161,13 @@ func (r *Registry) ResolveForStage(
 	hostDir string,
 ) (Provider, string, error) {
 	if stageConfig != nil {
-		// Level 1: per-project overrides.
-		if hostDir != "" {
-			projectCfg := stageConfig.GetProjectOverrides(hostDir)
-			if assignment, ok := projectCfg.Overrides[stage]; ok && assignment != nil && assignment.ConnectionID != "" {
-				p, err := r.ForConnection(assignment.ConnectionID)
-				if err != nil {
-					return nil, "", fmt.Errorf("stage %q: project override connection error: %w", stage, err)
-				}
-				return p, assignment.Model, nil
-			}
-		}
-
-		// Level 2: global defaults.
-		globalCfg := stageConfig.GetGlobalDefaults()
-		if assignment, ok := globalCfg.StageDefaults[stage]; ok && assignment.ConnectionID != "" {
+		// Levels 1 & 2: single read-lock acquisition via ResolveStage.
+		// This avoids the double lock-release cycle that would occur if
+		// GetProjectOverrides and GetGlobalDefaults were called sequentially.
+		if assignment := stageConfig.ResolveStage(hostDir, stage); assignment != nil {
 			p, err := r.ForConnection(assignment.ConnectionID)
 			if err != nil {
-				return nil, "", fmt.Errorf("stage %q: global default connection error: %w", stage, err)
+				return nil, "", fmt.Errorf("stage %q: configured connection error: %w", stage, err)
 			}
 			return p, assignment.Model, nil
 		}

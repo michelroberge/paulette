@@ -122,39 +122,101 @@ func (s *StageConfigStore) ResetProjectOverrides(hostDir string) error {
 	return nil
 }
 
-// ClearConnectionReferences removes any stage assignments (global or
-// per-project-scoped) that reference the given connectionID.  Only global
-// defaults are cleared here; per-project overrides must be cleaned up via the
-// handler layer (or re-resolved at runtime).  Returns the names of affected
-// global-default stages.
+// ResolveStage performs a two-level lookup for the given stage under a single
+// read-lock acquisition, avoiding the double-lock overhead of calling
+// GetProjectOverrides then GetGlobalDefaults sequentially.
 //
-// The architecture doc specifies that Delete returns affected stage assignments
-// so the handler can report them to the caller.  This method handles only the
-// global scope; callers that need project-level cleanup can call
-// GetProjectOverrides / SetProjectStageOverride themselves.
-func (s *StageConfigStore) ClearConnectionReferences(connectionID string) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Resolution order:
+//  1. Per-project override at <hostDir>/.paulette/stage_config.json
+//  2. Global default at ~/.paulette/config.json
+//
+// Returns nil when neither level has a configured assignment (caller falls back
+// to the hardcoded Claude CLI default).
+func (s *StageConfigStore) ResolveStage(hostDir string, stage model.StageName) *StageAssignment {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
-	cfg := s.readGlobal()
-	if len(cfg.StageDefaults) == 0 {
-		return nil
-	}
-
-	var affected []string
-	for stage, assignment := range cfg.StageDefaults {
-		if assignment.ConnectionID == connectionID {
-			affected = append(affected, string(stage))
-			delete(cfg.StageDefaults, stage)
+	// Level 1: per-project overrides.
+	if hostDir != "" {
+		projCfg := s.readProjectConfig(hostDir)
+		if assignment, ok := projCfg.Overrides[stage]; ok && assignment != nil && assignment.ConnectionID != "" {
+			// Return a copy so the caller cannot mutate the parsed config.
+			cp := *assignment
+			return &cp
 		}
 	}
 
-	if len(affected) > 0 {
-		// Best-effort write — log errors but don't block the delete operation.
-		_ = s.writeGlobal(cfg)
+	// Level 2: global defaults.
+	globalCfg := s.readGlobal()
+	if assignment, ok := globalCfg.StageDefaults[stage]; ok && assignment.ConnectionID != "" {
+		cp := assignment
+		return &cp
 	}
 
-	return affected
+	return nil
+}
+
+// ClearConnectionReferences removes any stage assignments that reference
+// connectionID from:
+//   - the global defaults (~/.paulette/config.json), and
+//   - each project's per-project overrides (<hostDir>/.paulette/stage_config.json)
+//     for every hostDir provided in projectHostDirs.
+//
+// The method returns the names of all affected stages (may contain duplicates
+// across global and project scopes) and the first write error encountered.
+// On a write error the in-memory read state is still consistent because the
+// store does not cache state; however the affected file may not have been
+// updated on disk.
+//
+// The connection Delete handler is responsible for collecting projectHostDirs
+// from the project registry before calling this method.
+func (s *StageConfigStore) ClearConnectionReferences(connectionID string, projectHostDirs []string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var affected []string
+
+	// --- Clear global defaults ---
+	globalCfg := s.readGlobal()
+	var globalDirty bool
+	for stage, assignment := range globalCfg.StageDefaults {
+		if assignment.ConnectionID == connectionID {
+			affected = append(affected, string(stage))
+			delete(globalCfg.StageDefaults, stage)
+			globalDirty = true
+		}
+	}
+	if globalDirty {
+		if err := s.writeGlobal(globalCfg); err != nil {
+			return affected, fmt.Errorf("clear global connection references: %w", err)
+		}
+	}
+
+	// --- Clear per-project overrides ---
+	for _, hostDir := range projectHostDirs {
+		projCfg := s.readProjectConfig(hostDir)
+		if len(projCfg.Overrides) == 0 {
+			continue
+		}
+
+		var projDirty bool
+		for stage, assignment := range projCfg.Overrides {
+			if assignment != nil && assignment.ConnectionID == connectionID {
+				// Nil signals "inherit from global" — consistent with SetProjectStageOverride.
+				projCfg.Overrides[stage] = nil
+				affected = append(affected, string(stage))
+				projDirty = true
+			}
+		}
+
+		if projDirty {
+			if err := s.writeProjectConfig(hostDir, projCfg); err != nil {
+				return affected, fmt.Errorf("clear project connection references for %s: %w", hostDir, err)
+			}
+		}
+	}
+
+	return affected, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -215,60 +277,6 @@ func (s *StageConfigStore) writeProjectConfig(hostDir string, cfg ProjectStageCo
 // projectConfigPath returns the canonical path for a project's stage_config.json.
 func projectConfigPath(hostDir string) string {
 	return filepath.Join(hostDir, ".paulette", "stage_config.json")
-}
-
-// ---------------------------------------------------------------------------
-// Shared atomic write utility.
-// ---------------------------------------------------------------------------
-
-// writeJSONAtomic marshals v to indented JSON and writes it to path using the
-// write-to-temp-then-rename pattern to guarantee atomicity.  perm sets the
-// file mode on creation.
-func writeJSONAtomic(path string, v any, perm os.FileMode) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal JSON: %w", err)
-	}
-
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create directory %s: %w", dir, err)
-	}
-
-	// Write to a temp file in the same directory so the rename is on the same
-	// filesystem and therefore atomic.
-	tmp, err := os.CreateTemp(dir, ".tmp-stage-config-*")
-	if err != nil {
-		return fmt.Errorf("create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-
-	// Ensure we clean up on any error path.
-	committed := false
-	defer func() {
-		if !committed {
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp file: %w", err)
-	}
-
-	if err := os.Chmod(tmpName, perm); err != nil {
-		return fmt.Errorf("chmod temp file: %w", err)
-	}
-
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename to %s: %w", path, err)
-	}
-
-	committed = true
-	return nil
 }
 
 // ---------------------------------------------------------------------------

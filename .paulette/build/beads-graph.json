@@ -35,7 +35,8 @@
       "archRefs": [
         "ARCH-v0.2.0-010"
       ],
-      "preExecutionCommit": "f0a8dc84f12edd3986fd731f30e651edb11752a4"
+      "preExecutionCommit": "f0a8dc84f12edd3986fd731f30e651edb11752a4",
+      "postExecutionCommit": "7243042d1230a4afbd92648e1695a1e509c5919e"
     },
     {
       "id": "paulette-54w",
@@ -68,7 +69,7 @@
       "title": "Create provider/connection_store.go — Connection CRUD with file persistence",
       "description": "Implement CRUD for connections with ~/.paulette/connections.json persistence, atomic writes, chmod 600. Methods: List, Get, Create, Update, Delete. UUID assigned on create. Delete returns affected stage assignments.",
       "type": "task",
-      "status": "open",
+      "status": "closed",
       "priority": 0,
       "epicId": "paulette-6hc",
       "deps": [
@@ -88,14 +89,15 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-018"
-      ]
+      ],
+      "preExecutionCommit": "7243042d1230a4afbd92648e1695a1e509c5919e"
     },
     {
       "id": "paulette-kuo",
       "title": "Create provider/stage_config.go — Global defaults and per-project overrides",
       "description": "Implement global defaults (~/.paulette/config.json) and per-project overrides (\u003chostDir\u003e/.paulette/stage_config.json). Methods: GetGlobalDefaults, SetGlobalStageDefault, GetProjectOverrides, SetProjectStageOverride, ResetProjectOverrides, ClearConnectionReferences. Files written atomically.",
       "type": "task",
-      "status": "reviewing",
+      "status": "closed",
       "priority": 0,
       "epicId": "paulette-6hc",
       "deps": [
