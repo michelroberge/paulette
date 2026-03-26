@@ -1,3 +1,202 @@
 {
-  "suggestions": null
+  "suggestions": [
+    {
+      "name": "Credential-Safe Entity Model Pair",
+      "description": "Generates a paired Go struct + TypeScript type set for any entity that holds sensitive credentials. The write-facing type (Input/Request) carries the raw credential field; the read-facing type (Response/Entity) replaces it with a boolean presence flag (e.g. hasCredentials). Produces: Go Connection + ConnectionResponse structs with a ToResponse() helper, and TypeScript Entity + EntityInput types that enforce the same contract. Optionally emits ProviderType/enum constants shared by both sides.",
+      "category": "backend",
+      "tags": [
+        "go",
+        "typescript",
+        "security",
+        "credentials",
+        "api-contract",
+        "dto",
+        "redaction",
+        "fullstack"
+      ],
+      "parameters": [
+        {
+          "name": "entityName",
+          "description": "PascalCase entity name (e.g. Connection, ApiKey, ServiceAccount)",
+          "default": "Connection"
+        },
+        {
+          "name": "credentialField",
+          "description": "Name of the sensitive field in the input model (e.g. apiKey, secretToken)",
+          "default": "apiKey"
+        },
+        {
+          "name": "presenceFlag",
+          "description": "Name of the boolean replacement field in the response model (e.g. hasCredentials, hasSecret)",
+          "default": "hasCredentials"
+        },
+        {
+          "name": "enumName",
+          "description": "Optional name for a string-enum / constants type (e.g. ProviderType). Leave blank to skip."
+        },
+        {
+          "name": "enumValues",
+          "description": "Comma-separated list of enum constant values (e.g. openai,anthropic,gemini). Used only when enumName is set."
+        },
+        {
+          "name": "goPackage",
+          "description": "Go package name for the generated file",
+          "default": "provider"
+        },
+        {
+          "name": "extraFields",
+          "description": "Additional shared fields as 'Name Type' pairs, comma-separated (e.g. 'ID string,Name string,BaseURL string')",
+          "default": "ID string,Name string"
+        }
+      ],
+      "promptTemplate": "Create two files implementing the credential-safe entity model pair pattern for `{{entityName}}`.\n\n**File 1 — Go: {{goPackage}}/{{entityName | lower}}.go**\n\nPackage: `{{goPackage}}`\n\n1. If `{{enumName}}` is non-empty, define `type {{enumName}} string` with `const` block for each value in `{{enumValues}}` (e.g. `{{enumName}}OpenAI {{enumName}} = \"openai\"`).\n2. Define `{{entityName}}` struct with fields: `{{extraFields}}` plus `{{credentialField}} string` and any `{{enumName}}` field if applicable.\n3. Define `{{entityName}}Response` struct with the same fields EXCEPT replace `{{credentialField}}` with `{{presenceFlag}} bool`.\n4. Add method `func (c {{entityName}}) ToResponse() {{entityName}}Response` that copies all non-sensitive fields and sets `{{presenceFlag}} = c.{{credentialField}} != \"\"`.\n5. Define `{{entityName}}Input` struct (used for create/update) with all fields including `{{credentialField}}`.\n\n**File 2 — TypeScript: types/{{entityName | lower}}.ts**\n\n1. If `{{enumName}}` is non-empty, define `export type {{enumName}} = {{enumValues comma-separated as string literals}}`.\n2. Export `{{entityName}}` interface with `{{extraFields}}` mapped to TypeScript equivalents, plus `{{presenceFlag}}: boolean` (NO `{{credentialField}}`).\n3. Export `{{entityName}}Input` interface with all fields including `{{credentialField}}: string`.\n4. Export any additional related types implied by the entity (e.g. TestResult, DeleteResult with affected references).\n\nAll JSON tags in Go must be camelCase. Both files must agree on field names across the API boundary.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-54w",
+        "paulette-1sk"
+      ]
+    },
+    {
+      "name": "Go Hierarchical Config Store (Global + Per-Project)",
+      "description": "Generates a Go source file implementing a two-level JSON configuration store: a global config at ~/.appName/configFile.json and per-project overrides at \u003cprojectDir\u003e/.appName/configFile.json. Provides typed Get/Set methods for each level, atomic writes (write-temp + rename), optional chmod permissions, a Reset method to clear project overrides, and a ClearReferences helper to scrub deleted entity IDs from stored configs. Distinct from the single-level CRUD file store — this pattern manages hierarchical scope resolution for settings, not records.",
+      "category": "backend",
+      "tags": [
+        "go",
+        "config",
+        "hierarchical",
+        "persistence",
+        "json",
+        "atomic-write",
+        "global",
+        "per-project",
+        "settings"
+      ],
+      "parameters": [
+        {
+          "name": "appName",
+          "description": "Application name used as the hidden config directory (e.g. paulette → ~/.paulette/)",
+          "default": "myapp"
+        },
+        {
+          "name": "configFileName",
+          "description": "JSON file name for this config domain (e.g. config.json, stage_config.json)",
+          "default": "config.json"
+        },
+        {
+          "name": "goPackage",
+          "description": "Go package name",
+          "default": "config"
+        },
+        {
+          "name": "configStructName",
+          "description": "PascalCase name for the config value struct stored at each level (e.g. StageConfig, GlobalDefaults)",
+          "default": "Config"
+        },
+        {
+          "name": "keyType",
+          "description": "Type used as the map key for stage/scope entries (e.g. string, StageType)",
+          "default": "string"
+        },
+        {
+          "name": "valueType",
+          "description": "Type used as the map value for each keyed entry (e.g. StageAssignment, ProviderConfig)",
+          "default": "StageAssignment"
+        },
+        {
+          "name": "includeReferenceCleaner",
+          "description": "Whether to generate a ClearConnectionReferences(id string) helper that removes a deleted entity ID from all stored entries (true/false)",
+          "default": "true"
+        },
+        {
+          "name": "fileMode",
+          "description": "Unix file permission mode for written files (e.g. 0600 for secrets, 0644 for non-sensitive)",
+          "default": "0600"
+        }
+      ],
+      "promptTemplate": "Create `{{goPackage}}/{{configFileName | stripext}}_config.go` implementing a two-level hierarchical config store.\n\n**Package:** `{{goPackage}}`\n\n**Types:**\n- `{{configStructName}}` — the value type for a single scope entry, containing a `{{keyType}}`→`{{valueType}}` map.\n- `globalConfigFile` — top-level wrapper `{ \"defaults\": map[{{keyType}}]{{valueType}} }` persisted at `~/.{{appName}}/{{configFileName}}`.\n- `projectConfigFile` — top-level wrapper `{ \"overrides\": map[{{keyType}}]{{valueType}} }` persisted at `\u003cprojectDir\u003e/.{{appName}}/{{configFileName}}`.\n\n**Methods to implement:**\n\n```\nGetGlobalDefaults() (map[{{keyType}}]{{valueType}}, error)\nSetGlobalStageDefault(key {{keyType}}, value {{valueType}}) error\nGetProjectOverrides(projectDir string) (map[{{keyType}}]{{valueType}}, error)\nSetProjectStageOverride(projectDir string, key {{keyType}}, value {{valueType}}) error\nResetProjectOverrides(projectDir string) error\n```\n\n{{if includeReferenceCleaner == \"true\"}}Also implement:\n```\nClearConnectionReferences(entityID string) error\n```\nThis must iterate both global defaults and ALL project override files under known project directories, removing any `{{valueType}}` entries whose ID matches `entityID`, then atomically rewrite affected files.{{end}}\n\n**Atomic write pattern** (required for every write):\n1. Marshal to JSON with `json.MarshalIndent`.\n2. Write to a temp file in the same directory (`*.tmp`).\n3. `os.Chmod(tmp, {{fileMode}})`.\n4. `os.Rename(tmp, dest)` — atomic on POSIX.\n5. `MkdirAll` the directory before writing.\n\nAll file reads must tolerate missing files (return empty map, no error). All errors must be wrapped with `fmt.Errorf(\"...: %w\", err)`.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-kuo",
+        "paulette-nq0"
+      ]
+    },
+    {
+      "name": "Go Registry with Multi-Level Fallback Resolution",
+      "description": "Generates a Go Registry struct that maps keys to registered interface implementations and resolves the correct implementation using a cascading fallback chain. Produces: a named interface, a Registry with Register/ForKey methods, and a ResolveWithFallback method that walks through N ordered resolution sources (e.g. project override → global default → hardcoded constant) until a match is found. Suitable for plugin systems, provider dispatchers, or any scenario where runtime selection must gracefully degrade through scoped preferences.",
+      "category": "backend",
+      "tags": [
+        "go",
+        "registry",
+        "plugin",
+        "interface",
+        "fallback",
+        "resolution",
+        "dispatcher",
+        "provider"
+      ],
+      "parameters": [
+        {
+          "name": "interfaceName",
+          "description": "Name of the Go interface that registered implementations must satisfy (e.g. Provider, Adapter, Handler)",
+          "default": "Provider"
+        },
+        {
+          "name": "keyType",
+          "description": "Type used to key registrations (e.g. ProviderType, string, AdapterKind)",
+          "default": "ProviderType"
+        },
+        {
+          "name": "registryName",
+          "description": "Name of the Registry struct (e.g. Registry, ProviderRegistry)",
+          "default": "Registry"
+        },
+        {
+          "name": "goPackage",
+          "description": "Go package name",
+          "default": "provider"
+        },
+        {
+          "name": "directLookupMethod",
+          "description": "Name of the method that resolves an implementation directly from a stored entity (e.g. ForConnection, ForKey)",
+          "default": "ForConnection"
+        },
+        {
+          "name": "directLookupParam",
+          "description": "Parameter type passed to the direct lookup (e.g. Connection, *Entity)",
+          "default": "Connection"
+        },
+        {
+          "name": "fallbackMethod",
+          "description": "Name of the multi-level fallback resolution method (e.g. ResolveForStage, ResolveWithFallback)",
+          "default": "ResolveForStage"
+        },
+        {
+          "name": "fallbackParam",
+          "description": "Parameter type for the fallback method context (e.g. string for projectDir, StageKey)",
+          "default": "string"
+        },
+        {
+          "name": "fallbackLevels",
+          "description": "Ordered list of fallback level names, from highest to lowest priority, comma-separated (e.g. ProjectOverride,GlobalDefault,HardcodedFallback)",
+          "default": "ProjectOverride,GlobalDefault,HardcodedFallback"
+        },
+        {
+          "name": "hardcodedFallbackKey",
+          "description": "The literal key value used as the last-resort hardcoded fallback (e.g. ProviderTypeClaude, \"openai\")",
+          "default": "\"claude\""
+        },
+        {
+          "name": "errUnsupported",
+          "description": "Name of the sentinel error for unsupported operations (e.g. ErrModelListUnsupported)",
+          "default": "ErrUnsupported"
+        }
+      ],
+      "promptTemplate": "Create `{{goPackage}}/{{interfaceName | lower}}_registry.go` implementing a registry with multi-level fallback resolution.\n\n**Package:** `{{goPackage}}`\n\n**Interface `{{interfaceName}}`** must be defined with at minimum:\n- `Chat(ctx context.Context, req ChatRequest) (\u003c-chan StreamEvent, error)` — or adapt method names to the domain.\n- `TestConnection(ctx context.Context) error`\n- `ListModels(ctx context.Context) ([]ModelInfo, error)`\n\nDefine sentinel error `var {{errUnsupported}} = errors.New(\"...\")` for operations not supported by a specific implementation.\n\n**`{{registryName}}` struct:**\n- Internal map `map[{{keyType}}]{{interfaceName}}` protected by `sync.RWMutex`.\n- `Register(key {{keyType}}, impl {{interfaceName}})` — thread-safe registration.\n- `{{directLookupMethod}}(entity {{directLookupParam}}) ({{interfaceName}}, error)` — looks up implementation by the entity's type/key field; returns descriptive error if not registered.\n- `{{fallbackMethod}}(ctx {{fallbackParam}}, configStore interface{ ... }) ({{interfaceName}}, error)` — implements the following fallback chain:\n\n```\nLevel 1 — {{index fallbackLevels 0}}: query configStore for a project-scoped assignment; if found and registered, return it.\nLevel 2 — {{index fallbackLevels 1}}: query configStore for a global default; if found and registered, return it.\nLevel 3 — {{index fallbackLevels 2}}: look up {{hardcodedFallbackKey}} directly in the registry; return it unconditionally (must always be registered at startup).\n```\n\nEach level must log or annotate which source was used (via a comment or structured return). All methods must be safe for concurrent use. Wrap all errors with context using `fmt.Errorf`.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-nq0",
+        "paulette-kuo"
+      ]
+    }
+  ]
 }

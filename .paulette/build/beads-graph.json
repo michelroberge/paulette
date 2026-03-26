@@ -538,7 +538,7 @@
       "title": "Install react-router-dom and set up client-side routing",
       "description": "Install react-router-dom and set up client-side routing in App.tsx. Routes: / (home), /projects/:id (project detail), /configure (configure page). Existing project list and project detail views function identically. URL reflects current view. Back/forward navigation works. ?tab= and ?highlight= query params parsed on /configure.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-59p",
       "deps": [],
@@ -556,7 +556,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-032"
-      ]
+      ],
+      "preExecutionCommit": "72d2bdd5a0fb6f329dc9ba58188168a7b855153c"
     },
     {
       "id": "paulette-1sk",
@@ -593,7 +594,7 @@
       "title": "Create api/connections.ts — Connection API client functions",
       "description": "Implement all 8 functions (listConnections, createConnection, updateConnection, deleteConnection, testConnection, testNewConnection, listModels, listModelsForNew) using existing apiFetch helper.",
       "type": "task",
-      "status": "in_progress",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-59p",
       "deps": [
@@ -643,7 +644,8 @@
       "archRefs": [
         "ARCH-v0.2.0-030"
       ],
-      "preExecutionCommit": "96024a4e81ad74bbe1a265d3aa229fb5f5b77a2b"
+      "preExecutionCommit": "96024a4e81ad74bbe1a265d3aa229fb5f5b77a2b",
+      "postExecutionCommit": "72d2bdd5a0fb6f329dc9ba58188168a7b855153c"
     },
     {
       "id": "paulette-dkz",
