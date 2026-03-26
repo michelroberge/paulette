@@ -1027,7 +1027,7 @@
       "title": "Test mixed provider configuration",
       "description": "Assign different connections to different stages, verify stage-specific resolution. Use Ollama at http://10.0.0.57:11434 with gemma3:4b for Vision/UX and codellama:7b for Architecture/Build. Each stage correctly routes to its assigned provider and model.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-65f",
       "deps": [
@@ -1039,7 +1039,8 @@
       "journeyRefs": [
         "JRN-v0.2.0-006",
         "JRN-v0.2.0-007"
-      ]
+      ],
+      "preExecutionCommit": "f2a21fa437f0d60071717faaa40485d78db6eb56"
     },
     {
       "id": "paulette-r5f",
@@ -1059,7 +1060,8 @@
       "journeyRefs": [
         "JRN-v0.2.0-008"
       ],
-      "preExecutionCommit": "803c20e1c00ccd32fbbdeb825c44e1b6a4f08191"
+      "preExecutionCommit": "803c20e1c00ccd32fbbdeb825c44e1b6a4f08191",
+      "postExecutionCommit": "f2a21fa437f0d60071717faaa40485d78db6eb56"
     },
     {
       "id": "paulette-c0r",
