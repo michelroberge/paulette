@@ -193,7 +193,7 @@
       "title": "Create provider/ollama.go — Ollama provider",
       "description": "Implement Ollama provider using POST /api/chat (NDJSON streaming) and GET /api/tags (model list). Stream NDJSON, convert {message:{content:...}, done:false} to StreamEvent. ListModels parses /api/tags response. No auth headers sent.",
       "type": "task",
-      "status": "in_progress",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -296,7 +296,8 @@
       "archRefs": [
         "ARCH-v0.2.0-015"
       ],
-      "preExecutionCommit": "2cd825705e6512acb8c96ce721525c09f25e0d80"
+      "preExecutionCommit": "2cd825705e6512acb8c96ce721525c09f25e0d80",
+      "postExecutionCommit": "bc6b30fbeaa4bc0a0451bb3e4588dbc8ae616991"
     },
     {
       "id": "paulette-9jo",
@@ -761,7 +762,7 @@
       "title": "Create ConnectionForm.tsx — Slide-over connection form",
       "description": "Slide-over form with provider-type-driven fields, Test Connection, model discovery, credential warning. Provider type selection dynamically shows/hides fields. GitHub Copilot disabled with Coming Soon badge. Test Connection shows spinner → ✓/✗ inline. Model dropdown populated on successful discovery, free-text fallback otherwise. Credential warning banner. Save/Cancel footer.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -781,7 +782,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-024"
-      ]
+      ],
+      "preExecutionCommit": "bc6b30fbeaa4bc0a0451bb3e4588dbc8ae616991"
     },
     {
       "id": "paulette-4z5",
