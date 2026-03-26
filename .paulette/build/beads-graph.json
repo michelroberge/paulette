@@ -303,7 +303,7 @@
       "title": "Create provider/gemini.go — Gemini provider",
       "description": "Implement Gemini provider using streamGenerateContent endpoint with API key as query param. Parse candidates[0].content.parts[0].text from NDJSON array. ListModels uses GET /v1beta/models. Default base URL https://generativelanguage.googleapis.com.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -324,7 +324,7 @@
       "archRefs": [
         "ARCH-v0.2.0-016"
       ],
-      "preExecutionCommit": "89c3e6022cd313f99b7218edc9c7d3fee3c58e67"
+      "preExecutionCommit": "7b35dd3f6973e1a281c23d4bbe669c2e9aacd057"
     },
     {
       "id": "paulette-t23",
@@ -934,7 +934,8 @@
       "archRefs": [
         "ARCH-v0.2.0-027"
       ],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86",
+      "postExecutionCommit": "7b35dd3f6973e1a281c23d4bbe669c2e9aacd057"
     },
     {
       "id": "paulette-65f",
