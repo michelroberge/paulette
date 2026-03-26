@@ -117,14 +117,15 @@
       "archRefs": [
         "ARCH-v0.2.0-019"
       ],
-      "preExecutionCommit": "f0a552e8d192ae12ea12035eae5498912751d2bf"
+      "preExecutionCommit": "f0a552e8d192ae12ea12035eae5498912751d2bf",
+      "postExecutionCommit": "32b769b8f3787e4be33af6beaf59c05248867d0a"
     },
     {
       "id": "paulette-3uw",
       "title": "Create provider/claude_cli.go — Claude CLI Provider adapter",
       "description": "Wrap existing agent.Chat() behind the Provider interface. Chat delegates to agent.Chat(). TestConnection runs claude --version. ListModels returns ErrModelListUnsupported.",
       "type": "task",
-      "status": "open",
+      "status": "closed",
       "priority": 0,
       "epicId": "paulette-6hc",
       "deps": [
@@ -143,7 +144,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-011"
-      ]
+      ],
+      "preExecutionCommit": "32b769b8f3787e4be33af6beaf59c05248867d0a"
     },
     {
       "id": "paulette-8qp",

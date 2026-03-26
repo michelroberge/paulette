@@ -41,6 +41,14 @@ func SetClaudePath(path string) {
 	}
 }
 
+// GetClaudeBin returns the currently configured claude executable path.
+// Callers that need a stable snapshot (e.g. per-instance provider structs)
+// should capture this value at construction time rather than reading the
+// package-level variable on every call.
+func GetClaudeBin() string {
+	return claudeBin
+}
+
 // StreamEvent represents an event sent to the client via SSE.
 type StreamEvent struct {
 	Type    string `json:"type"`             // "chunk", "artifact", "done", "error", "tokens"
@@ -75,7 +83,19 @@ type claudeContent struct {
 
 // Chat spawns a Claude CLI subprocess and streams the response.
 // modelID selects the Claude model (e.g. "claude-sonnet-4-6"); empty string uses the CLI default.
+// The global claudeBin path (set via SetClaudePath) is used for the subprocess.
 func Chat(ctx context.Context, modelID string, systemPrompt string, history []model.Message, userMessage string, projectDir string) (<-chan StreamEvent, error) {
+	return ChatWithBin(ctx, claudeBin, modelID, systemPrompt, history, userMessage, projectDir)
+}
+
+// ChatWithBin is identical to Chat but accepts an explicit binary path instead of
+// using the package-level claudeBin variable. Use this when the caller owns a
+// per-instance path (e.g. ClaudeCLIProvider.claudePath) and needs to guarantee
+// that the binary used for chat matches the binary used for TestConnection.
+func ChatWithBin(ctx context.Context, bin string, modelID string, systemPrompt string, history []model.Message, userMessage string, projectDir string) (<-chan StreamEvent, error) {
+	if bin == "" {
+		bin = claudeBin
+	}
 	prompt := formatConversation(history, userMessage)
 
 	args := []string{
@@ -88,7 +108,7 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 	if modelID != "" {
 		args = append(args, "--model", modelID)
 	}
-	cmd := exec.CommandContext(ctx, claudeBin, args...)
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = projectDir
 
