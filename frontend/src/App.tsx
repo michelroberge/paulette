@@ -24,6 +24,7 @@ import { startEnhancement } from './api/enhance';
 import { getProject, patchProject } from './api/projects';
 import { getActiveRuns, sendBtw } from './api/activity';
 import type { ActiveRun } from './api/activity';
+import { getProjectOverrides } from './api/stageConfig';
 import { useChat } from './hooks/useChat';
 import { useAgentStream } from './hooks/useAgentStream';
 import { AgentStreamingView } from './components/layout/AgentStreamingView';
@@ -98,6 +99,7 @@ function ProjectDetailPage() {
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showStageSettings, setShowStageSettings] = useState(false);
+  const [stagesWithOverrides, setStagesWithOverrides] = useState<Set<StageName>>(new Set());
   const [showImportProgress, setShowImportProgress] = useState(false);
   const [mockGenerated, setMockGenerated] = useState(false);
   const [buildComplete, setBuildComplete] = useState(false);
@@ -140,6 +142,22 @@ function ProjectDetailPage() {
     return state;
   }, [project]);
 
+  /** Load per-project stage overrides and update the pip accent set. */
+  const loadStageOverrides = useCallback(async () => {
+    if (!project) return;
+    try {
+      const config = await getProjectOverrides(project.id);
+      const overridden = new Set<StageName>(
+        (Object.entries(config.overrides) as [StageName, unknown][])
+          .filter(([, v]) => v != null)
+          .map(([k]) => k),
+      );
+      setStagesWithOverrides(overridden);
+    } catch {
+      // Non-critical — silently swallow; no override accents shown
+    }
+  }, [project]);
+
   // Restore persisted stage tokens when selecting a project
   useEffect(() => {
     if (project) {
@@ -158,8 +176,9 @@ function ProjectDetailPage() {
       loadPipeline().then(state => {
         if (state) setSelectedStage(state.currentStage);
       });
+      loadStageOverrides();
     }
-  }, [project, loadPipeline]);
+  }, [project, loadPipeline, loadStageOverrides]);
 
   // Subscribe to live pipeline updates via SSE
   useEffect(() => {
@@ -364,6 +383,7 @@ function ProjectDetailPage() {
         totalTokens={grandTotal}
         onShowHistory={() => setShowVersionHistory(true)}
         onShowProfile={() => setShowProfile(true)}
+        onShowStageSettings={() => setShowStageSettings(true)}
         autonomous={!!project.autonomous}
         onToggleAutonomous={handleToggleAutonomous}
       />
@@ -375,6 +395,7 @@ function ProjectDetailPage() {
           onSelectStage={setSelectedStage}
           onReset={handleReset}
           stageTokens={stageTokens}
+          stagesWithOverrides={stagesWithOverrides}
         />
 
         <main className="main-content">
@@ -526,6 +547,7 @@ function ProjectDetailPage() {
           projectId={project.id}
           projectName={project.name}
           onClose={() => setShowStageSettings(false)}
+          onOverridesChange={loadStageOverrides}
         />
       )}
     </div>

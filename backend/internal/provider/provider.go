@@ -86,6 +86,16 @@ var stageModels = map[model.StageName]string{
 	model.StageComplete:     "claude-sonnet-4-6",
 }
 
+// FallbackModel returns the hardcoded default Claude model for a stage.
+// It is exported so callers (e.g. handler/chat.go) can use it when no
+// Registry is available.
+func FallbackModel(stage model.StageName) string {
+	if m, ok := stageModels[stage]; ok {
+		return m
+	}
+	return "claude-sonnet-4-6"
+}
+
 // Registry maps provider types to factory functions and resolves the
 // correct Provider + model for a given project stage.
 type Registry struct {

@@ -1916,6 +1916,25 @@ body {
   white-space: nowrap;
 }
 
+/* Stage connection settings gear icon button */
+.stage-settings-button {
+  padding: 0.3rem 0.5rem;
+  background: transparent;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.stage-settings-button:hover {
+  color: #e2e8f0;
+  border-color: #64748b;
+  background: rgba(100, 116, 139, 0.15);
+}
+
 /* History button in project header */
 .history-button {
   margin-left: auto;
@@ -3860,6 +3879,23 @@ body {
 }
 
 /* ── Stage robot icons ─────────────────────────────────────── */
+
+/* Wrapper for stage robot icon — used to apply override ring accent */
+.stage-robot-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+
+/* Yellow ring accent when a project-level connection override is active for a stage */
+.stage-robot-wrapper--override {
+  outline: 2px solid #facc15;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 
 .stage-robot {
   position: relative;

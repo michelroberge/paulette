@@ -495,7 +495,7 @@
       "title": "Modify handler/chat.go — Route through provider layer",
       "description": "Replace direct agent.Chat() call with registry.ResolveForStage() → provider.Chat(). Emit structured error StreamEvent on provider failure. stageModels map remains as fallback. StartChatRun resolves provider + model via registry. Connection errors produce StreamEvent{Type: error} with connection name and reason. Existing Claude CLI path still works when no config exists.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 0,
       "epicId": "paulette-aza",
       "deps": [
@@ -515,7 +515,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-006"
-      ]
+      ],
+      "preExecutionCommit": "538d60002e736439d4b79198b8c45fdfa904b48f"
     },
     {
       "id": "paulette-1yw",
@@ -853,7 +854,7 @@
       "title": "Modify project header — Add gear icon and override indicators",
       "description": "Add ⚙ gear icon button to project header. Show ring-2 ring-yellow-400 accent on pips with overrides. Gear icon opens ProjectStageSettings panel. Tooltip 'Stage connection settings'.",
       "type": "task",
-      "status": "in_progress",
+      "status": "reviewing",
       "priority": 2,
       "epicId": "paulette-1kh",
       "deps": [
@@ -924,7 +925,8 @@
       "archRefs": [
         "ARCH-v0.2.0-028"
       ],
-      "preExecutionCommit": "c715f58fd191cc26f1ddecb0e697ac0a22f6c356"
+      "preExecutionCommit": "c715f58fd191cc26f1ddecb0e697ac0a22f6c356",
+      "postExecutionCommit": "538d60002e736439d4b79198b8c45fdfa904b48f"
     },
     {
       "id": "paulette-rh8",

@@ -13,21 +13,25 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/config"
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/handler"
+	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
 type Server struct {
-	cfg          *config.Config
-	registry     repository.RegistryRepo
-	projectRepo  repository.ProjectRepo
-	artifactRepo repository.ArtifactRepo
-	activityRepo repository.ActivityRepo
-	chatRepo     repository.ChatRepo
-	runs         *stream.Manager
-	staticFS     fs.FS
-	orchestrator *autopilot.Orchestrator
+	cfg              *config.Config
+	registry         repository.RegistryRepo
+	projectRepo      repository.ProjectRepo
+	artifactRepo     repository.ArtifactRepo
+	activityRepo     repository.ActivityRepo
+	chatRepo         repository.ChatRepo
+	runs             *stream.Manager
+	staticFS         fs.FS
+	orchestrator     *autopilot.Orchestrator
+	connStore        *provider.ConnectionStore
+	providerRegistry *provider.Registry
+	stageConfig      *provider.StageConfigStore
 }
 
 func New(
@@ -37,16 +41,22 @@ func New(
 	artifactRepo repository.ArtifactRepo,
 	chatRepo repository.ChatRepo,
 	staticFS fs.FS,
+	connStore *provider.ConnectionStore,
+	providerRegistry *provider.Registry,
+	stageConfig *provider.StageConfigStore,
 ) *Server {
 	return &Server{
-		cfg:          cfg,
-		registry:     registry,
-		projectRepo:  projectRepo,
-		artifactRepo: artifactRepo,
-		activityRepo: fsrepo.NewActivityRepo(),
-		chatRepo:     chatRepo,
-		runs:         stream.NewManager(),
-		staticFS:     staticFS,
+		cfg:              cfg,
+		registry:         registry,
+		projectRepo:      projectRepo,
+		artifactRepo:     artifactRepo,
+		activityRepo:     fsrepo.NewActivityRepo(),
+		chatRepo:         chatRepo,
+		runs:             stream.NewManager(),
+		staticFS:         staticFS,
+		connStore:        connStore,
+		providerRegistry: providerRegistry,
+		stageConfig:      stageConfig,
 	}
 }
 
@@ -89,7 +99,7 @@ func (s *Server) Router() http.Handler {
 	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
 	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, gitSvc)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
-	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs)
+	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
 	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo)
 	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
