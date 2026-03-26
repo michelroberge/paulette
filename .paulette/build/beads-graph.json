@@ -558,10 +558,10 @@
       "title": "Frontend Foundation \u0026 Routing",
       "description": "Add React Router, TypeScript types, API client functions, and the Configure Paulette page shell",
       "type": "epic",
-      "status": "open",
+      "status": "reviewing",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
+      "preExecutionCommit": "88947e03472f72662452cd43873e4f7bc3f5cf7e"
     },
     {
       "id": "paulette-kh9",
@@ -975,7 +975,8 @@
       "status": "closed",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "1e1d7841b8e20569a3b1fbf92d872a55d929b975"
+      "preExecutionCommit": "1e1d7841b8e20569a3b1fbf92d872a55d929b975",
+      "postExecutionCommit": "88947e03472f72662452cd43873e4f7bc3f5cf7e"
     },
     {
       "id": "paulette-26w",
