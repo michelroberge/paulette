@@ -477,7 +477,7 @@
       "title": "Modify main.go — Initialize provider stores and registry",
       "description": "Initialize ConnectionStore, Registry, StageConfigStore on startup and pass to server constructor. connections.json and config.json loaded at boot. Missing files handled gracefully with empty defaults.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
@@ -492,7 +492,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-001"
-      ]
+      ],
+      "preExecutionCommit": "110a5e476e500bafd69510a84763098427b9bccb"
     },
     {
       "id": "paulette-msz",
@@ -548,7 +549,8 @@
       "archRefs": [
         "ARCH-v0.2.0-007"
       ],
-      "preExecutionCommit": "d86e53087eacdf1a06d0d6f6a60ab26427e78ee1"
+      "preExecutionCommit": "d86e53087eacdf1a06d0d6f6a60ab26427e78ee1",
+      "postExecutionCommit": "110a5e476e500bafd69510a84763098427b9bccb"
     },
     {
       "id": "paulette-59p",
