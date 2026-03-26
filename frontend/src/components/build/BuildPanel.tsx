@@ -313,6 +313,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
             onBeadSelect={setSelectedBeadId}
             onClose={() => setSelectedBeadId(null)}
             onBeadsUpdated={setGraph}
+            onBeadControlled={loadGraph}
           />
         ) : null;
       })()}

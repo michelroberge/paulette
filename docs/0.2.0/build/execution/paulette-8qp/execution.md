@@ -1,24 +1,25 @@
-All the provider implementations already exist. Let me check the test files and verify the code compiles correctly.All tests pass. Let me do a final full build verification of the backend:All provider implementations are already complete and fully functional. Here's a summary of what exists in the `backend/internal/provider/` package:
+All **50+ provider tests pass** with zero failures. The LLM provider implementations from Milestone 2 are fully complete and working. Here's a summary of what exists:
 
-## Provider Implementations — Status: ✅ Complete
+## Milestone 2 Status: ✅ Complete
 
-All 6 active provider backends are implemented:
+All P1 and P2 provider backends are fully implemented in `/backend/internal/provider/`:
+
+### Provider Implementations
 
 | File | Provider | Streaming Format | Auth |
 |---|---|---|---|
-| `claude_cli.go` | **Claude CLI** | Delegates to `agent.ChatWithBin()` subprocess | Local auth (existing) |
-| `ollama.go` | **Ollama** | NDJSON (`/api/chat`) → `StreamEvent` | None (local service) |
-| `lmstudio.go` | **LM Studio** | SSE via `openai_compat` (`/v1/chat/completions`) | None (local service) |
-| `openai.go` | **OpenAI** | SSE via `openai_compat` | `Authorization: Bearer {key}` + optional org/project headers |
-| `anthropic.go` | **Anthropic API** | Typed SSE (`content_block_delta`, `message_stop`) | `x-api-key` header |
-| `gemini.go` | **Gemini** | SSE via `&alt=sse` query param | `?key=` query param |
-| `openai_compat.go` | **Shared base** | SSE parsing for OpenAI-compatible APIs | Configurable auth headers |
+| `ollama.go` | **Ollama** | NDJSON via `POST /api/chat` | None (local service) |
+| `openai_compat.go` | **Shared OpenAI-compatible base** | SSE `data: {...}` lines | Configurable headers |
+| `lmstudio.go` | **LM Studio** | OpenAI-compatible SSE | None (delegates to compat layer) |
+| `openai.go` | **OpenAI** | OpenAI SSE | `Authorization: Bearer {key}`, optional Org/Project headers |
+| `anthropic.go` | **Anthropic API** | Typed SSE events (`content_block_delta`, `message_stop`) | `x-api-key` + `anthropic-version` |
+| `gemini.go` | **Gemini** | SSE via `&alt=sse` on `streamGenerateContent` | `?key=` query param |
+| `claude_cli.go` | **Claude CLI** (fallback) | Subprocess NDJSON | Local auth |
 
-### Key Implementation Details
-- **Timeouts**: 10-minute client timeout for chat streams; 30-second context timeout for `TestConnection` and `ListModels`
-- **Context cancellation**: All stream loops check `ctx.Done()` between lines — no silent hangs
-- **Always-done guarantee**: Every provider emits a final `{Type: "done"}` event, even on error paths, so callers draining the channel never block indefinitely
-- **Model discovery**: Ollama (`/api/tags`), LM Studio + OpenAI (`/v1/models`), Gemini (`/v1beta/models`), Anthropic (hardcoded list), Claude CLI (`ErrModelListUnsupported`)
-- **GitHub Copilot**: Returns a clear "not yet available" error (P3 — v0.3.0)
-
-All **59 unit tests** pass with `ok github.com/michelroberge/paulette/backend/internal/provider`.
+### Key Design Details
+- **`openai_compat.go`**: Shared implementation for OpenAI and LM Studio — handles SSE parsing (`data: [DONE]` sentinel, `delta.content` extraction), model list (`GET /v1/models`), and connection testing
+- **Anthropic**: Hardcoded model list (API has no model-discovery endpoint); parses typed SSE events; 1-token probe for connection test
+- **Gemini**: API key as query param; `candidates[0].content.parts[0].text` extraction; model names stripped of `models/` prefix
+- **HTTP timeouts**: 30s for `TestConnection`/`ListModels`, 10 min for streaming `Chat`
+- **Registry wiring**: `ForConnection()` and `ResolveForStage()` correctly instantiate all 6 active providers with 3-level fallback (project override → global default → Claude CLI)
+- **`chmod 600`**: Applied on every `connections.json` write

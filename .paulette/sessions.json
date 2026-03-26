@@ -153,6 +153,17 @@
       "inputTokens": 0,
       "outputTokens": 0,
       "totalTokens": 6504
+    },
+    {
+      "id": "f44eef9f-df81-4e67-82d8-96c98020f129",
+      "stage": "complete",
+      "kind": "summary",
+      "iteration": 2,
+      "startedAt": "2026-03-26T23:18:51.710818416Z",
+      "endedAt": "2026-03-26T23:20:14.160901755Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 3221
     }
   ]
 }
