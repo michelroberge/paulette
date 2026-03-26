@@ -155,10 +155,10 @@
       "title": "LLM Provider Implementations",
       "description": "Implement all P1 and P2 provider backends, each converting its native streaming format into the shared StreamEvent channel",
       "type": "epic",
-      "status": "open",
+      "status": "in_progress",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
+      "preExecutionCommit": "274dc9a31cdd8952dfae57a6f92327c9170ccc0a"
     },
     {
       "id": "paulette-09e",
@@ -1042,7 +1042,8 @@
         "JRN-v0.2.0-006",
         "JRN-v0.2.0-007"
       ],
-      "preExecutionCommit": "f2a21fa437f0d60071717faaa40485d78db6eb56"
+      "preExecutionCommit": "f2a21fa437f0d60071717faaa40485d78db6eb56",
+      "postExecutionCommit": "274dc9a31cdd8952dfae57a6f92327c9170ccc0a"
     },
     {
       "id": "paulette-r5f",
