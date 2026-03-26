@@ -2,6 +2,7 @@ package handler
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -165,7 +166,7 @@ func (h *PipelineHandler) ApproveInternal(projectID string) error {
 
 	// Require all beads closed before approving build
 	if project.CurrentStage == model.StageBuild {
-		graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+		graph, err := fsrepo.ReadBdBeadGraph(context.Background(), project.HostDir)
 		if err != nil {
 			return fmt.Errorf("cannot approve: failed to read bead graph: %w", err)
 		}

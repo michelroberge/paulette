@@ -344,7 +344,7 @@ func (o *Orchestrator) handleBuildStage(ctx context.Context, project *model.Proj
 	}
 
 	// Generate beads if missing
-	graph, _ := fsrepo.ReadBeadGraph(project.HostDir)
+	graph, _ := fsrepo.ReadBdBeadGraph(ctx, project.HostDir)
 	if graph == nil || len(graph.Beads) == 0 {
 		run, err := o.startOrJoinGenerateRun(ctx, project)
 		if err != nil {

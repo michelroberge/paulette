@@ -703,7 +703,8 @@
       "archRefs": [
         "ARCH-v0.2.0-033"
       ],
-      "preExecutionCommit": "722b0ff06c24e12820413a12817b2482f8555d73"
+      "preExecutionCommit": "722b0ff06c24e12820413a12817b2482f8555d73",
+      "postExecutionCommit": "803c20e1c00ccd32fbbdeb825c44e1b6a4f08191"
     },
     {
       "id": "paulette-1kh",
@@ -971,7 +972,7 @@
       "title": "Integration Testing \u0026 Polish",
       "description": "End-to-end validation, edge case handling, and regression testing",
       "type": "epic",
-      "status": "in_progress",
+      "status": "closed",
       "priority": 2,
       "deps": [],
       "preExecutionCommit": "1e1d7841b8e20569a3b1fbf92d872a55d929b975"
@@ -1045,7 +1046,7 @@
       "title": "Test connection error recovery flow",
       "description": "Simulate unreachable provider, verify error banner, fix, retry. Error banner appears immediately (no silent hang). 'Go to Configure' deep-links correctly with highlight. After fixing connection, retry works without data loss.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-65f",
       "deps": [
@@ -1057,7 +1058,8 @@
       ],
       "journeyRefs": [
         "JRN-v0.2.0-008"
-      ]
+      ],
+      "preExecutionCommit": "803c20e1c00ccd32fbbdeb825c44e1b6a4f08191"
     },
     {
       "id": "paulette-c0r",

@@ -454,6 +454,7 @@ function ProjectDetailPage() {
                     onStop={stop}
                     connectionError={connectionError}
                     onOpenProjectSettings={() => setShowStageSettings(true)}
+                    onRetry={resume}
                   />
                 )}
 

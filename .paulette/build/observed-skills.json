@@ -393,6 +393,226 @@
       "sourceBeads": [
         "paulette-peh"
       ]
+    },
+    {
+      "name": "React Credential-Aware Edit/Create Form",
+      "description": "Generates a React form component that handles both create and edit modes with credential-aware field validation. In create mode, credential fields (API keys, tokens) are always required when the selected provider needs them. In edit mode, credential fields are only required if no existing credentials are on record — computed via a `hasExistingCredentials` flag rather than a raw `!isEdit` guard, so provider-type changes mid-edit are still caught.",
+      "category": "frontend",
+      "tags": [
+        "react",
+        "typescript",
+        "form",
+        "validation",
+        "credentials",
+        "edit-mode",
+        "create-mode"
+      ],
+      "parameters": [
+        {
+          "name": "entityName",
+          "description": "Name of the entity being created/edited (e.g. Connection, Integration)"
+        },
+        {
+          "name": "credentialFields",
+          "description": "Comma-separated list of credential field names that require provider-conditional validation (e.g. apiKey,secretToken)",
+          "default": "apiKey"
+        },
+        {
+          "name": "providerTypeField",
+          "description": "Name of the field that determines which provider is selected, used to gate credential requirements",
+          "default": "providerType"
+        },
+        {
+          "name": "providerNeedsCredentialsFn",
+          "description": "Name of the helper function that returns true when the selected provider requires credentials",
+          "default": "providerNeedsApiKey"
+        },
+        {
+          "name": "onSavedProp",
+          "description": "Callback prop name invoked with the saved entity after successful submit",
+          "default": "onSaved"
+        }
+      ],
+      "promptTemplate": "Create a TypeScript React form component named `{{entityName}}Form` that supports both **create** and **edit** modes.\n\n**Props:**\n- `isEdit: boolean`\n- `existing{{entityName}}?: {{entityName}}` — pre-populated data when editing\n- `{{onSavedProp}}: (saved: {{entityName}}) =\u003e void`\n- `onCancel: () =\u003e void`\n\n**Credential validation rules:**\n1. Compute `hasExistingCredentials = isEdit \u0026\u0026 !!existing{{entityName}}?.hasCredentials` at the top of the component.\n2. For each credential field in [{{credentialFields}}], require a non-empty value only when `{{providerNeedsCredentialsFn}}(form.{{providerTypeField}}) \u0026\u0026 !hasExistingCredentials`. Do NOT use `!isEdit` as the guard — that breaks the case where a user switches provider type in edit mode.\n3. Show a helper text hint like \"Leave blank to keep existing credentials\" when `isEdit \u0026\u0026 hasExistingCredentials`.\n\n**Behaviour:**\n- On submit, call the API (POST for create, PUT for edit), then invoke `{{onSavedProp}}` with the server response.\n- Disable the submit button while loading; show inline field-level error messages on validation failure.\n- Clear credential fields when `{{providerTypeField}}` changes in edit mode so stale keys don't carry over.\n\nExport the component as the default export.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-n18"
+      ]
+    },
+    {
+      "name": "Sensitive File Permission Verification Tests",
+      "description": "Generates a test suite (shell script or language-native) that verifies a sensitive file has the correct restrictive permissions (default 0600) after every CRUD operation. Applies a belt-and-suspenders strategy: checks permissions both after in-progress writes (pre-rename) and after the atomic rename completes, catching any window where permissions could be temporarily too open.",
+      "category": "testing",
+      "tags": [
+        "security",
+        "file-permissions",
+        "chmod",
+        "testing",
+        "crud",
+        "shell",
+        "go"
+      ],
+      "parameters": [
+        {
+          "name": "filePath",
+          "description": "Path to the sensitive file to verify (e.g. ~/.myapp/connections.json)"
+        },
+        {
+          "name": "permissionMode",
+          "description": "Expected octal permission mode",
+          "default": "0600"
+        },
+        {
+          "name": "language",
+          "description": "Test language/framework: 'shell', 'go-test', or 'jest'",
+          "default": "shell"
+        },
+        {
+          "name": "operations",
+          "description": "Comma-separated CRUD operations to test after each",
+          "default": "create,update,delete"
+        },
+        {
+          "name": "entityName",
+          "description": "Human-readable name of the entity stored in the file, for test naming",
+          "default": "record"
+        }
+      ],
+      "promptTemplate": "Write a {{language}} test suite that verifies `{{filePath}}` always has `{{permissionMode}}` permissions.\n\n**Cover each operation in [{{operations}}]:**\nFor each operation:\n1. Perform the operation (create/update/delete a {{entityName}}).\n2. Immediately `stat` the file and assert the permission bits equal `{{permissionMode}}`.\n3. Also assert the file is owned by the current user (not root-owned).\n\n**Additional test cases:**\n- Multiple sequential creates — permissions must stay `{{permissionMode}}` after each append.\n- Concurrent creates (two goroutines / parallel workers) — file must still end up `{{permissionMode}}` with no torn writes.\n- Delete the last record — if the file is removed, recreating it must apply `{{permissionMode}}` from the first byte (not inherit umask).\n\n**Belt-and-suspenders note:** If the implementation uses write-to-temp-then-rename, add a test that injects a delay between the temp-file write and the rename (using a mock or hook) and verifies the temp file is also `{{permissionMode}}` during that window.\n\nOutput clean, runnable test code with descriptive test names.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-isl",
+        "paulette-oda"
+      ]
+    },
+    {
+      "name": "LLM Provider End-to-End Integration Test",
+      "description": "Generates an end-to-end integration test for an LLM provider connection that covers the full lifecycle: create connection → test connectivity with a latency SLA → assign to pipeline stages → run a sample pipeline → verify output. Designed for apps that support multiple swappable LLM providers.",
+      "category": "testing",
+      "tags": [
+        "llm",
+        "e2e",
+        "integration-test",
+        "provider",
+        "pipeline",
+        "latency",
+        "sla",
+        "testing"
+      ],
+      "parameters": [
+        {
+          "name": "providerName",
+          "description": "Name of the LLM provider to test (e.g. Ollama, OpenAI, Anthropic)"
+        },
+        {
+          "name": "connectionTestSlaMs",
+          "description": "Maximum acceptable latency in milliseconds for the connection test",
+          "default": "3000"
+        },
+        {
+          "name": "stages",
+          "description": "Comma-separated pipeline stage names to assign the provider to"
+        },
+        {
+          "name": "samplePrompt",
+          "description": "A short sample prompt to send through the pipeline to verify end-to-end output",
+          "default": "Say hello in one sentence."
+        },
+        {
+          "name": "requiresCredentials",
+          "description": "Whether this provider requires API key credentials (true/false)",
+          "default": "false"
+        },
+        {
+          "name": "testFramework",
+          "description": "Test framework to use: 'go-test', 'jest', 'playwright'",
+          "default": "go-test"
+        }
+      ],
+      "promptTemplate": "Write a {{testFramework}} end-to-end integration test for the **{{providerName}}** LLM provider.\n\n**Test sequence (must run in order):**\n1. **Create connection** — POST a new connection with `providerType: '{{providerName}}'`{{#requiresCredentials}} and a valid API key read from `process.env.{{providerName | upper}}_API_KEY`{{/requiresCredentials}}. Assert HTTP 201 and a non-empty `id` in the response.\n2. **Test connectivity with SLA** — call the \"Test Connection\" endpoint and assert:\n   - HTTP 200 with `status: 'ok'`\n   - Round-trip time ≤ {{connectionTestSlaMs}}ms (measure with `time.Now()` / `Date.now()`)\n3. **Assign to stages** — for each stage in [{{stages}}], PATCH the stage config to use the new connection id. Assert HTTP 200 for each.\n4. **Run sample pipeline** — POST a pipeline run with prompt `\"{{samplePrompt}}\"`. Assert:\n   - HTTP 200 or 202\n   - Non-empty `output` string in the response (or streamed chunks if SSE)\n   - Completion within a reasonable wall-clock timeout (e.g. 30 s)\n5. **Cleanup** — DELETE the connection. Assert HTTP 204 and that a subsequent GET returns 404.\n\n**Additional assertions:**\n- A user without any other providers configured can complete the full sequence using {{providerName}} alone.\n- Re-running the connectivity test after pipeline use still passes within the SLA.\n\nInclude benchmark output (e.g. connection-test latency averaged over 5 iterations) as a `t.Logf` / `console.log` annotation, not as a hard assertion.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-yq8"
+      ]
+    },
+    {
+      "name": "React Component-Scoped Keyframe Animation",
+      "description": "Generates the boilerplate for injecting CSS @keyframes animations directly into a React component's scoped style string, eliminating implicit dependencies on global stylesheets. Pairs the injected style tag with a cleanup effect and exports a typed animation-name constant for use in inline styles.",
+      "category": "frontend",
+      "tags": [
+        "react",
+        "typescript",
+        "css",
+        "animation",
+        "keyframes",
+        "component-scope",
+        "inline-styles"
+      ],
+      "parameters": [
+        {
+          "name": "componentName",
+          "description": "Name of the React component that owns these animations"
+        },
+        {
+          "name": "animations",
+          "description": "Comma-separated list of animation names to define (e.g. slideIn,spin,fadeOut)",
+          "default": "slideIn"
+        },
+        {
+          "name": "styleConstantName",
+          "description": "Name of the exported string constant that holds the injected CSS",
+          "default": "COMPONENT_STYLE"
+        }
+      ],
+      "promptTemplate": "Add component-scoped CSS keyframe animations to the **{{componentName}}** React component.\n\n**Requirements:**\n1. Define a module-level string constant `{{styleConstantName}}` containing `\u003cstyle\u003e` tag markup with `@keyframes` blocks for each animation in [{{animations}}]. Example structure:\n```ts\nconst {{styleConstantName}} = `\n\u003cstyle\u003e\n  @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }\n  @keyframes spin    { from { transform: rotate(0deg);    } to { transform: rotate(360deg); } }\n\u003c/style\u003e\n`;\n```\n2. Inject the style tag **once** via a `useEffect` with an empty dependency array: create a `\u003cstyle\u003e` DOM element, set its `textContent` to the keyframe rules (not the outer `\u003cstyle\u003e` tags), append it to `document.head`, and return a cleanup function that removes it.\n3. Export typed animation-name constants (e.g. `export const ANIM_SLIDE_IN = 'slideIn' as const`) so inline `style={{ animation: ANIM_SLIDE_IN + ' 0.3s ease' }}` usages are type-safe.\n4. Do **not** reference `App.css` or any other global stylesheet for these animations — the component must be self-contained.\n5. Add a JSDoc comment above `{{styleConstantName}}` noting: _\"Keyframes are injected into document.head to avoid implicit dependency on global stylesheets.\"_\n\nOutput the updated component file with the style injection integrated.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-n18"
+      ]
+    },
+    {
+      "name": "Dev Environment Native Dependency Fix",
+      "description": "Generates a shell script or Makefile target that resolves two common local dev environment failures: (1) npm native binary binding errors caused by stale node_modules (solved by clean reinstall), and (2) a required CLI tool (Go, Rust, etc.) that is installed but absent from the shell PATH used by the build/validation commands (solved by symlinking into /usr/local/bin or patching the relevant rc file).",
+      "category": "devops",
+      "tags": [
+        "devops",
+        "shell",
+        "npm",
+        "path",
+        "native-bindings",
+        "go",
+        "environment",
+        "setup"
+      ],
+      "parameters": [
+        {
+          "name": "nativePackage",
+          "description": "npm package with native bindings that is failing (e.g. @rolldown/binding-linux-x64-gnu)"
+        },
+        {
+          "name": "missingBinary",
+          "description": "CLI binary that is installed but not on PATH (e.g. go, cargo, python3)"
+        },
+        {
+          "name": "binaryInstalledPath",
+          "description": "Full path where the binary is actually installed (e.g. /home/user/go/bin/go)"
+        },
+        {
+          "name": "symlinkTarget",
+          "description": "Where to create the symlink so the binary is universally accessible",
+          "default": "/usr/local/bin"
+        },
+        {
+          "name": "packageManager",
+          "description": "Package manager to use for the clean reinstall: npm, pnpm, or yarn",
+          "default": "npm"
+        }
+      ],
+      "promptTemplate": "Write a shell script `fix-dev-env.sh` that resolves two classes of local development environment failures:\n\n## 1. Native npm binding cache corruption\n**Symptom:** `Cannot find native binding` for `{{nativePackage}}` when running `npm run dev` or `npm run build`.\n**Fix steps:**\n```bash\nrm -rf node_modules package-lock.json   # or yarn.lock / pnpm-lock.yaml\n{{packageManager}} install\n```\nAfter reinstall, verify the binding is present:\n```bash\nls node_modules/{{nativePackage}} 2\u003e/dev/null \u0026\u0026 echo 'binding OK' || echo 'STILL MISSING'\n```\nIf still missing, fall back to pinning the bundler to a version that does not use native bindings (e.g. downgrade vite from v8 to v5 in `package.json`).\n\n## 2. Required binary not on PATH\n**Symptom:** `{{missingBinary}}: not found` even though it is installed at `{{binaryInstalledPath}}`.\n**Fix steps (in priority order):**\n1. Create a symlink: `sudo ln -sf {{binaryInstalledPath}} {{symlinkTarget}}/{{missingBinary}}`\n2. If sudo is unavailable, append `export PATH={{binaryInstalledPath | dirname}}:$PATH` to `~/.bashrc` AND `~/.zshrc`, then `source` the active one.\n3. Verify: `which {{missingBinary}} \u0026\u0026 {{missingBinary}} version`\n\n**Script behaviour:**\n- Print a coloured status line (`[OK]` / `[FAIL]`) for each step.\n- Exit with code 0 only if both fixes verify successfully.\n- Idempotent: safe to re-run; skip steps that are already resolved.\n- Works on Linux (apt-based) and macOS (Homebrew).",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-oda"
+      ]
     }
   ]
 }

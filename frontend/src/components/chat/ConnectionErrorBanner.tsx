@@ -48,6 +48,14 @@ interface ConnectionErrorBannerProps {
    * If omitted, the secondary CTA is not rendered.
    */
   onOpenProjectSettings?: () => void;
+  /**
+   * Called when the user clicks "Retry".
+   * Should resume the last unanswered user message without requiring the user
+   * to re-type it. Typically wired to `resume()` from `useChat`.
+   * If omitted, the Retry button is not rendered.
+   * The banner is cleared automatically by `useChat` when `resume()` is called.
+   */
+  onRetry?: () => void;
 }
 
 /**
@@ -73,6 +81,7 @@ export function ConnectionErrorBanner({
   connectionId,
   reason,
   onOpenProjectSettings,
+  onRetry,
 }: ConnectionErrorBannerProps) {
   const navigate = useNavigate();
 
@@ -111,6 +120,16 @@ export function ConnectionErrorBanner({
               className="text-gray-600 hover:underline text-sm"
             >
               Change stage connection
+            </button>
+          )}
+
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="text-green-600 hover:underline font-medium text-sm"
+            >
+              ↺ Retry
             </button>
           )}
         </div>

@@ -28,9 +28,17 @@ interface Props {
    * When omitted, the "Change stage connection" CTA is not rendered in the banner.
    */
   onOpenProjectSettings?: () => void;
+  /**
+   * Retries the last unanswered user message without requiring re-typing.
+   * Wired to `resume()` from `useChat`. Shown in the error banner so the user
+   * can fix the connection inline (via "Change stage connection") then immediately
+   * retry without navigating away or losing their original message.
+   * When omitted, the Retry button is not rendered in the banner.
+   */
+  onRetry?: () => void;
 }
 
-export function ChatPanel({ messages, streaming, streamingContent, onSend, onStop, connectionError, onOpenProjectSettings }: Props) {
+export function ChatPanel({ messages, streaming, streamingContent, onSend, onStop, connectionError, onOpenProjectSettings, onRetry }: Props) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -71,6 +79,7 @@ export function ChatPanel({ messages, streaming, streamingContent, onSend, onSto
             connectionId={connectionError.connectionId}
             reason={connectionError.reason}
             onOpenProjectSettings={onOpenProjectSettings}
+            onRetry={onRetry}
           />
         ) : streaming ? (
           <div className="message assistant streaming">
