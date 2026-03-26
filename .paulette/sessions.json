@@ -87,6 +87,17 @@
       "inputTokens": 0,
       "outputTokens": 0,
       "totalTokens": 6031
+    },
+    {
+      "id": "9708973a-baa8-4eeb-a2f2-504189bb5fcc",
+      "stage": "build",
+      "kind": "beads-execute",
+      "iteration": 2,
+      "startedAt": "2026-03-25T23:55:27.137217195Z",
+      "endedAt": "2026-03-26T00:38:56.703746767Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 208793
     }
   ]
 }

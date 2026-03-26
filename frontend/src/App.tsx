@@ -15,6 +15,7 @@ import { CompletionView } from './components/pipeline/CompletionView';
 import { VersionHistoryModal } from './components/git/VersionHistoryModal';
 import { ProfileModal } from './components/git/ProfileModal';
 import { ConfigurePage } from './components/configure/ConfigurePage';
+import { ProjectStageSettings } from './components/configure/ProjectStageSettings';
 import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
 import { getArtifact } from './api/artifacts';
 import { getMock } from './api/mock';
@@ -96,6 +97,7 @@ function ProjectDetailPage() {
   const [stageTokens, setStageTokens] = useState<Partial<Record<StageName, number>>>({});
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showStageSettings, setShowStageSettings] = useState(false);
   const [showImportProgress, setShowImportProgress] = useState(false);
   const [mockGenerated, setMockGenerated] = useState(false);
   const [buildComplete, setBuildComplete] = useState(false);
@@ -125,7 +127,7 @@ function ProjectDetailPage() {
     [stageTokens],
   );
 
-  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, loadHistory, send, resume, stop } =
+  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, loadHistory, send, resume, stop } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger, selectedStage ? (n) => addTokens(selectedStage, n) : undefined);
 
   const { active: agentActive, streamingText: agentStreamingText, operation: agentOperation, stage: agentStage } =
@@ -429,6 +431,8 @@ function ProjectDetailPage() {
                     streamingContent={streamingContent}
                     onSend={send}
                     onStop={stop}
+                    connectionError={connectionError}
+                    onOpenProjectSettings={() => setShowStageSettings(true)}
                   />
                 )}
 
@@ -515,6 +519,13 @@ function ProjectDetailPage() {
           projectId={project.id}
           initialName={project.author}
           onClose={() => setShowProfile(false)}
+        />
+      )}
+      {showStageSettings && (
+        <ProjectStageSettings
+          projectId={project.id}
+          projectName={project.name}
+          onClose={() => setShowStageSettings(false)}
         />
       )}
     </div>

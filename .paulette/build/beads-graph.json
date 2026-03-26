@@ -9,7 +9,8 @@
       "type": "epic",
       "status": "open",
       "priority": 2,
-      "deps": []
+      "deps": [],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-nq0",
@@ -156,7 +157,8 @@
       "type": "epic",
       "status": "open",
       "priority": 2,
-      "deps": []
+      "deps": [],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-09e",
@@ -183,7 +185,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-017"
-      ]
+      ],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-g3n",
@@ -210,7 +213,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-012"
-      ]
+      ],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-xfq",
@@ -291,14 +295,15 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-015"
-      ]
+      ],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-9jo",
       "title": "Create provider/gemini.go — Gemini provider",
       "description": "Implement Gemini provider using streamGenerateContent endpoint with API key as query param. Parse candidates[0].content.parts[0].text from NDJSON array. ListModels uses GET /v1beta/models. Default base URL https://generativelanguage.googleapis.com.",
       "type": "task",
-      "status": "in_progress",
+      "status": "open",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -360,7 +365,8 @@
       "type": "epic",
       "status": "open",
       "priority": 2,
-      "deps": []
+      "deps": [],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-d6n",
@@ -534,7 +540,8 @@
       "type": "epic",
       "status": "open",
       "priority": 2,
-      "deps": []
+      "deps": [],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-kh9",
@@ -675,7 +682,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-033"
-      ]
+      ],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-1kh",
@@ -684,14 +692,15 @@
       "type": "epic",
       "status": "open",
       "priority": 2,
-      "deps": []
+      "deps": [],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-g1c",
       "title": "Create ConfigurePage.tsx — Two-tab layout",
       "description": "Create two-tab layout (Connections, Stage Defaults) with breadcrumb, query param support for ?tab= and ?highlight=. Tabs switch content. ← Home breadcrumb navigates back. max-w-4xl centered layout.",
       "type": "task",
-      "status": "in_progress",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -713,7 +722,7 @@
       "archRefs": [
         "ARCH-v0.2.0-022"
       ],
-      "preExecutionCommit": "89c3e6022cd313f99b7218edc9c7d3fee3c58e67"
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-hlr",
@@ -846,7 +855,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-034"
-      ]
+      ],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-3gw",
@@ -872,7 +882,8 @@
       "archRefs": [
         "ARCH-v0.2.0-027"
       ],
-      "preExecutionCommit": "1efe913160fdb94f22af736c0f2292e5f60b739e"
+      "preExecutionCommit": "1efe913160fdb94f22af736c0f2292e5f60b739e",
+      "postExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-n0i",
@@ -896,14 +907,15 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-028"
-      ]
+      ],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-rh8",
       "title": "Integrate ConnectionErrorBanner into chat panel",
       "description": "Detect connection error events and render banner in ChatPanel. When SSE stream emits an error event with connection failure info, the banner replaces the streaming area. Chat input remains available for retry after fix.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -921,7 +933,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-027"
-      ]
+      ],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-65f",
@@ -930,7 +943,8 @@
       "type": "epic",
       "status": "open",
       "priority": 2,
-      "deps": []
+      "deps": [],
+      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
     },
     {
       "id": "paulette-26w",

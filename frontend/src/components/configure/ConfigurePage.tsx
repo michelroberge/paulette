@@ -14,7 +14,7 @@
  * Architecture: ARCH-v0.2.0-022, SCR-007
  */
 
-import { useState, useEffect, CSSProperties } from 'react';
+import type { CSSProperties } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionsTab } from './ConnectionsTab';
 import { StageDefaultsTab } from './StageDefaultsTab';
@@ -96,7 +96,7 @@ interface TabButtonProps {
   onClick: () => void;
 }
 
-function TabButton({ label, active, onClick }: TabButtonProps) {
+function TabButton({ id, label, active, onClick }: TabButtonProps) {
   const tabStyle: CSSProperties = {
     background: 'none',
     border: 'none',
@@ -112,7 +112,16 @@ function TabButton({ label, active, onClick }: TabButtonProps) {
   };
 
   return (
-    <button style={tabStyle} onClick={onClick} type="button">
+    <button
+      style={tabStyle}
+      onClick={onClick}
+      type="button"
+      role="tab"
+      id={`tab-${id}`}
+      aria-selected={active}
+      aria-controls={`tabpanel-${id}`}
+      tabIndex={active ? 0 : -1}
+    >
       {label}
     </button>
   );
@@ -124,23 +133,30 @@ function TabButton({ label, active, onClick }: TabButtonProps) {
 
 export function ConfigurePage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  // Parse ?tab= query param to determine the initial active tab.
-  // Falls back to 'connections' for any unknown value.
+  // Derive active tab directly from the URL — the URL is the single source of truth.
+  // This ensures Back/Forward navigation and deep-links all reflect the real state
+  // without any dual-state synchronisation logic.
   const tabParam = searchParams.get('tab');
   const highlightParam = searchParams.get('highlight') ?? undefined;
+  const activeTab: TabId = tabParam === 'defaults' ? 'defaults' : 'connections';
 
-  const resolveTab = (param: string | null): TabId =>
-    param === 'defaults' ? 'defaults' : 'connections';
-
-  const [activeTab, setActiveTab] = useState<TabId>(() => resolveTab(tabParam));
-
-  // Keep the active tab in sync when the URL query param changes (e.g. the user
-  // navigates back/forward or a deep-link replaces the URL).
-  useEffect(() => {
-    setActiveTab(resolveTab(tabParam));
-  }, [tabParam]);
+  /**
+   * Navigate to a tab by updating the URL.
+   *
+   * Rules:
+   * - The `?tab=` param is always written so the URL stays canonical.
+   * - The `?highlight=` param is intentionally dropped when switching tabs:
+   *   once the user moves away from the Connections tab the deep-link highlight
+   *   should not re-fire when they come back (IACT-011).
+   * - Switching to the same tab the user is already on is a no-op so we avoid
+   *   pushing redundant history entries.
+   */
+  const handleTabClick = (tab: TabId) => {
+    if (tab === activeTab && !highlightParam) return; // already there, nothing to change
+    setSearchParams({ tab }); // drops ?highlight= intentionally
+  };
 
   return (
     <div style={styles.page}>
@@ -168,23 +184,31 @@ export function ConfigurePage() {
             id="connections"
             label="Connections"
             active={activeTab === 'connections'}
-            onClick={() => setActiveTab('connections')}
+            onClick={() => handleTabClick('connections')}
           />
           <TabButton
             id="defaults"
             label="Stage Defaults"
             active={activeTab === 'defaults'}
-            onClick={() => setActiveTab('defaults')}
+            onClick={() => handleTabClick('defaults')}
           />
         </div>
 
-        {/* Tab content */}
-        <div style={styles.tabContent}>
+        {/* Tab panels */}
+        <div
+          style={styles.tabContent}
+          role="tabpanel"
+          id={`tabpanel-${activeTab}`}
+          aria-labelledby={`tab-${activeTab}`}
+        >
           {activeTab === 'connections' && (
             <ConnectionsTab
               // Pass the ?highlight= param so ConnectionsTab can pulse the matching card
               // (IACT-011 deep-link behaviour from connection error banners).
+              // ConnectionsTab is responsible for calling clearHighlight() once the
+              // pulse animation fires so the param doesn't linger.
               highlight={highlightParam}
+              clearHighlight={() => setSearchParams({ tab: 'connections' })}
             />
           )}
           {activeTab === 'defaults' && <StageDefaultsTab />}

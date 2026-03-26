@@ -16,9 +16,15 @@ export interface ConnectionsTabProps {
    * Used for deep-linking from inline connection error banners (IACT-011).
    */
   highlight?: string;
+  /**
+   * Called by ConnectionsTab once the highlight pulse animation has fired so that
+   * ConfigurePage can remove the ?highlight= query param from the URL.
+   * This prevents the card from re-pulsing every time the user returns to this tab.
+   */
+  clearHighlight?: () => void;
 }
 
-export function ConnectionsTab({ highlight: _highlight }: ConnectionsTabProps) {
+export function ConnectionsTab({ highlight: _highlight, clearHighlight: _clearHighlight }: ConnectionsTabProps) {
   const placeholderStyle: CSSProperties = {
     padding: '4rem 0',
     textAlign: 'center',
