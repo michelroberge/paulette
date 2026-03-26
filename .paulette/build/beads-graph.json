@@ -90,7 +90,8 @@
       "archRefs": [
         "ARCH-v0.2.0-018"
       ],
-      "preExecutionCommit": "7243042d1230a4afbd92648e1695a1e509c5919e"
+      "preExecutionCommit": "7243042d1230a4afbd92648e1695a1e509c5919e",
+      "postExecutionCommit": "96024a4e81ad74bbe1a265d3aa229fb5f5b77a2b"
     },
     {
       "id": "paulette-kuo",
@@ -620,7 +621,7 @@
       "title": "Create api/stageConfig.ts — Stage config API client functions",
       "description": "Implement all 5 functions (getGlobalDefaults, setGlobalStageDefault, getProjectOverrides, setProjectStageOverride, resetProjectOverrides). setProjectStageOverride sends null to clear override.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-59p",
       "deps": [
@@ -639,7 +640,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-030"
-      ]
+      ],
+      "preExecutionCommit": "96024a4e81ad74bbe1a265d3aa229fb5f5b77a2b"
     },
     {
       "id": "paulette-dkz",
