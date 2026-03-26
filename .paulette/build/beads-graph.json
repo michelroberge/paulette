@@ -244,7 +244,8 @@
       "archRefs": [
         "ARCH-v0.2.0-013"
       ],
-      "preExecutionCommit": "f5337addc971fa58100a9c29987adf0e0d518781"
+      "preExecutionCommit": "f5337addc971fa58100a9c29987adf0e0d518781",
+      "postExecutionCommit": "c715f58fd191cc26f1ddecb0e697ac0a22f6c356"
     },
     {
       "id": "paulette-cu1",
@@ -902,7 +903,7 @@
       "title": "Create CredentialWarningToast.tsx — Toast notification",
       "description": "Toast notification for credential saves, auto-dismiss after 6s. Fixed bottom-right position. Yellow warning styling. Auto-dismisses after 6s with fade-out. Only shown for providers that have credentials (not Ollama/LM Studio/Claude CLI).",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 2,
       "epicId": "paulette-1kh",
       "deps": [],
@@ -920,7 +921,7 @@
       "archRefs": [
         "ARCH-v0.2.0-028"
       ],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "c715f58fd191cc26f1ddecb0e697ac0a22f6c356"
     },
     {
       "id": "paulette-rh8",
