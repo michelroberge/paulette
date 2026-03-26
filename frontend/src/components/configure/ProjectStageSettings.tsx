@@ -16,7 +16,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { StageName } from '../../types';
-import type { Connection, GlobalStageConfig } from '../../types/provider';
+import type { Connection, GlobalStageConfig, ModelInfo } from '../../types/provider';
 import { listConnections } from '../../api/connections';
 import {
   getGlobalDefaults,
@@ -512,10 +512,10 @@ export function ProjectStageSettings({ projectId, projectName, onClose, onOverri
                               onChange={e => handleModelSelect(stage, e.target.value)}
                               style={selectStyle}
                             >
-                              {!discoveredModels.some(m => m.id === row.model) && row.model && (
+                              {!discoveredModels.some((m: ModelInfo) => m.id === row.model) && row.model && (
                                 <option value={row.model}>{row.model}</option>
                               )}
-                              {discoveredModels.map(m => (
+                              {discoveredModels.map((m: ModelInfo) => (
                                 <option key={m.id} value={m.id}>
                                   {m.name || m.id}
                                 </option>

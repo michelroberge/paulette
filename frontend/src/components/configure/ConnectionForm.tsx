@@ -19,7 +19,7 @@
  * Architecture: ARCH-v0.2.0-024, SCR-009
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import type { CSSProperties } from 'react';
 import type { Connection, ConnectionInput, ModelInfo, ProviderType } from '../../types/provider';
 import {
@@ -134,9 +134,11 @@ export function ConnectionForm({ connection, onSaved, onClose, onCredentialsSave
 
   const [testStatus, setTestStatus] = useState<TestStatus>('idle');
   const [testError, setTestError] = useState('');
-  const [discoveredModels, setDiscoveredModels] = useState<ModelInfo[]>(
-    connection?.discoveredModels ?? [],
-  );
+  // Discovered models are populated only by the Test Connection button.
+  // The backend's ConnectionResponse never returns stored model lists, so we
+  // cannot pre-populate this from the connection prop in edit mode — the user
+  // must re-run Test Connection to get the dropdown.
+  const [discoveredModels, setDiscoveredModels] = useState<ModelInfo[]>([]);
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -158,13 +160,6 @@ export function ConnectionForm({ connection, onSaved, onClose, onCredentialsSave
     setTestError('');
     setDiscoveredModels([]);
   }, []);
-
-  // Sync discoveredModels from connection prop on first render (edit mode)
-  useEffect(() => {
-    if (connection?.discoveredModels?.length) {
-      setDiscoveredModels(connection.discoveredModels);
-    }
-  }, [connection]);
 
   // ── Test Connection ─────────────────────────────────────────────────────────
 
@@ -211,7 +206,13 @@ export function ConnectionForm({ connection, onSaved, onClose, onCredentialsSave
       setSaveError('Base URL is required for this provider.');
       return;
     }
-    if (providerNeedsApiKey(form.providerType) && !isEdit && !form.apiKey.trim()) {
+    // Allow skipping the key field only when editing an existing credential-bearing
+    // connection AND the user has not entered a replacement key.  Using `!isEdit`
+    // was too broad: it let a user open an Ollama connection (no credentials),
+    // switch the provider type to OpenAI/Anthropic/Gemini, and save without ever
+    // supplying an API key.
+    const hasExistingCreds = isEdit && connection?.hasCredentials && !form.apiKey.trim();
+    if (providerNeedsApiKey(form.providerType) && !hasExistingCreds && !form.apiKey.trim()) {
       setSaveError('API key is required for this provider.');
       return;
     }
@@ -535,6 +536,9 @@ const SLIDE_IN_STYLE = `
 @keyframes cf-slide-in {
   from { transform: translateX(100%); }
   to   { transform: translateX(0); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 `;
 

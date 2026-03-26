@@ -268,6 +268,13 @@ export function ConnectionsTab({ highlight, clearHighlight }: ConnectionsTabProp
       return [...prev, saved];
     });
     closeForm();
+    // Direct call-site hook for IACT-009: show the credential warning toast
+    // whenever the saved connection carries API credentials.  This fires even
+    // if `onCredentialsSaved` in ConnectionForm didn't trigger (e.g. a future
+    // refactor), and also covers any save path that ends up here.
+    if (saved.hasCredentials) {
+      setShowCredToast(true);
+    }
   }, [closeForm]);
 
   // ── Delete handlers ─────────────────────────────────────────────────────────
@@ -317,14 +324,11 @@ export function ConnectionsTab({ highlight, clearHighlight }: ConnectionsTabProp
     try {
       const result = await testConnection(conn.id);
       setTestStates(prev => ({ ...prev, [conn.id]: { loading: false, result } }));
-      // If model discovery succeeded, update the connection's discoveredModels
-      if (result.success && result.models && result.models.length > 0) {
-        setConnections(prev =>
-          prev.map(c =>
-            c.id === conn.id ? { ...c, discoveredModels: result.models } : c,
-          ),
-        );
-      }
+      // Note: we intentionally do NOT merge result.models back onto the connection
+      // object.  The backend ConnectionResponse never returns a model list, so
+      // `discoveredModels` has no backend backing and adding it as a frontend-only
+      // property would be misleading — users must re-run Test Connection inside the
+      // Edit form to get the model dropdown populated.
     } catch (err) {
       setTestStates(prev => ({
         ...prev,
