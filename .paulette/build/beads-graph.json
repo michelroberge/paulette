@@ -275,7 +275,7 @@
       "title": "Create provider/anthropic.go — Anthropic API provider",
       "description": "Implement Anthropic API provider using POST /v1/messages with typed SSE events (content_block_delta, message_stop). Set x-api-key and anthropic-version headers. ListModels returns hardcoded list. TestConnection sends minimal 1-token request.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-8qp",
       "deps": [
@@ -296,7 +296,7 @@
       "archRefs": [
         "ARCH-v0.2.0-015"
       ],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "2cd825705e6512acb8c96ce721525c09f25e0d80"
     },
     {
       "id": "paulette-9jo",
@@ -731,7 +731,7 @@
       "title": "Create ConnectionsTab.tsx — Connection list with actions",
       "description": "Connection list with provider badges, Add/Edit/Delete/Test actions, empty state. Connections fetched on mount. Provider badges colour-coded. Add Connection opens form. Edit pre-fills form. Delete shows confirmation with affected stages. ?highlight= causes matching card to pulse with ring-2 ring-red-400. Empty state with plug icon.",
       "type": "task",
-      "status": "in_progress",
+      "status": "reviewing",
       "priority": 1,
       "epicId": "paulette-1kh",
       "deps": [
@@ -806,7 +806,8 @@
       "archRefs": [
         "ARCH-v0.2.0-025"
       ],
-      "preExecutionCommit": "6f82803fe117e911ee905962b2d74af0c3d649f7"
+      "preExecutionCommit": "6f82803fe117e911ee905962b2d74af0c3d649f7",
+      "postExecutionCommit": "2cd825705e6512acb8c96ce721525c09f25e0d80"
     },
     {
       "id": "paulette-bxp",
