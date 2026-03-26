@@ -11,7 +11,9 @@ frontend/dist/
 backend/static/
 backend/tmp/
 paulette
+paulette_test
 paulette.exe
+paulette_test.exe
 repos/
 
 # Docker

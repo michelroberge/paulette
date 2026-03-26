@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"io/fs"
 	"log"
@@ -18,6 +19,9 @@ import (
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/server"
 )
+
+//go:embed all:static
+var staticFiles embed.FS
 
 func main() {
 	if len(os.Args) > 1 {

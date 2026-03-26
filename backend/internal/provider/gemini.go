@@ -176,7 +176,7 @@ func (p *GeminiProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
 
 	// Convert history turns (model.Message.Role is "user" or "assistant").
 	for _, msg := range req.History {
-		role := msg.Role
+		role := string(msg.Role)
 		if role == "assistant" {
 			role = "model" // Gemini uses "model", not "assistant"
 		}

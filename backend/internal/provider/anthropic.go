@@ -228,7 +228,7 @@ func (p *AnthropicProvider) buildChatRequest(req ChatRequest, maxTokens int, str
 	msgs := make([]anthropicMessage, 0, len(req.History)+1)
 
 	for _, m := range req.History {
-		role := m.Role
+		role := string(m.Role)
 		if role == "assistant" {
 			// Anthropic uses "assistant"; most of our history already uses this
 			// but guard against alternative conventions.

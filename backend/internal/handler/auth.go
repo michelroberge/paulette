@@ -129,7 +129,10 @@ func (h *AuthHandler) checkStatus() authStatus {
 	if err != nil {
 		return authStatus{}
 	}
+
 	creds := filepath.Join(home, ".claude", ".credentials.json")
+	fmt.Printf("Claude credentials path: %s\n", creds)
+
 	data, err := os.ReadFile(creds)
 	if err != nil {
 		return authStatus{}
@@ -268,12 +271,26 @@ func (h *AuthHandler) LoginInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse "CODE#STATE" — split on first '#'.
-	code, state, ok := strings.Cut(input, "#")
-	if !ok || code == "" {
-		// No '#' — treat the whole input as the code with no state verification.
-		code = input
-		state = sess.state // pretend it matches
+	// Parse the pasted input — accept two forms:
+	//   1. Full redirect URL "https://...?code=X&state=Y" — user copied from browser address bar
+	//   2. "CODE#STATE" or bare "CODE" — code shown on callback page
+	var code, state string
+	if strings.HasPrefix(input, "http") {
+		if u, err := url.Parse(input); err == nil {
+			code = u.Query().Get("code")
+			state = u.Query().Get("state")
+			if state == "" {
+				state = sess.state
+			}
+		}
+	}
+	if code == "" {
+		var ok bool
+		code, state, ok = strings.Cut(input, "#")
+		if !ok || code == "" {
+			code = input
+			state = sess.state
+		}
 	}
 
 	fmt.Printf("[auth] LoginInput: code=%q state=%q expectedState=%q\n", code, state, sess.state)

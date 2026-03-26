@@ -10,7 +10,7 @@
       "status": "open",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
     },
     {
       "id": "paulette-nq0",
@@ -158,7 +158,7 @@
       "status": "open",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
     },
     {
       "id": "paulette-09e",
@@ -376,7 +376,7 @@
       "status": "open",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
     },
     {
       "id": "paulette-d6n",
@@ -493,7 +493,8 @@
       "archRefs": [
         "ARCH-v0.2.0-001"
       ],
-      "preExecutionCommit": "110a5e476e500bafd69510a84763098427b9bccb"
+      "preExecutionCommit": "110a5e476e500bafd69510a84763098427b9bccb",
+      "postExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
     },
     {
       "id": "paulette-msz",
@@ -560,7 +561,7 @@
       "status": "open",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
     },
     {
       "id": "paulette-kh9",
@@ -702,7 +703,7 @@
       "archRefs": [
         "ARCH-v0.2.0-033"
       ],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
     },
     {
       "id": "paulette-1kh",
@@ -970,17 +971,17 @@
       "title": "Integration Testing \u0026 Polish",
       "description": "End-to-end validation, edge case handling, and regression testing",
       "type": "epic",
-      "status": "in_progress",
+      "status": "open",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "f5337addc971fa58100a9c29987adf0e0d518781"
+      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
     },
     {
       "id": "paulette-26w",
       "title": "Verify Claude CLI fallback — Zero regression test",
       "description": "Confirm that with no connections.json or config.json, the pipeline works identically to v0.1.0. New project → Vision stage fires with Claude Sonnet via CLI; Architecture fires with Claude Opus; no configuration required.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 0,
       "epicId": "paulette-65f",
       "deps": [
@@ -996,7 +997,8 @@
         "JRN-v0.1.0-003",
         "JRN-v0.1.0-004",
         "JRN-v0.1.0-005"
-      ]
+      ],
+      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
     },
     {
       "id": "paulette-yq8",
@@ -1077,7 +1079,7 @@
       "title": "Verify chmod 600 on connections.json",
       "description": "Confirm file permissions on every save operation. stat ~/.paulette/connections.json shows 0600 permissions after create, update, and delete operations.",
       "type": "task",
-      "status": "in_progress",
+      "status": "open",
       "priority": 2,
       "epicId": "paulette-65f",
       "deps": [
@@ -1090,7 +1092,7 @@
       "archRefs": [
         "ARCH-v0.2.0-018"
       ],
-      "preExecutionCommit": "c2ef67257457257b583f5429fe0eb8dd2990f38f"
+      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
     },
     {
       "id": "paulette-iza",

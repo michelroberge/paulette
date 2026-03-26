@@ -171,11 +171,9 @@ export function ProjectList({ onSelect, onConfigure }: Props) {
       await sendLoginCode(loginCode.trim());
       setLoginCodeSent(true);
       setLoginCode('');
-      // Close the SSE stream — no longer needed once code is submitted.
-      // Then poll auth status directly, since the SSE done event can be
-      // lost if the connection drops while the CLI exchanges the token.
-      loginCleanup.current?.();
-      loginCleanup.current = null;
+      // Keep the SSE stream open — the backend will send a "done" or "error"
+      // event once the token exchange completes.  Poll as a fallback in case
+      // the SSE connection drops before that event arrives.
       let attempts = 0;
       authPollTimer.current = setInterval(() => {
         attempts++;
@@ -183,11 +181,15 @@ export function ProjectList({ onSelect, onConfigure }: Props) {
           if (status.authenticated) {
             clearInterval(authPollTimer.current!);
             authPollTimer.current = null;
+            loginCleanup.current?.();
+            loginCleanup.current = null;
             setAuthStatus(status);
             setShowLoginPanel(false);
           } else if (attempts >= 30) {
             clearInterval(authPollTimer.current!);
             authPollTimer.current = null;
+            loginCleanup.current?.();
+            loginCleanup.current = null;
             setLoginError('Authentication timed out — please try again.');
             setLoginCodeSent(false);
           }

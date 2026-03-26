@@ -120,6 +120,28 @@
       "inputTokens": 0,
       "outputTokens": 0,
       "totalTokens": 4357
+    },
+    {
+      "id": "4b6a1e04-4caa-4433-9284-a5144a39dafe",
+      "stage": "build",
+      "kind": "skills-observe",
+      "iteration": 2,
+      "startedAt": "2026-03-26T12:54:20.687281642Z",
+      "endedAt": "2026-03-26T13:25:52.442127092Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 6008
+    },
+    {
+      "id": "5e71d255-94bf-4f1e-9ad3-7496b9cb12e6",
+      "stage": "build",
+      "kind": "beads-execute",
+      "iteration": 2,
+      "startedAt": "2026-03-26T14:46:30.829466516Z",
+      "endedAt": "2026-03-26T15:08:46.46234451Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 40102
     }
   ]
 }

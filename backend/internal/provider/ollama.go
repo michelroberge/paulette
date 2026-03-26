@@ -166,7 +166,7 @@ func (p *OllamaProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
 	}
 
 	for _, m := range req.History {
-		role := m.Role
+		role := string(m.Role)
 		// The pipeline uses "assistant"; Ollama expects "assistant" as well, so
 		// no translation is needed. Guard against unexpected role values by
 		// passing them through unchanged — Ollama will reject unknown roles
