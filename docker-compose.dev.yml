@@ -1,0 +1,60 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      # Source code — changes on host trigger air rebuild
+      - ./backend:/app/backend
+      # Shadow backend/tmp with a Docker volume so air (running as paulette) can write
+      # the compiled binary without hitting the host-file ownership mismatch on Windows
+      - backend-tmp:/app/backend/tmp
+      # Cache Go module downloads across rebuilds (GOPATH=/go in the golang image)
+      - go-modules:/go/pkg/mod
+      # Persist paulette runtime data (same as production)
+      - registry-data:/home/paulette/.paulette
+      - repos-data:/home/paulette/repos
+      - ./:/home/paulette/repos/paulette
+      - beads-data:/home/paulette/.beads
+      - ~/.claude/.credentials.json:/home/paulette/.claude/.credentials.json:ro
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      REGISTRY_PATH: /home/paulette/.paulette
+      REPOS_PATH: /home/paulette/repos
+      CLAUDE_PATH: claude
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+
+  frontend:
+    image: node:22-bookworm-slim
+    volumes:
+      # Source code — Vite HMR picks up changes instantly
+      - ./frontend:/app/frontend
+      # Separate volume for node_modules so host node_modules don't shadow container's
+      - frontend-modules:/app/frontend/node_modules
+    working_dir: /app/frontend
+    ports:
+      - "5173:5173"
+    environment:
+      # Vite proxy forwards /api to this URL (resolved inside the Docker network)
+      BACKEND_URL: "http://backend:8080"
+    # Install deps if needed, then start Vite dev server bound to all interfaces
+    command: sh -c "npm install && npm run dev -- --host"
+    depends_on:
+      - backend
+
+volumes:
+  backend-tmp:
+  go-modules:
+  frontend-modules:
+  # Reuse the same named volumes as production so repos and settings are shared
+  registry-data:
+    external: true
+    name: paulette_registry-data
+  repos-data:
+    external: true
+    name: paulette_repos-data
+  beads-data:
+    external: true
+    name: paulette_beads-data

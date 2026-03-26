@@ -142,7 +142,7 @@ export function useBeadDetail(projectId: string) {
     setInstructStreamingContent('');
   }, []);
 
-  const doControl = useCallback(async (beadId: string, action: 'pause' | 'restart') => {
+  const doControl = useCallback(async (beadId: string, action: 'pause' | 'restart' | 'close') => {
     await controlBead(projectId, beadId, action);
     await loadDetail(beadId);
   }, [projectId, loadDetail]);

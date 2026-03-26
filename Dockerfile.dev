@@ -1,0 +1,53 @@
+# Dev image: Go + Node + air + all runtime tools
+# Source is mounted as a volume — no build step. Changes on the host are reflected immediately.
+# Usage: docker compose -f docker-compose.dev.yml up --build
+FROM golang:1.26-bookworm
+
+# Install Node 22, system deps, air, and Docker-only runtime deps
+# In the official golang image GOPATH=/go, so air lands at /go/bin/air
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends \
+        nodejs \
+        git \
+        curl \
+        ca-certificates \
+        openssh-client \
+        gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && go install github.com/air-verse/air@latest \
+    && cp /go/bin/air /usr/local/bin/air \
+    && curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash \
+    && npm install -g @anthropic-ai/claude-code \
+    && (npm install -g @beads/bd 2>/dev/null || curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash) \
+    && bd --version \
+    && (curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh || echo "rtk install skipped (optional)")
+
+COPY entrypoint.dev.sh /entrypoint.dev.sh
+RUN chmod +x /entrypoint.dev.sh && \
+    useradd -m -s /bin/bash paulette && \
+    mkdir -p /home/paulette/.paulette /home/paulette/repos /home/paulette/.claude && \
+    printf '%s' \
+        '{"permissions":{"allow":[' \
+        '"Write(/home/paulette/repos/**)",' \
+        '"Edit(/home/paulette/repos/**)",' \
+        '"Bash(*)",' \
+        '"Read(/home/paulette/repos/**)"' \
+        ']}}' \
+        > /home/paulette/.claude/settings.json && \
+    chown -R paulette:paulette /home/paulette/.paulette \
+                               /home/paulette/repos \
+                               /home/paulette/.claude && \
+    su paulette -c "git config --global --add safe.directory '*'" && \
+    # Allow paulette to write to the Go module cache (/go is GOPATH in the golang image)
+    mkdir -p /go/pkg/mod && chown -R paulette:paulette /go
+
+ENV HOME=/home/paulette \
+    REGISTRY_PATH=/home/paulette/.paulette \
+    REPOS_PATH=/home/paulette/repos \
+    CLAUDE_PATH=claude \
+    PORT=8080
+
+WORKDIR /app/backend
+EXPOSE 8080
+
+ENTRYPOINT ["/entrypoint.dev.sh"]
