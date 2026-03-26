@@ -1006,7 +1006,7 @@
       "title": "Test Ollama end-to-end",
       "description": "Create Ollama connection, assign to all stages, run full pipeline. User with no Claude CLI can complete a full pipeline using Ollama alone. Connection test passes in \u003c3s for local Ollama.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-65f",
       "deps": [
@@ -1017,7 +1017,8 @@
       ],
       "journeyRefs": [
         "JRN-v0.2.0-001"
-      ]
+      ],
+      "preExecutionCommit": "d05db573e2d62aae625c2931d5bddba0b695a3db"
     },
     {
       "id": "paulette-951",
@@ -1080,7 +1081,7 @@
       "title": "Verify chmod 600 on connections.json",
       "description": "Confirm file permissions on every save operation. stat ~/.paulette/connections.json shows 0600 permissions after create, update, and delete operations.",
       "type": "task",
-      "status": "open",
+      "status": "reviewing",
       "priority": 2,
       "epicId": "paulette-65f",
       "deps": [
@@ -1093,7 +1094,7 @@
       "archRefs": [
         "ARCH-v0.2.0-018"
       ],
-      "preExecutionCommit": "d1a81fbc0db6f516fdabd6b2ec81fd7a77e0edc3"
+      "preExecutionCommit": "d05db573e2d62aae625c2931d5bddba0b695a3db"
     },
     {
       "id": "paulette-iza",
