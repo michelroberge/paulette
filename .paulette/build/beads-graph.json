@@ -383,7 +383,7 @@
       "title": "Create handler/connection.go — Connection CRUD and test handlers",
       "description": "Implement Connection CRUD handlers (List, Create, Get, Update, Delete), Test/TestNew, ListModels/ListModelsNew. List/Get redact credentials (return ConnectionResponse). Create assigns UUID and timestamps. Delete calls ClearConnectionReferences and returns affected stages. Test/TestNew call provider.TestConnection() and optionally ListModels() in parallel. All errors return structured JSON.",
       "type": "task",
-      "status": "in_progress",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
@@ -517,7 +517,8 @@
       "archRefs": [
         "ARCH-v0.2.0-006"
       ],
-      "preExecutionCommit": "538d60002e736439d4b79198b8c45fdfa904b48f"
+      "preExecutionCommit": "538d60002e736439d4b79198b8c45fdfa904b48f",
+      "postExecutionCommit": "6761587adb33837a2d0f4100a279684c4fe19204"
     },
     {
       "id": "paulette-1yw",
@@ -702,10 +703,10 @@
       "title": "Frontend Configure Page \u0026 Components",
       "description": "Build the full Configure Paulette UI — Connections tab, Connection form, Stage Defaults tab, Project Stage Settings panel, and error/toast components",
       "type": "epic",
-      "status": "open",
+      "status": "reviewing",
       "priority": 2,
       "deps": [],
-      "preExecutionCommit": "8a803a6f667459dd1d47dc8caf8c37e119615c86"
+      "preExecutionCommit": "6761587adb33837a2d0f4100a279684c4fe19204"
     },
     {
       "id": "paulette-g1c",

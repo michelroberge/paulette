@@ -118,6 +118,14 @@ func (r *Registry) ForConnection(connectionID string) (Provider, error) {
 	return r.providerForConnection(conn)
 }
 
+// ForUnsavedConnection instantiates a Provider for the given Connection record
+// without requiring it to be persisted in the ConnectionStore first. This is
+// used by the Test and ListModels endpoints to probe an unsaved connection
+// configuration before the user commits it.
+func (r *Registry) ForUnsavedConnection(conn *Connection) (Provider, error) {
+	return r.providerForConnection(conn)
+}
+
 // providerForConnection instantiates the correct Provider implementation for
 // the given Connection. Each case is wired as provider implementations are
 // added in Milestone 2 (tasks 2.1–2.7).
