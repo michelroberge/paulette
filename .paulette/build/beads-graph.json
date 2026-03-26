@@ -16,7 +16,7 @@
       "title": "Create provider/provider.go — Provider interface and Registry",
       "description": "Define Provider interface (Chat, TestConnection, ListModels), ChatRequest, ModelInfo, StreamEvent re-export, ErrModelListUnsupported, and Registry struct with ForConnection() and ResolveForStage() methods. ResolveForStage implements 3-level fallback (project override → global default → Claude CLI hardcoded).",
       "type": "task",
-      "status": "in_progress",
+      "status": "reviewing",
       "priority": 0,
       "epicId": "paulette-6hc",
       "deps": [],
@@ -60,7 +60,8 @@
       "archRefs": [
         "ARCH-v0.2.0-018"
       ],
-      "preExecutionCommit": "f0a8dc84f12edd3986fd731f30e651edb11752a4"
+      "preExecutionCommit": "f0a8dc84f12edd3986fd731f30e651edb11752a4",
+      "postExecutionCommit": "4aaf93c137ad0c91f2e2e1c6c58b42ed98ec1b4b"
     },
     {
       "id": "paulette-mnv",
@@ -555,7 +556,7 @@
       "title": "Create types/provider.ts — TypeScript provider types",
       "description": "Define TypeScript types for ProviderType, Connection, ConnectionInput, ModelInfo, TestResult, DeleteResult, StageAssignment, GlobalStageConfig, ProjectStageConfig. All types match backend API contract. Connection has hasCredentials (not apiKey). ConnectionInput has apiKey for create/update only.",
       "type": "task",
-      "status": "open",
+      "status": "closed",
       "priority": 1,
       "epicId": "paulette-59p",
       "deps": [],
@@ -576,7 +577,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-031"
-      ]
+      ],
+      "preExecutionCommit": "4aaf93c137ad0c91f2e2e1c6c58b42ed98ec1b4b"
     },
     {
       "id": "paulette-77p",
