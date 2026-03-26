@@ -197,6 +197,202 @@
         "paulette-nq0",
         "paulette-kuo"
       ]
+    },
+    {
+      "name": "Go OpenAI-Compat Delegating Provider",
+      "description": "Generates a Go provider struct that satisfies a Provider interface by delegating all three methods (Chat, TestConnection, ListModels) to shared openai_compat* helper functions. Parameterises auth strategy (none, Bearer token, custom headers), required vs. defaulted base URL, and any extra HTTP headers (e.g. OpenAI-Organization). Produces zero streaming logic — the compat layer handles that.",
+      "category": "backend",
+      "tags": [
+        "go",
+        "llm",
+        "provider",
+        "openai-compat",
+        "delegation",
+        "api",
+        "adapter"
+      ],
+      "parameters": [
+        {
+          "name": "providerName",
+          "description": "Pascal-case name for the provider struct, e.g. OpenAI, LMStudio"
+        },
+        {
+          "name": "authStrategy",
+          "description": "One of: none | bearer | custom. 'bearer' adds Authorization header; 'custom' lets you specify header name/value pairs",
+          "default": "bearer"
+        },
+        {
+          "name": "defaultBaseURL",
+          "description": "Hard-coded default base URL, or empty string if the caller must supply one"
+        },
+        {
+          "name": "extraHeaders",
+          "description": "Comma-separated list of optional HTTP header names to forward from connection config, e.g. OpenAI-Organization,OpenAI-Project"
+        },
+        {
+          "name": "compatPackage",
+          "description": "Import path / package alias that exposes openAICompatChat, openAICompatTestConnection, openAICompatListModels"
+        }
+      ],
+      "promptTemplate": "Create provider/{{snakeCase providerName}}.go — {{providerName}} provider.\n\nRequirements:\n- Define a struct `{{providerName}}Provider` with fields for base URL{{#if extraHeaders}}, {{extraHeaders}}{{/if}}{{#if (eq authStrategy 'bearer')}}, and API key{{/if}}.\n- Implement the Provider interface with three methods: Chat, TestConnection, ListModels — each must delegate entirely to the corresponding `openAICompat*` function from `{{compatPackage}}`.\n- Auth strategy: {{authStrategy}}.{{#if (eq authStrategy 'bearer')}} Add an `Authorization: Bearer {apiKey}` header.{{/if}}{{#if (eq authStrategy 'none')}} Send no auth header.{{/if}}\n- Base URL: {{#if defaultBaseURL}}default to `{{defaultBaseURL}}` but allow override from connection config.{{else}}must be supplied by the caller; return an error if empty.{{/if}}\n{{#if extraHeaders}}- Forward these optional headers when non-empty: {{extraHeaders}}.{{/if}}\n- No streaming logic lives in this file; the compat layer owns that.\n- Follow the same struct/constructor pattern used by sibling providers in the provider/ package.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-xfq",
+        "paulette-cu1"
+      ]
+    },
+    {
+      "name": "Go Provider Registry Factory Method",
+      "description": "Generates a Registry.ForConnection() (or equivalent factory) method in Go that reads a ProviderType discriminator field from a Connection struct and returns the correct concrete provider, covering all active types, returning typed errors for unsupported/unknown types. Follows a switch-on-enum pattern and wires in auth/config from the connection.",
+      "category": "backend",
+      "tags": [
+        "go",
+        "provider",
+        "factory",
+        "registry",
+        "switch",
+        "dependency-injection",
+        "api"
+      ],
+      "parameters": [
+        {
+          "name": "receiverType",
+          "description": "The registry/manager struct that owns the factory method, e.g. Registry",
+          "default": "Registry"
+        },
+        {
+          "name": "methodName",
+          "description": "Name of the factory method, e.g. ForConnection",
+          "default": "ForConnection"
+        },
+        {
+          "name": "connectionType",
+          "description": "The struct type passed in, e.g. Connection",
+          "default": "Connection"
+        },
+        {
+          "name": "providerInterface",
+          "description": "The interface the returned value satisfies, e.g. Provider",
+          "default": "Provider"
+        },
+        {
+          "name": "providerTypes",
+          "description": "Comma-separated list of ProviderType enum values to handle, e.g. openai,anthropic,ollama,lmstudio,gemini,mistral"
+        },
+        {
+          "name": "unsupportedTypes",
+          "description": "Comma-separated list of known-but-not-yet-supported types that should return a descriptive 'not yet supported' error"
+        }
+      ],
+      "promptTemplate": "Implement `{{receiverType}}.{{methodName}}(conn {{connectionType}}) ({{providerInterface}}, error)` — provider factory method.\n\nRequirements:\n- Switch on `conn.ProviderType`.\n- For each active type in [{{providerTypes}}], instantiate the corresponding concrete provider struct, passing auth credentials and config from `conn`.\n- For each known-but-unsupported type in [{{unsupportedTypes}}], return `nil, fmt.Errorf(\"\u003ctype\u003e: not yet supported\")`.\n- For any other value, return `nil, fmt.Errorf(\"unknown provider type: %s\", conn.ProviderType)`.\n- Keep each case minimal — construction only, no business logic.\n- Import only the provider sub-package; do not duplicate provider logic here.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-t23",
+        "paulette-xfq",
+        "paulette-cu1"
+      ]
+    },
+    {
+      "name": "React Auto-Dismiss Toast Notification",
+      "description": "Generates a self-contained React/TypeScript toast component with: fixed viewport positioning, a colour theme (info/success/warning/error mapped to Tailwind classes), auto-dismiss after a configurable timeout with a CSS fade-out transition, an optional manual close button, and a visibility predicate prop so the parent controls when it appears.",
+      "category": "frontend",
+      "tags": [
+        "react",
+        "typescript",
+        "toast",
+        "notification",
+        "tailwind",
+        "auto-dismiss",
+        "ui"
+      ],
+      "parameters": [
+        {
+          "name": "componentName",
+          "description": "PascalCase component filename, e.g. CredentialWarningToast",
+          "default": "Toast"
+        },
+        {
+          "name": "defaultVariant",
+          "description": "Default colour variant: info | success | warning | error",
+          "default": "warning"
+        },
+        {
+          "name": "dismissAfterMs",
+          "description": "Auto-dismiss delay in milliseconds",
+          "default": "5000"
+        },
+        {
+          "name": "position",
+          "description": "Viewport anchor: bottom-right | bottom-left | top-right | top-left | top-center | bottom-center",
+          "default": "bottom-right"
+        },
+        {
+          "name": "showCloseButton",
+          "description": "Whether to render a manual × close button alongside the auto-dismiss",
+          "default": "true"
+        },
+        {
+          "name": "visibilityProp",
+          "description": "Name of the boolean prop that controls visibility, e.g. show, visible, isOpen",
+          "default": "show"
+        }
+      ],
+      "promptTemplate": "Create {{componentName}}.tsx — auto-dismiss toast notification.\n\nRequirements:\n- Functional React component written in TypeScript.\n- Props: `{{visibilityProp}}: boolean`, `message: string`, optional `variant?: 'info'|'success'|'warning'|'error'` (default `{{defaultVariant}}`), optional `onDismiss?: () =\u003e void`.\n- Position: fixed, {{position}}, with a comfortable margin from the viewport edge.\n- Colour mapping via Tailwind: warning → yellow, error → red, success → green, info → blue backgrounds/borders.\n- Auto-dismiss: use `useEffect` to start a `setTimeout({{dismissAfterMs}})` whenever `{{visibilityProp}}` becomes true; clear the timer on cleanup. Trigger fade-out CSS transition before calling `onDismiss`.\n{{#if showCloseButton}}- Render a small × button that calls `onDismiss` immediately.{{/if}}\n- Do not manage visibility state internally — the parent owns it via `{{visibilityProp}}`.\n- Export the component as the default export.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-n0i"
+      ]
+    },
+    {
+      "name": "React Header Icon Button with State Indicator",
+      "description": "Adds an icon button to an existing React header/toolbar component, with: a Tailwind ring/accent that reflects a boolean 'has overrides/changes' state, a tooltip, and an onClick handler that opens a settings panel or modal. Follows the pattern of augmenting an existing component file with minimal diff.",
+      "category": "frontend",
+      "tags": [
+        "react",
+        "typescript",
+        "tailwind",
+        "header",
+        "icon-button",
+        "tooltip",
+        "indicator",
+        "ui"
+      ],
+      "parameters": [
+        {
+          "name": "targetComponent",
+          "description": "Filename of the existing component to modify, e.g. ProjectHeader.tsx"
+        },
+        {
+          "name": "iconCharOrComponent",
+          "description": "Icon to render — unicode character (e.g. ⚙), emoji, or imported icon component name",
+          "default": "⚙"
+        },
+        {
+          "name": "tooltipText",
+          "description": "Text shown in the title/tooltip attribute",
+          "default": "Settings"
+        },
+        {
+          "name": "indicatorStateProp",
+          "description": "Boolean prop/variable name that, when true, activates the accent ring",
+          "default": "hasOverrides"
+        },
+        {
+          "name": "activeRingClass",
+          "description": "Tailwind classes applied when indicatorStateProp is true, e.g. ring-2 ring-yellow-400",
+          "default": "ring-2 ring-yellow-400"
+        },
+        {
+          "name": "onClickHandler",
+          "description": "What the button does when clicked, e.g. opens a panel, sets a state variable, calls a callback prop",
+          "default": "opens a settings panel"
+        }
+      ],
+      "promptTemplate": "Modify {{targetComponent}} — add {{iconCharOrComponent}} icon button with state indicator.\n\nRequirements:\n- Locate the existing header/toolbar JSX and insert a `\u003cbutton\u003e` element at the trailing edge.\n- Render `{{iconCharOrComponent}}` as the button's content.\n- Set `title=\"{{tooltipText}}\"` for native tooltip behaviour.\n- Conditionally apply `{{activeRingClass}}` Tailwind classes when `{{indicatorStateProp}}` is truthy, producing a visible accent ring.\n- onClick: {{onClickHandler}}.\n- Keep the button visually compact (small padding, matching height to sibling elements, no extra margin).\n- Do not alter any existing header logic — add only; do not remove or reorder existing elements.\n- If the open/close state requires a new `useState`, add it with a sensible variable name.",
+      "approved": false,
+      "sourceBeads": [
+        "paulette-peh"
+      ]
     }
   ]
 }

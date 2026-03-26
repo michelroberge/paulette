@@ -383,7 +383,7 @@
       "title": "Create handler/connection.go — Connection CRUD and test handlers",
       "description": "Implement Connection CRUD handlers (List, Create, Get, Update, Delete), Test/TestNew, ListModels/ListModelsNew. List/Get redact credentials (return ConnectionResponse). Create assigns UUID and timestamps. Delete calls ClearConnectionReferences and returns affected stages. Test/TestNew call provider.TestConnection() and optionally ListModels() in parallel. All errors return structured JSON.",
       "type": "task",
-      "status": "open",
+      "status": "in_progress",
       "priority": 1,
       "epicId": "paulette-aza",
       "deps": [
@@ -406,7 +406,8 @@
       ],
       "archRefs": [
         "ARCH-v0.2.0-020"
-      ]
+      ],
+      "preExecutionCommit": "bd88664a162045fab0dad17f9a52d61780235abd"
     },
     {
       "id": "paulette-l1w",
@@ -495,7 +496,7 @@
       "title": "Modify handler/chat.go — Route through provider layer",
       "description": "Replace direct agent.Chat() call with registry.ResolveForStage() → provider.Chat(). Emit structured error StreamEvent on provider failure. stageModels map remains as fallback. StartChatRun resolves provider + model via registry. Connection errors produce StreamEvent{Type: error} with connection name and reason. Existing Claude CLI path still works when no config exists.",
       "type": "task",
-      "status": "in_progress",
+      "status": "reviewing",
       "priority": 0,
       "epicId": "paulette-aza",
       "deps": [
@@ -873,7 +874,8 @@
       "archRefs": [
         "ARCH-v0.2.0-034"
       ],
-      "preExecutionCommit": "cdebac13a4561c665fab042943533505886a2de2"
+      "preExecutionCommit": "cdebac13a4561c665fab042943533505886a2de2",
+      "postExecutionCommit": "bd88664a162045fab0dad17f9a52d61780235abd"
     },
     {
       "id": "paulette-3gw",
