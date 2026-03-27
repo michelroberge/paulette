@@ -20,9 +20,10 @@ interface Props {
   agentActive?: boolean;
   agentOperation?: string;
   agentStreamingText?: string;
+  hideGenerateButton?: boolean;
 }
 
-export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, onExecutionComplete, onBuildDone, onHasBeads, agentActive, agentOperation, agentStreamingText }: Props) {
+export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, onExecutionComplete, onBuildDone, onHasBeads, agentActive, agentOperation, agentStreamingText, hideGenerateButton }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [maxParallel, setMaxParallel] = useState(2);
@@ -168,7 +169,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
           artifactExists ? (
             <div className="artifact-content">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactContent}</ReactMarkdown>
-              {!hasBeads && !isGenerating && (
+              {!hasBeads && !isGenerating && !hideGenerateButton && (
                 <div style={{ padding: '1rem', borderTop: '1px solid #334155', display: 'flex', justifyContent: 'center' }}>
                   <button
                     className="generate-mock-button"

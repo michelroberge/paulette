@@ -1,22 +1,30 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 )
 
 // XML envelope tag names used in all Claude responses.
 const (
-	TagResponse   = "response"
 	TagDiscussion = "discussion"
 	TagArtifact   = "artifact"
 	TagHTML       = "htmlcontent"
 	TagJSON       = "jsonplan"
 )
 
-// maxTagLen is the length of the longest closing tag we need to buffer.
-// </discussion> = 13 chars
-const maxTagLen = 13
+// Envelope markers used by all Claude response prompts.
+const (
+	markerStart = "<!-- RESPONSE:START -->"
+	markerEnd   = "<!-- RESPONSE:END -->"
+)
+
+// maxTagLen is the length of the longest structural marker we need to buffer.
+// <!-- RESPONSE:START --> = 23 chars
+const maxTagLen = 23
 
 // ParsedResponse holds all extracted sections from a Claude XML envelope.
 type ParsedResponse struct {
@@ -76,21 +84,6 @@ func extractPlainSection(raw, heading string) string {
 		content = content[:next]
 	}
 	return strings.TrimSpace(content)
-}
-
-func extractBetweenMarkers(s, start, end string) string {
-	si := strings.Index(s, start)
-	if si < 0 {
-		return ""
-	}
-	si += len(start)
-
-	ei := strings.LastIndex(s, end)
-	if ei <= si {
-		return ""
-	}
-
-	return strings.TrimSpace(s[si:ei])
 }
 
 // extractBetween returns trimmed content between open and close tags.
@@ -208,9 +201,9 @@ func (f *StreamFilter) streamable() bool {
 // transition checks whether tag is a known structural tag and returns the new state.
 func (f *StreamFilter) transition(tag string) (streamFilterState, bool) {
 	switch tag {
-	case "<" + TagResponse + ">":
+	case markerStart:
 		return sfInRoot, true
-	case "</" + TagResponse + ">":
+	case markerEnd:
 		return sfBeforeRoot, true
 	case "<" + TagDiscussion + ">":
 		return sfInDiscussion, true
@@ -261,4 +254,151 @@ func repairJSON(input []byte) []byte {
 	}
 
 	return []byte(s)
+}
+
+// validateJSON checks data against a minimal JSON Schema subset.
+// Supported keywords: type, required, properties, items.
+func validateJSON(data []byte, schema []byte) error {
+	var value interface{}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	var sch map[string]interface{}
+	if err := json.Unmarshal(schema, &sch); err != nil {
+		return fmt.Errorf("invalid schema: %w", err)
+	}
+	return validateValue(value, sch, "$")
+}
+
+func validateValue(value interface{}, schema map[string]interface{}, path string) error {
+	if typ, ok := schema["type"].(string); ok {
+		if err := checkJSONType(value, typ, path); err != nil {
+			return err
+		}
+	}
+	if obj, ok := value.(map[string]interface{}); ok {
+		if err := validateRequired(obj, schema, path); err != nil {
+			return err
+		}
+		if err := validateProperties(obj, schema, path); err != nil {
+			return err
+		}
+	}
+	if arr, ok := value.([]interface{}); ok {
+		return validateItems(arr, schema, path)
+	}
+	return nil
+}
+
+func validateRequired(obj map[string]interface{}, schema map[string]interface{}, path string) error {
+	required, ok := schema["required"].([]interface{})
+	if !ok {
+		return nil
+	}
+	for _, r := range required {
+		key, _ := r.(string)
+		if _, exists := obj[key]; !exists {
+			return fmt.Errorf("%s: missing required field %q", path, key)
+		}
+	}
+	return nil
+}
+
+func validateProperties(obj map[string]interface{}, schema map[string]interface{}, path string) error {
+	props, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	for key, propSchema := range props {
+		val, exists := obj[key]
+		if !exists {
+			continue
+		}
+		ps, ok := propSchema.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if err := validateValue(val, ps, path+"."+key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateItems(arr []interface{}, schema map[string]interface{}, path string) error {
+	items, ok := schema["items"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	for i, item := range arr {
+		if err := validateValue(item, items, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkJSONType(value interface{}, typ string, path string) error {
+	switch typ {
+	case "object":
+		if _, ok := value.(map[string]interface{}); !ok {
+			return fmt.Errorf("%s: expected object, got %T", path, value)
+		}
+	case "array":
+		if _, ok := value.([]interface{}); !ok {
+			return fmt.Errorf("%s: expected array, got %T", path, value)
+		}
+	case "string":
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("%s: expected string, got %T", path, value)
+		}
+	case "number", "integer":
+		if _, ok := value.(float64); !ok {
+			return fmt.Errorf("%s: expected number, got %T", path, value)
+		}
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("%s: expected boolean, got %T", path, value)
+		}
+	}
+	return nil
+}
+
+// JSONLLMFixer is called when validateJSON fails after repairJSON.
+// It should invoke an LLM with the invalid JSON and schema, and return the fixed JSON.
+type JSONLLMFixer func(ctx context.Context, invalidJSON []byte, schema []byte) ([]byte, error)
+
+// ParseAndValidateJSON extracts <jsonplan> from raw then runs the full pipeline:
+//  1. repairJSON (already done inside extractJSONPlan)
+//  2. validateJSON against schema
+//  3. IF invalid → fixer(ctx, data, schema)
+//  4. repairJSON again
+//  5. validateJSON again
+//  6. IF still invalid → return error
+//
+// If fixer is nil, steps 3–5 are skipped and the first validation error is returned.
+func ParseAndValidateJSON(ctx context.Context, raw string, schema []byte, fixer JSONLLMFixer) ([]byte, error) {
+	data := extractJSONPlan(raw) // includes repairJSON
+	if data == nil {
+		return nil, fmt.Errorf("no <jsonplan> found in response")
+	}
+
+	if err := validateJSON(data, schema); err == nil {
+		return data, nil
+	} else if fixer == nil {
+		return nil, err
+	}
+
+	fixed, fixErr := fixer(ctx, data, schema)
+	if fixErr != nil {
+		return nil, fmt.Errorf("LLM fix failed: %w", fixErr)
+	}
+
+	fixed = repairJSON(fixed)
+
+	if err := validateJSON(fixed, schema); err != nil {
+		return nil, fmt.Errorf("JSON invalid after LLM fix: %w", err)
+	}
+
+	return fixed, nil
 }

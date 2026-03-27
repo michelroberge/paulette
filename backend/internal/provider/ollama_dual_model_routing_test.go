@@ -33,7 +33,6 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
-
 // ---------------------------------------------------------------------------
 // Test constants
 // ---------------------------------------------------------------------------
@@ -118,7 +117,7 @@ func ollamaDualModelMockServer(t *testing.T) (srv *httptest.Server, lastChatMode
 
 		// Stream a minimal XML-envelope response so the parser stays happy.
 		content := fmt.Sprintf(
-			"<response><discussion>using %s</discussion><artifact>artifact</artifact></response>",
+			"<!-- RESPONSE:START --><discussion>using %s</discussion><artifact>artifact</artifact><!-- RESPONSE:END -->",
 			req.Model,
 		)
 		line, _ := json.Marshal(chunk{Message: msgContent{Role: "assistant", Content: content}})
@@ -271,8 +270,8 @@ func TestOllamaDualModel_AllFiveStages(t *testing.T) {
 	registry, stageConfig, _, projectDir := setupOllamaDualModelConfig(t, srv.URL)
 
 	cases := []struct {
-		stage     model.StageName
-		wantOllama bool   // true → *OllamaProvider; false → *ClaudeCLIProvider
+		stage      model.StageName
+		wantOllama bool // true → *OllamaProvider; false → *ClaudeCLIProvider
 		wantModel  string
 	}{
 		{model.StageVision, true, ollamaVisionUXModel},
@@ -313,8 +312,8 @@ func TestOllamaDualModel_Chat_ReceivesCorrectModel(t *testing.T) {
 	registry, stageConfig, _, projectDir := setupOllamaDualModelConfig(t, srv.URL)
 
 	stages := []struct {
-		stage      model.StageName
-		wantModel  string
+		stage     model.StageName
+		wantModel string
 	}{
 		{model.StageVision, ollamaVisionUXModel},
 		{model.StageArchitecture, ollamaCodeModel},
@@ -608,4 +607,3 @@ func TestOllamaDualModel_IndependentProjects(t *testing.T) {
 		t.Errorf("project B: architecture model = %q, want %q", mB, ollamaVisionUXModel)
 	}
 }
-

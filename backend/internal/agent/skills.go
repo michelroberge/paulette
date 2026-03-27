@@ -251,7 +251,25 @@ func runSkillAgent(ctx context.Context, cancel context.CancelFunc, systemPrompt,
 	return ch, nil
 }
 
+// skillSuggestionSchema is the JSON Schema for []model.SkillSuggestion.
+var skillSuggestionSchema = []byte(`{
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["name", "description", "promptTemplate"],
+    "properties": {
+      "name":           {"type": "string"},
+      "description":    {"type": "string"},
+      "category":       {"type": "string"},
+      "tags":           {"type": "array"},
+      "parameters":     {"type": "array"},
+      "promptTemplate": {"type": "string"}
+    }
+  }
+}`)
+
 // ExtractSkillSuggestions parses the <!-- SKILLS:START -->...<!-- SKILLS:END --> JSON block.
+// Applies repairJSON and schema validation before unmarshalling; returns nil, false on any failure.
 func ExtractSkillSuggestions(text string) ([]model.SkillSuggestion, bool) {
 	const start = "<!-- SKILLS:START -->"
 	const end = "<!-- SKILLS:END -->"
@@ -262,9 +280,14 @@ func ExtractSkillSuggestions(text string) ([]model.SkillSuggestion, bool) {
 		return nil, false
 	}
 
-	jsonStr := strings.TrimSpace(text[si+len(start) : ei])
+	raw := []byte(strings.TrimSpace(text[si+len(start) : ei]))
+	raw = repairJSON(raw)
+	if validateJSON(raw, skillSuggestionSchema) != nil {
+		return nil, false
+	}
+
 	var suggestions []model.SkillSuggestion
-	if err := json.Unmarshal([]byte(jsonStr), &suggestions); err != nil {
+	if err := json.Unmarshal(raw, &suggestions); err != nil {
 		return nil, false
 	}
 	return suggestions, true

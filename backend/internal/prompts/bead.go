@@ -3,13 +3,13 @@ package prompts
 // ParseBuildPlan is the system prompt used when parsing build.md into structured JSON.
 const ParseBuildPlan = `You are a Build Plan Parser for an AI App Factory. Read the build plan and architecture below and extract all milestones and tasks into a structured JSON format.
 
-OUTPUT FORMAT: Wrap in <response>...</response>. Put JSON only in <jsonplan>...</jsonplan>. No discussion.
-<response>
+OUTPUT FORMAT: Wrap in <!-- RESPONSE:START -->...<!-- RESPONSE:END -->. Put JSON only in <jsonplan>...</jsonplan>. No discussion.
+<!-- RESPONSE:START -->
 <jsonplan>{"epics":[...]}</jsonplan>
-</response>
+<!-- RESPONSE:END -->
 
 Example:
-<response>
+<!-- RESPONSE:START -->
 <jsonplan>{
   "epics": [
     {
@@ -30,7 +30,7 @@ Example:
     }
   ]
 }</jsonplan>
-</response>
+<!-- RESPONSE:END -->
 
 Rules:
 - Each milestone in the build plan becomes an epic
@@ -78,8 +78,8 @@ CRITICAL — your final text response determines what happens next. The VERY FIR
 2. If there are real issues: start your <discussion> with a concise bullet list of specific, actionable issues. Do NOT include "LGTM" anywhere.
 
 You may use Bash to inspect files before responding, but your final output must use this format:
-<response>
+<!-- RESPONSE:START -->
 <discussion>LGTM (or bullet list of issues)</discussion>
-</response>
+<!-- RESPONSE:END -->
 
 No preamble, no narration of what you did — just the verdict wrapped in the XML envelope.`

@@ -4,13 +4,13 @@
 // Paulette pipeline using Ollama as the sole LLM backend.
 //
 // Acceptance criteria (JRN-v0.2.0-001):
-//   1. Create Ollama connection and assign to all five pipeline stages.
-//   2. Registry.ResolveForStage returns *OllamaProvider for every stage.
-//   3. OllamaProvider.TestConnection passes in under 3 seconds.
-//   4. OllamaProvider.ListModels correctly parses the GET /api/tags response.
-//   5. OllamaProvider.Chat streams NDJSON chunks and terminates with "done".
-//   6. Chat produces the XML-envelope response format expected by the pipeline parser.
-//   7. Pipeline works correctly even when the claude binary is absent.
+//  1. Create Ollama connection and assign to all five pipeline stages.
+//  2. Registry.ResolveForStage returns *OllamaProvider for every stage.
+//  3. OllamaProvider.TestConnection passes in under 3 seconds.
+//  4. OllamaProvider.ListModels correctly parses the GET /api/tags response.
+//  5. OllamaProvider.Chat streams NDJSON chunks and terminates with "done".
+//  6. Chat produces the XML-envelope response format expected by the pipeline parser.
+//  7. Pipeline works correctly even when the claude binary is absent.
 //
 // All tests use net/http/httptest to mock the Ollama HTTP API — no live
 // Ollama instance is required.
@@ -35,8 +35,9 @@ import (
 
 // ollamaMockServer creates a test HTTP server that mimics the Ollama API.
 // It serves:
-//   GET  /api/tags  → returns the supplied model list
-//   POST /api/chat  → streams the supplied NDJSON chunks then done:true
+//
+//	GET  /api/tags  → returns the supplied model list
+//	POST /api/chat  → streams the supplied NDJSON chunks then done:true
 //
 // Use srv.Close() / t.Cleanup(srv.Close) to shut it down.
 func ollamaMockServer(t *testing.T, models []string, chatChunks []string) *httptest.Server {
@@ -349,8 +350,8 @@ func TestOllamaProvider_Chat_StreamsChunks(t *testing.T) {
 // backend can serve a complete Paulette pipeline run without the claude CLI.
 func TestOllamaProvider_Chat_XMLEnvelopeResponse(t *testing.T) {
 	// The pipeline parser expects responses wrapped in the XML envelope:
-	// <response><discussion>...</discussion><artifact>...</artifact></response>
-	xmlEnvelope := `<response>
+	// <!-- RESPONSE:START --><discussion>...</discussion><artifact>...</artifact><!-- RESPONSE:END -->
+	xmlEnvelope := `<!-- RESPONSE:START -->
 <discussion>Here is the vision document for your project.</discussion>
 <artifact>
 # Project Vision
@@ -363,7 +364,7 @@ A task management application for solo founders.
 - Set priorities and deadlines
 - Progress analytics
 </artifact>
-</response>`
+<!-- RESPONSE:END -->`
 
 	// Split the envelope across multiple chunks to simulate real streaming
 	// behaviour — the parser must handle content arriving piecemeal.
@@ -383,14 +384,14 @@ A task management application for solo founders.
 	assembled := collectAllChunks(t, ch)
 
 	// Verify the response contains the key structural elements.
-	if !strings.Contains(assembled, "<response>") {
-		t.Error("assembled content missing <response> tag")
+	if !strings.Contains(assembled, "<!-- RESPONSE:START -->") {
+		t.Error("assembled content missing <!-- RESPONSE:START --> tag")
 	}
 	if !strings.Contains(assembled, "<artifact>") {
 		t.Error("assembled content missing <artifact> tag")
 	}
-	if !strings.Contains(assembled, "</response>") {
-		t.Error("assembled content missing </response> tag")
+	if !strings.Contains(assembled, "<!-- RESPONSE:END -->") {
+		t.Error("assembled content missing <!-- RESPONSE:END --> tag")
 	}
 
 	// The content must be fully assembled — no truncation.
@@ -806,10 +807,10 @@ func TestOllama_NoCLI_AllStagesResolveWithoutError(t *testing.T) {
 // confirmation that the Ollama HTTP transport is fully self-contained.
 func TestOllama_NoCLI_CanChat(t *testing.T) {
 	// A complete XML-envelope response (the format the Paulette parser needs).
-	xmlResponse := `<response><discussion>Vision complete.</discussion><artifact>
+	xmlResponse := `<!-- RESPONSE:START --><discussion>Vision complete.</discussion><artifact>
 # Vision
 A simple task manager.
-</artifact></response>`
+</artifact><!-- RESPONSE:END -->`
 
 	chunks := splitIntoChunks(xmlResponse, 30)
 	srv := ollamaMockServer(t, []string{"llama3:8b"}, chunks)

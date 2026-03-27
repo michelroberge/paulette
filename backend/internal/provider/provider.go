@@ -56,7 +56,7 @@ type ChatRequest struct {
 	Model string
 
 	// SystemPrompt is the stage-specific instruction prompt prepended to every
-	// conversation. The XML envelope format (<response><artifact>…</artifact></response>)
+	// conversation. The XML envelope format (<!-- RESPONSE:START --><artifact>…</artifact><!-- RESPONSE:END -->)
 	// must be preserved across all providers so the backend parser continues to work.
 	SystemPrompt string
 

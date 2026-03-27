@@ -11,8 +11,8 @@ type OllamaModelCaps struct {
 	NativeTools bool
 
 	// XMLFriendly indicates the model reliably follows the XML envelope
-	// instruction (wrap output in <response><discussion>...</discussion>
-	// <artifact>...</artifact></response>). Models that are not XML-friendly
+	// instruction (wrap output in <!-- RESPONSE:START --><discussion>...</discussion>
+	// <artifact>...</artifact><!-- RESPONSE:END -->). Models that are not XML-friendly
 	// receive a simpler "## Discussion / ## Artifact" section-header format.
 	XMLFriendly bool
 }

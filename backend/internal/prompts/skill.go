@@ -12,7 +12,7 @@ A skill is a repeatable pattern that appears across multiple tasks in this build
 For each identified skill, produce:
 1. A clear name and description
 2. A category (backend, frontend, devops, testing, database, infrastructure)
-3. Relevant tags for matching
+3. Relevant tags for matching (must include language or framework, i.e. go, rust, python, react, c#)
 4. Named parameters with descriptions and optional defaults
 5. A prompt template in Markdown using {{parameter_name}} placeholders
 

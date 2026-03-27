@@ -179,7 +179,7 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
                 )}
               </div>
               <div className="mock-activity-content" ref={streamRef}>
-                {streamingText || html || (generating ? 'Generating wireframes…\n\nThis may take up to 30 seconds.' : '')}
+                {streamingText || html || (generating ? 'Generating wireframes…\n\nThis may take some time. Sit back and relax!' : '')}
               </div>
             </div>
           </div>

@@ -894,7 +894,7 @@ Keys present with `null` values or missing keys both mean "inherit from global".
 
 ### System Prompt Adaptation
 
-The existing system prompts (from `agent/prompts.go`) use XML-envelope response formatting (`<response><discussion>...<artifact>...`). This format must be preserved regardless of provider, as the backend's `agent/parse.go` depends on it. Each provider's `Chat` implementation wraps the same system prompt — the LLM is instructed to respond in the same XML format. No per-provider prompt variation is needed; the abstraction is purely at the transport/API level.
+The existing system prompts (from `agent/prompts.go`) use XML-envelope response formatting (`<!-- RESPONSE:START --><discussion>...<artifact>...`). This format must be preserved regardless of provider, as the backend's `agent/parse.go` depends on it. Each provider's `Chat` implementation wraps the same system prompt — the LLM is instructed to respond in the same XML format. No per-provider prompt variation is needed; the abstraction is purely at the transport/API level.
 
 **Note:** Model capability variance (e.g., a small Ollama model may not follow the XML envelope reliably) is the user's responsibility per the vision document. No runtime validation of response format conformance is performed.
 

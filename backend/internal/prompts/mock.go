@@ -20,15 +20,15 @@ Screen navigation:
 - If there is only one screen, no tab bar is needed — just render it directly
 
 OUTPUT FORMAT — follow this exactly:
-Wrap your entire response in <response>...</response> tags. Put the complete HTML file in <htmlcontent>...</htmlcontent> using CDATA to protect HTML characters:
+Wrap your entire response in <!-- RESPONSE:START -->...<!-- RESPONSE:END --> tags. Put the complete HTML file in <htmlcontent>...</htmlcontent> using CDATA to protect HTML characters:
 
-<response>
+<!-- RESPONSE:START -->
 <htmlcontent><![CDATA[<!DOCTYPE html>
 ...full HTML...
 </html>]]></htmlcontent>
-</response>
+<!-- RESPONSE:END -->
 
-- Do NOT write anything outside <response>...</response>
+- Do NOT write anything outside <!-- RESPONSE:START -->...<!-- RESPONSE:END -->
 - Do NOT ask for permission or describe what the mockup contains
 - The HTML inside CDATA must be the complete, self-contained file`
 
@@ -39,13 +39,13 @@ Wrap your entire response in <response>...</response> tags. Put the complete HTM
 const MockRetry = `Your previous response is missing the required XML envelope with CDATA HTML content.
 
 You MUST wrap the HTML exactly like this:
-<response>
+<!-- RESPONSE:START -->
 <htmlcontent><![CDATA[<!DOCTYPE html>
 ...complete HTML wireframe...
 </html>]]></htmlcontent>
-</response>
+<!-- RESPONSE:END -->
 
-Nothing should appear outside <response>...</response>.
+Nothing should appear outside <!-- RESPONSE:START -->...<!-- RESPONSE:END -->.
 
 Here is your previous (wrong) response for reference — do NOT repeat this mistake:
 ---

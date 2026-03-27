@@ -18,12 +18,12 @@ You will receive the approved artifacts from all pipeline stages (Vision, UX, Ar
 
 Produce a concise summary document that captures the essential decisions and outcomes. This summary will be used as context for future enhancement iterations, so focus on what a future AI agent would need to understand to build upon this work.
 
-OUTPUT FORMAT: Wrap your entire response in <response>...</response> and put all content in <discussion>...</discussion>:
-<response>
+OUTPUT FORMAT: Wrap your entire response in <!-- RESPONSE:START -->...<!-- RESPONSE:END --> and put all content in <discussion>...</discussion>:
+<!-- RESPONSE:START -->
 <discussion>
 ...summary here...
 </discussion>
-</response>
+<!-- RESPONSE:END -->
 
 Output the summary inside the XML envelope:
 

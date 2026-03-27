@@ -19,13 +19,13 @@ Your approach:
 When you believe the vision is sufficiently clear (or when the user asks you to produce the artifact), generate a structured vision document.
 
 OUTPUT FORMAT:
-Wrap your entire response in <response>...</response> tags.
+Wrap your entire response in <!-- RESPONSE:START -->...<!-- RESPONSE:END --> tags.
 Put discussion, questions, and explanatory text in <discussion>...</discussion>.
 Put the complete document in <artifact>...</artifact>.
-Never write anything outside <response>...</response>.
+Never write anything outside <!-- RESPONSE:START -->...<!-- RESPONSE:END -->.
 
 Example:
-<response>
+<!-- RESPONSE:START -->
 <discussion>Here is the updated vision based on your feedback:</discussion>
 <artifact>
 # Product Vision: {Product Name}
@@ -51,7 +51,7 @@ Technical, business, or time constraints. Key assumptions being made.
 ## Out of Scope (V1)
 What are we explicitly NOT building in the first version?
 </artifact>
-</response>
+<!-- RESPONSE:END -->
 
 **CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact inside <artifact>...</artifact> in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact tags, your changes will be lost.
 
@@ -77,13 +77,13 @@ Your approach:
 When ready, produce a UX document using this format:
 
 OUTPUT FORMAT:
-Wrap your entire response in <response>...</response> tags.
+Wrap your entire response in <!-- RESPONSE:START -->...<!-- RESPONSE:END --> tags.
 Put discussion, questions, and explanatory text in <discussion>...</discussion>.
 Put the complete document in <artifact>...</artifact>.
-Never write anything outside <response>...</response>.
+Never write anything outside <!-- RESPONSE:START -->...<!-- RESPONSE:END -->.
 
 Example:
-<response>
+<!-- RESPONSE:START -->
 <discussion>Here is the updated UX design:</discussion>
 <artifact>
 # UX Design: {Product Name}
@@ -100,7 +100,7 @@ Example:
 ## Interaction Patterns
 ...
 </artifact>
-</response>
+<!-- RESPONSE:END -->
 
 **CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact inside <artifact>...</artifact> in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact tags, your changes will be lost.`,
 
@@ -119,13 +119,13 @@ Here is the approved UX design:
 Define the stack, APIs, data models, and system components. When ready, produce an architecture document using this format:
 
 OUTPUT FORMAT:
-Wrap your entire response in <response>...</response> tags.
+Wrap your entire response in <!-- RESPONSE:START -->...<!-- RESPONSE:END --> tags.
 Put discussion, questions, and explanatory text in <discussion>...</discussion>.
 Put the complete document in <artifact>...</artifact>.
-Never write anything outside <response>...</response>.
+Never write anything outside <!-- RESPONSE:START -->...<!-- RESPONSE:END -->.
 
 Example:
-<response>
+<!-- RESPONSE:START -->
 <discussion>Here is the updated architecture:</discussion>
 <artifact>
 # System Architecture: {Product Name}
@@ -160,7 +160,7 @@ Commands that compile or build to completion. Exit code 0 = success.
 Commands that start the built artifact to verify it launches correctly. Each will be started and observed for ~15s.
 - ` + "`command here`" + `
 </artifact>
-</response>
+<!-- RESPONSE:END -->
 
 **CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact inside <artifact>...</artifact> in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact tags, your changes will be lost.`,
 
@@ -191,13 +191,13 @@ Your approach:
 When the plan is ready, produce it using this format:
 
 OUTPUT FORMAT:
-Wrap your entire response in <response>...</response> tags.
+Wrap your entire response in <!-- RESPONSE:START -->...<!-- RESPONSE:END --> tags.
 Put discussion, questions, and explanatory text in <discussion>...</discussion>.
 Put the complete document in <artifact>...</artifact>.
-Never write anything outside <response>...</response>.
+Never write anything outside <!-- RESPONSE:START -->...<!-- RESPONSE:END -->.
 
 Example:
-<response>
+<!-- RESPONSE:START -->
 <discussion>Here is the updated build plan:</discussion>
 <artifact>
 # Build Plan: {Product Name}
@@ -218,7 +218,7 @@ Example:
 ## Definition of Done
 ...
 </artifact>
-</response>
+<!-- RESPONSE:END -->
 
 **CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact inside <artifact>...</artifact> in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact tags, your changes will be lost.`,
 }

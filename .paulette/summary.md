@@ -80,7 +80,7 @@ Paulette is a structured five-stage AI-assisted product development pipeline (Vi
 | Gemini | NDJSON array | `?key=` query param |
 | Claude CLI | subprocess stdio | Local auth |
 
-All providers wrap the same XML-envelope system prompt (`<response><discussion>...<artifact>...`) required by `agent/parse.go` — no per-provider prompt variation.
+All providers wrap the same XML-envelope system prompt (`<!-- RESPONSE:START --><discussion>...<artifact>...`) required by `agent/parse.go` — no per-provider prompt variation.
 
 **HTTP client timeouts:** 30s for connection tests; 10min for chat streaming.
 
@@ -107,7 +107,7 @@ Six milestones, designed for parallelism:
 
 1. **Encrypted credential storage (OS keychain integration)** — Currently credentials are stored in plain-text JSON with only file-permission protection. Integrating with OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager) via a library like `zalando/go-keyring` would eliminate the `chmod 600` warning and significantly reduce credential exposure risk. High security impact, especially for multi-user or shared machines.
 
-2. **Lenient XML-envelope parser / model capability fallback** — Smaller models (Ollama `gemma3:4b`, Gemini small variants) frequently fail to follow the strict `<response><artifact>...</artifact></response>` format that `agent/parse.go` requires, silently breaking artifact extraction. Adding a lenient parsing mode (e.g., treat all content as artifact body if no envelope detected) or a per-provider response format setting would dramatically improve reliability with local/small models — the primary new user segment unlocked by v0.2.0.
+2. **Lenient XML-envelope parser / model capability fallback** — Smaller models (Ollama `gemma3:4b`, Gemini small variants) frequently fail to follow the strict `<!-- RESPONSE:START --><artifact>...</artifact><!-- RESPONSE:END -->` format that `agent/parse.go` requires, silently breaking artifact extraction. Adding a lenient parsing mode (e.g., treat all content as artifact body if no envelope detected) or a per-provider response format setting would dramatically improve reliability with local/small models — the primary new user segment unlocked by v0.2.0.
 
 3. **GitHub Copilot OAuth device-code flow (P3 → delivery)** — This was explicitly deferred to v0.3.0 but is already stubbed in the UI as "Coming Soon." The device-code flow is well-specified (RFC 8628) and the GitHub OAuth endpoints are public. Completing this unlocks the enterprise developer segment (one of three explicit target user types) and fulfils the promised v0.3.0 feature.
 

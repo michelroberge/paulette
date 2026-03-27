@@ -279,9 +279,33 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 			}
 		}
 
-		jsonBytes, ok2 := agent.ExtractBeadJSON(fullResponse)
-		if !ok2 {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to extract JSON from parser response"})
+		fixer := func(fixCtx context.Context, badJSON []byte, schema []byte) ([]byte, error) {
+			run.Emit(agent.StreamEvent{Type: "log", Content: "JSON validation failed — asking LLM to fix..."})
+			fixEvents, fixErr := prov.Chat(fixCtx, provider.ChatRequest{
+				Model:        modelID,
+				SystemPrompt: agent.JSONFixSystemPrompt,
+				UserMessage:  agent.BuildJSONFixPrompt(badJSON, schema),
+				ProjectDir:   project.HostDir,
+			})
+			if fixErr != nil {
+				return nil, fixErr
+			}
+			var fixResp string
+			for e := range fixEvents {
+				if e.Type == "done" {
+					fixResp = e.Content
+				}
+			}
+			raw, ok := agent.ExtractBeadJSON(fixResp)
+			if !ok {
+				return nil, fmt.Errorf("LLM fix returned no JSON")
+			}
+			return raw, nil
+		}
+
+		jsonBytes, err := agent.ParseAndValidateJSON(ctx, fullResponse, agent.BuildPlanSchema, fixer)
+		if err != nil {
+			run.Emit(agent.StreamEvent{Type: "error", Content: "JSON validation failed: " + err.Error()})
 			return
 		}
 

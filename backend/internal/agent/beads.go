@@ -16,13 +16,13 @@ const ParseBuildPlanSystemPrompt = parseBuildPlanSystemPrompt
 
 const parseBuildPlanSystemPrompt = `You are a Build Plan Parser for an AI App Factory. Read the build plan and architecture below and extract all milestones and tasks into a structured JSON format. 
 
-OUTPUT FORMAT: Wrap in <response>...</response>. Put JSON only in <jsonplan>...</jsonplan>. No discussion.
-<response>
+OUTPUT FORMAT: Wrap in <!-- RESPONSE:START -->...<!-- RESPONSE:END -->. Put JSON only in <jsonplan>...</jsonplan>. No discussion.
+<!-- RESPONSE:START -->
 <jsonplan>{"epics":[...]}</jsonplan>
-</response>
+<!-- RESPONSE:END -->
 
 Example:
-<response>
+<!-- RESPONSE:START -->
 <jsonplan>{
   "epics": [
     {
@@ -43,7 +43,7 @@ Example:
     }
   ]
 }</jsonplan>
-</response>
+<!-- RESPONSE:END -->
 
 Rules:
 - Each milestone in the build plan becomes an epic
@@ -76,9 +76,9 @@ CRITICAL — your final text response determines what happens next. The VERY FIR
 2. If there are real issues: start your <discussion> with a concise bullet list of specific, actionable issues. Do NOT include "LGTM" anywhere.
 
 You may use Bash to inspect files before responding, but your final output must use this format:
-<response>
+<!-- RESPONSE:START -->
 <discussion>LGTM (or bullet list of issues)</discussion>
-</response>
+<!-- RESPONSE:END -->
 
 No preamble, no narration of what you did — just the verdict wrapped in the XML envelope.`
 
@@ -660,4 +660,55 @@ func ExtractBeadJSON(response string) ([]byte, bool) {
 		return nil, false
 	}
 	return j, true
+}
+
+// BuildPlanSchema is the JSON Schema for ParsedBuildPlan, used by ParseAndValidateJSON.
+var BuildPlanSchema = []byte(`{
+  "type": "object",
+  "required": ["epics"],
+  "properties": {
+    "epics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "description", "tasks"],
+        "properties": {
+          "title": {"type": "string"},
+          "description": {"type": "string"},
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["title", "description"],
+              "properties": {
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "depsOn": {"type": "array"},
+                "priority": {"type": "integer"},
+                "tags": {"type": "array"},
+                "targetFiles": {"type": "array"},
+                "journeyRefs": {"type": "array"},
+                "archRefs": {"type": "array"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`)
+
+// JSONFixSystemPrompt instructs the LLM to return only fixed JSON in the envelope format.
+const JSONFixSystemPrompt = `You are a JSON repair tool. Fix the provided invalid JSON to exactly match the given schema.
+
+OUTPUT FORMAT: Return ONLY the fixed JSON inside the envelope markers — no discussion, no explanation.
+<!-- RESPONSE:START -->
+<jsonplan>{ fixed JSON here }</jsonplan>
+<!-- RESPONSE:END -->`
+
+// BuildJSONFixPrompt constructs the user message for the LLM JSON fixer.
+func BuildJSONFixPrompt(invalidJSON, schema []byte) string {
+	return "Invalid JSON:\n```json\n" + string(invalidJSON) + "\n```\n\n" +
+		"Expected schema:\n```json\n" + string(schema) + "\n```\n\n" +
+		"Fix the JSON to match the schema and return it in the required envelope format."
 }
