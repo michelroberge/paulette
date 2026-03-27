@@ -1,0 +1,1358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paulette v0.2.0 — UI Mockups</title>
+<style>
+:root {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #18181b;
+  --border: #27272a;
+  --primary: #fafafa;
+  --muted: #71717a;
+  --ring: #3f3f46;
+  --blue: #3b82f6;
+  --blue-dark: #2563eb;
+  --green: #22c55e;
+  --green-dark: #16a34a;
+  --red: #ef4444;
+  --red-dark: #dc2626;
+  --amber: #f59e0b;
+  --purple: #a855f7;
+  --indigo: #6366f1;
+  --orange: #f97316;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #000;
+  color: var(--foreground);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* Top-level screen tab bar */
+.screen-tabs {
+  position: sticky; top: 0; z-index: 100;
+  background: #000;
+  border-bottom: 1px solid var(--border);
+  display: flex; flex-wrap: wrap;
+  padding: 0 16px;
+}
+.screen-tab {
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.screen-tab:hover { color: var(--foreground); }
+.screen-tab.active { color: var(--foreground); border-bottom-color: var(--blue); }
+
+.screen { display: none; }
+.screen.active { display: block; }
+
+/* Shared */
+.page-frame {
+  width: 1024px;
+  max-width: 100%;
+  margin: 24px auto;
+  background: var(--background);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  overflow: hidden;
+}
+
+/* Nav bar */
+.navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+.navbar .logo { font-weight: 700; font-size: 18px; letter-spacing: -.5px; }
+.navbar .logo span { color: var(--blue); }
+.token-meter {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--muted);
+}
+.token-bar {
+  width: 80px; height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.token-bar-fill { height: 100%; width: 42%; background: var(--blue); border-radius: 3px; }
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all .15s;
+  text-decoration: none;
+}
+.btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+.btn-primary:hover { background: var(--blue-dark); }
+.btn-secondary { background: transparent; color: var(--foreground); border-color: var(--border); }
+.btn-secondary:hover { background: var(--card); }
+.btn-green { background: var(--green-dark); color: #fff; border-color: var(--green-dark); }
+.btn-green:hover { background: #15803d; }
+.btn-red { background: var(--red); color: #fff; border-color: var(--red); }
+.btn-red:hover { background: var(--red-dark); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-full { width: 100%; justify-content: center; }
+.btn-ghost { background: none; border: none; color: var(--muted); padding: 4px 8px; }
+.btn-ghost:hover { color: var(--foreground); background: rgba(255,255,255,.05); }
+.btn-disabled { opacity: .5; cursor: not-allowed; pointer-events: none; }
+.btn-outline-blue { background: transparent; border-color: var(--blue); color: var(--blue); }
+.btn-outline-blue:hover { background: rgba(59,130,246,.1); }
+
+/* Cards */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+}
+
+/* Pips */
+.pip {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.pip-gray { background: #52525b; }
+.pip-blue { background: var(--blue); }
+.pip-green { background: var(--green); }
+.pip-override { box-shadow: 0 0 0 2px #facc15; }
+
+/* Badges */
+.badge {
+  display: inline-flex; align-items: center;
+  font-size: 11px; font-weight: 500;
+  padding: 2px 8px; border-radius: 9999px;
+}
+.badge-purple { background: rgba(168,85,247,.15); color: #c084fc; }
+.badge-indigo { background: rgba(99,102,241,.15); color: #a5b4fc; }
+.badge-orange { background: rgba(249,115,22,.15); color: #fb923c; }
+.badge-green { background: rgba(34,197,94,.15); color: #4ade80; }
+.badge-blue { background: rgba(59,130,246,.15); color: #93c5fd; }
+.badge-gray { background: rgba(113,113,122,.15); color: #a1a1aa; }
+.badge-stage { font-size: 10px; padding: 1px 7px; }
+
+/* Form elements */
+.form-label { display: block; font-size: 13px; font-weight: 500; color: #a1a1aa; margin-bottom: 6px; }
+.form-input, .form-select {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--foreground);
+  font-size: 14px;
+  outline: none;
+}
+.form-input:focus, .form-select:focus { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(59,130,246,.2); }
+.form-input::placeholder { color: #52525b; }
+.form-group { margin-bottom: 16px; }
+
+/* Toggle switch */
+.toggle {
+  position: relative;
+  width: 36px; height: 20px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background .15s;
+  flex-shrink: 0;
+}
+.toggle.on { background: var(--blue); }
+.toggle.off { background: #52525b; }
+.toggle::after {
+  content: '';
+  position: absolute;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  top: 2px;
+  transition: left .15s;
+}
+.toggle.on::after { left: 18px; }
+.toggle.off::after { left: 2px; }
+
+/* Tab strips */
+.tab-strip {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+}
+.tab-item {
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.tab-item.active { color: var(--foreground); border-bottom-color: var(--blue); }
+.tab-item:hover { color: var(--foreground); }
+
+/* Table */
+.tbl { width: 100%; border-collapse: collapse; }
+.tbl th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 500; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.tbl td { padding: 10px 12px; border-bottom: 1px solid rgba(39,39,42,.5); font-size: 14px; vertical-align: middle; }
+
+/* Banners */
+.banner {
+  border-radius: 6px;
+  padding: 12px 16px;
+  font-size: 13px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.banner-info { background: rgba(59,130,246,.1); border: 1px solid rgba(59,130,246,.2); color: #93c5fd; }
+.banner-warning { background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.2); color: #fbbf24; }
+.banner-error { background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.2); color: #fca5a5; }
+.banner-yellow { background: rgba(250,204,21,.06); border: 1px solid rgba(250,204,21,.15); color: #fde047; }
+
+/* Chat */
+.chat-messages { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.msg { max-width: 80%; padding: 10px 14px; border-radius: 8px; font-size: 14px; line-height: 1.6; }
+.msg-user { align-self: flex-end; background: rgba(59,130,246,.15); color: #dbeafe; border-bottom-right-radius: 2px; }
+.msg-ai { align-self: flex-start; background: var(--card); border: 1px solid var(--border); color: #d4d4d8; border-bottom-left-radius: 2px; }
+.msg-ai .cursor-blink { display: inline-block; width: 2px; height: 14px; background: var(--blue); animation: blink 1s infinite; vertical-align: text-bottom; margin-left: 2px; }
+@keyframes blink { 0%,50% { opacity: 1; } 51%,100% { opacity: 0; } }
+
+.chat-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex; gap: 8px;
+}
+.chat-input {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--foreground);
+  font-size: 14px;
+  outline: none;
+  resize: none;
+}
+
+/* Slide-over */
+.slideover-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,.4);
+  z-index: 10;
+}
+.slideover {
+  position: absolute; top: 0; right: 0; bottom: 0;
+  width: 380px;
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+}
+.slideover-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.slideover-body { flex: 1; overflow-y: auto; padding: 20px; }
+.slideover-footer {
+  border-top: 1px solid var(--border);
+  padding: 12px 20px;
+  display: flex; gap: 10px;
+}
+
+/* Misc */
+.text-muted { color: var(--muted); }
+.text-xs { font-size: 12px; }
+.text-sm { font-size: 13px; }
+.text-green { color: #4ade80; }
+.text-red { color: #f87171; }
+.text-blue { color: #60a5fa; }
+.font-mono { font-family: 'SF Mono', 'Fira Code', monospace; }
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+.mt-2 { margin-top: 8px; }
+.mt-4 { margin-top: 16px; }
+.mb-2 { margin-bottom: 8px; }
+.mb-4 { margin-bottom: 16px; }
+.ml-2 { margin-left: 8px; }
+.mr-2 { margin-right: 8px; }
+.p-4 { padding: 16px; }
+.px-4 { padding-left: 16px; padding-right: 16px; }
+.py-2 { padding-top: 8px; padding-bottom: 8px; }
+.w-full { width: 100%; }
+.flex-1 { flex: 1; }
+.shrink-0 { flex-shrink: 0; }
+.overflow-auto { overflow: auto; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relative { position: relative; }
+.inline-flex { display: inline-flex; }
+
+/* Log area */
+.log-area {
+  background: #0c0c0e;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  color: #a1a1aa;
+  max-height: 180px;
+  overflow-y: auto;
+  line-height: 1.7;
+}
+.log-area .log-green { color: #4ade80; }
+.log-area .log-blue { color: #60a5fa; }
+.log-area .log-amber { color: #fbbf24; }
+.log-area .log-dim { color: #52525b; }
+
+/* DAG nodes */
+.dag-canvas {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 24px;
+  min-height: 280px;
+  position: relative;
+}
+.dag-node {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 2px solid;
+  position: absolute;
+}
+.dag-node-amber { background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.4); color: #fbbf24; }
+.dag-node-blue { background: rgba(59,130,246,.1); border-color: rgba(59,130,246,.4); color: #93c5fd; }
+.dag-node-green { background: rgba(34,197,94,.1); border-color: rgba(34,197,94,.4); color: #4ade80; }
+.dag-node-gray { background: rgba(113,113,122,.1); border-color: rgba(113,113,122,.3); color: #71717a; }
+
+/* SVG lines */
+.dag-canvas svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+/* Modal */
+.modal-overlay {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 30;
+}
+.modal-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 560px;
+  max-height: 80%;
+  overflow-y: auto;
+  box-shadow: 0 16px 48px rgba(0,0,0,.5);
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+
+/* Credential toast */
+.toast {
+  position: absolute;
+  bottom: 16px; right: 16px;
+  z-index: 40;
+  background: rgba(245,158,11,.08);
+  border: 1px solid rgba(245,158,11,.25);
+  color: #fde047;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 12px;
+  max-width: 300px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+
+/* Sidebar stages */
+.stage-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background .1s;
+}
+.stage-item:hover { background: rgba(255,255,255,.03); }
+.stage-item.active-stage { background: rgba(59,130,246,.08); }
+
+/* Approve bar */
+.approve-bar {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+/* 3-col layout */
+.project-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr 280px;
+  min-height: 500px;
+}
+.project-sidebar {
+  border-right: 1px solid var(--border);
+  padding: 12px 8px;
+}
+.project-center {
+  display: flex; flex-direction: column;
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+.project-right {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+/* Connection highlight */
+.highlight-pulse {
+  box-shadow: 0 0 0 2px rgba(239,68,68,.5);
+  animation: pulse-ring 1.5s ease infinite;
+}
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 2px rgba(239,68,68,.5); }
+  50% { box-shadow: 0 0 0 4px rgba(239,68,68,.2); }
+  100% { box-shadow: 0 0 0 2px rgba(239,68,68,.5); }
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 48px 24px;
+  color: #52525b;
+}
+.empty-state .icon { font-size: 36px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<!-- SCREEN TABS -->
+<div class="screen-tabs" id="screenTabs">
+  <div class="screen-tab active" onclick="showScreen('home')">Home Page</div>
+  <div class="screen-tab" onclick="showScreen('project')">Project Detail</div>
+  <div class="screen-tab" onclick="showScreen('mock')">Mock Preview</div>
+  <div class="screen-tab" onclick="showScreen('dag')">Build DAG</div>
+  <div class="screen-tab" onclick="showScreen('history')">Version History</div>
+  <div class="screen-tab" onclick="showScreen('configure')">Configure Paulette</div>
+  <div class="screen-tab" onclick="showScreen('connform')">Connection Form</div>
+  <div class="screen-tab" onclick="showScreen('projsettings')">Project Stage Settings</div>
+  <div class="screen-tab" onclick="showScreen('error')">Connection Error</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCR-001: HOME PAGE -->
+<!-- ============================================================ -->
+<div class="screen active" id="screen-home">
+<div class="page-frame">
+  <div class="navbar">
+    <div class="logo"><span>P</span>aulette</div>
+    <div class="token-meter">
+      <span>12,480 tokens</span>
+      <div class="token-bar"><div class="token-bar-fill"></div></div>
+    </div>
+  </div>
+  <div style="padding:24px;">
+    <div class="flex items-center justify-between mb-4">
+      <h2 style="font-size:20px;font-weight:600;">Projects</h2>
+      <div class="flex gap-2">
+        <button class="btn btn-primary">＋ New Project</button>
+        <button class="btn btn-secondary">↓ Import Project</button>
+        <button class="btn btn-secondary">⚙ Configure Paulette</button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <!-- Project card 1 -->
+      <div class="card flex items-center gap-3" style="cursor:pointer;">
+        <div class="pip pip-green"></div>
+        <div class="flex-1">
+          <div style="font-weight:500;">E-Commerce Platform</div>
+          <div class="text-xs text-muted">Last updated: Mar 24, 2026 · Build stage</div>
+        </div>
+        <span class="badge badge-green badge-stage">Build</span>
+      </div>
+      <!-- Project card 2 -->
+      <div class="card flex items-center gap-3" style="cursor:pointer;">
+        <div class="pip pip-blue"></div>
+        <div class="flex-1">
+          <div style="font-weight:500;">AI Dashboard</div>
+          <div class="text-xs text-muted">Last updated: Mar 23, 2026 · Architecture stage</div>
+        </div>
+        <span class="badge badge-blue badge-stage">Architecture</span>
+      </div>
+      <!-- Project card 3 -->
+      <div class="card flex items-center gap-3" style="cursor:pointer;">
+        <div class="pip pip-blue"></div>
+        <div class="flex-1">
+          <div style="font-weight:500;">Mobile Fitness App</div>
+          <div class="text-xs text-muted">Last updated: Mar 22, 2026 · UX stage</div>
+        </div>
+        <span class="badge badge-blue badge-stage">UX</span>
+      </div>
+      <!-- Project card 4 -->
+      <div class="card flex items-center gap-3" style="cursor:pointer;">
+        <div class="pip pip-green"></div>
+        <div class="flex-1">
+          <div style="font-weight:500;">Internal Tooling CLI</div>
+          <div class="text-xs text-muted">Last updated: Mar 20, 2026 · Complete</div>
+        </div>
+        <span class="badge badge-green badge-stage">Complete</span>
+      </div>
+      <!-- Project card 5 — imported -->
+      <div class="card flex items-center gap-3" style="cursor:pointer;">
+        <div class="pip pip-blue"></div>
+        <div class="flex-1">
+          <div style="font-weight:500;">Legacy CRM Migration <span class="badge badge-orange" style="font-size:9px;margin-left:4px;">Imported</span></div>
+          <div class="text-xs text-muted">Last updated: Mar 19, 2026 · Vision stage</div>
+        </div>
+        <span class="badge badge-blue badge-stage">Vision</span>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCR-002 + SCR-003: PROJECT DETAIL VIEW w/ CHAT -->
+<!-- ============================================================ -->
+<div class="screen" id="screen-project">
+<div class="page-frame" style="position:relative;">
+  <div class="navbar">
+    <div class="flex items-center gap-3">
+      <span class="text-blue" style="cursor:pointer;font-size:14px;">← Home</span>
+      <span style="color:var(--border);">|</span>
+      <span style="font-weight:600;">AI Dashboard</span>
+      <button class="btn-ghost" title="Stage connection settings" style="font-size:16px;">⚙</button>
+      <button class="btn-ghost" title="Version History" style="font-size:16px;">🕐</button>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <div class="toggle on" title="Autonomous Mode"></div>
+        <span class="text-xs text-muted">Autonomous</span>
+      </div>
+      <div class="token-meter">
+        <span>8,240 tokens</span>
+        <div class="token-bar"><div class="token-bar-fill" style="width:28%;"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="project-layout">
+    <!-- Left sidebar — stage navigator -->
+    <div class="project-sidebar">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);padding:8px 16px;text-transform:uppercase;letter-spacing:.5px;">Pipeline</div>
+      <div class="stage-item">
+        <div class="pip pip-green"></div>
+        <span>Vision</span>
+        <span class="text-xs text-muted" style="margin-left:auto;">✓</span>
+      </div>
+      <div class="stage-item">
+        <div class="pip pip-green"></div>
+        <span>UX</span>
+        <span class="text-xs text-muted" style="margin-left:auto;">✓</span>
+      </div>
+      <div class="stage-item active-stage">
+        <div class="pip pip-blue pip-override"></div>
+        <span style="color:var(--foreground);font-weight:500;">Architecture</span>
+        <span class="badge badge-gray" style="font-size:9px;margin-left:auto;">Custom</span>
+      </div>
+      <div class="stage-item">
+        <div class="pip pip-gray"></div>
+        <span style="color:var(--muted);">Build</span>
+      </div>
+      <div class="stage-item">
+        <div class="pip pip-gray"></div>
+        <span style="color:var(--muted);">Complete</span>
+      </div>
+    </div>
+
+    <!-- Centre panel -->
+    <div class="project-center">
+      <div class="flex items-center justify-between" style="padding:10px 16px;border-bottom:1px solid var(--border);">
+        <div class="flex items-center gap-2">
+          <div class="pip pip-blue"></div>
+          <span style="font-weight:600;font-size:15px;">Architecture</span>
+          <button class="btn btn-red btn-sm">■ Stop</button>
+        </div>
+      </div>
+
+      <div class="tab-strip">
+        <div class="tab-item active">Chat</div>
+        <div class="tab-item">Artifact</div>
+      </div>
+
+      <div class="chat-messages flex-1 overflow-auto" style="max-height:320px;">
+        <div class="msg msg-ai">
+          I'll help you design the architecture for your AI Dashboard. Based on the approved vision and UX artifacts, I recommend a modular microservices approach with the following key components:
+
+          <br><br><strong>1. Data Ingestion Layer</strong> — Kafka-based event streaming<br>
+          <strong>2. Processing Engine</strong> — Python FastAPI workers<br>
+          <strong>3. API Gateway</strong> — Kong with rate limiting<br>
+          <strong>4. Frontend</strong> — Next.js 14 with SSR
+        </div>
+        <div class="msg msg-user">
+          Can we use WebSockets for real-time metrics instead of polling?
+        </div>
+        <div class="msg msg-ai">
+          Absolutely. I'll update the architecture to include a WebSocket gateway. Here's the revised plan:
+
+          <br><br>• Replace REST polling with a dedicated <strong>WS Gateway service</strong> (using Socket.IO for broad client compatibility)<br>
+          • The gateway subscribes to the Kafka metrics topic and fans out to connected clients<br>
+          • Fallback to SSE for environments that block WebSocket connections<span class="cursor-blink"></span>
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <input class="chat-input" placeholder="Send a message…" />
+        <button class="btn btn-primary btn-sm">→</button>
+      </div>
+
+      <div class="approve-bar">
+        <button class="btn btn-green btn-full btn-disabled" style="font-weight:600;">✓ Approve &amp; Advance</button>
+      </div>
+    </div>
+
+    <!-- Right panel — artifact viewer -->
+    <div class="project-right">
+      <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;">Artifact Preview</div>
+      <div style="font-size:13px;color:#a1a1aa;line-height:1.7;">
+        <strong style="color:var(--foreground);">architecture.md</strong><br><br>
+        <span style="color:#52525b;">## System Architecture</span><br><br>
+        ### Components<br>
+        - Data Ingestion (Kafka)<br>
+        - Processing Engine (FastAPI)<br>
+        - WS Gateway (Socket.IO)<br>
+        - API Gateway (Kong)<br>
+        - Frontend (Next.js 14)<br><br>
+        <span style="color:#52525b;">### Dependencies</span><br>
+        PostgreSQL 16, Redis 7, …<br><br>
+        <span style="color:#52525b;font-style:italic;">Streaming…</span>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCR-004: MOCK PREVIEW TAB -->
+<!-- ============================================================ -->
+<div class="screen" id="screen-mock">
+<div class="page-frame">
+  <div class="navbar">
+    <div class="flex items-center gap-3">
+      <span class="text-blue" style="cursor:pointer;font-size:14px;">← Home</span>
+      <span style="color:var(--border);">|</span>
+      <span style="font-weight:600;">Mobile Fitness App</span>
+    </div>
+    <div class="token-meter">
+      <span>15,890 tokens</span>
+      <div class="token-bar"><div class="token-bar-fill" style="width:65%;"></div></div>
+    </div>
+  </div>
+  <div class="project-layout">
+    <div class="project-sidebar">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);padding:8px 16px;text-transform:uppercase;letter-spacing:.5px;">Pipeline</div>
+      <div class="stage-item"><div class="pip pip-green"></div><span>Vision</span></div>
+      <div class="stage-item active-stage"><div class="pip pip-blue"></div><span style="font-weight:500;">UX</span></div>
+      <div class="stage-item"><div class="pip pip-gray"></div><span style="color:var(--muted);">Architecture</span></div>
+      <div class="stage-item"><div class="pip pip-gray"></div><span style="color:var(--muted);">Build</span></div>
+      <div class="stage-item"><div class="pip pip-gray"></div><span style="color:var(--muted);">Complete</span></div>
+    </div>
+    <div class="project-center" style="grid-column:span 2;">
+      <div class="flex items-center justify-between" style="padding:10px 16px;border-bottom:1px solid var(--border);">
+        <div class="flex items-center gap-2">
+          <div class="pip pip-blue"></div>
+          <span style="font-weight:600;">UX</span>
+        </div>
+      </div>
+      <div class="tab-strip">
+        <div class="tab-item">Chat</div>
+        <div class="tab-item">Artifact</div>
+        <div class="tab-item active">Mock Preview</div>
+      </div>
+      <!-- Viewport toolbar -->
+      <div class="flex items-center gap-2" style="padding:8px 16px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);">
+        <span class="text-xs text-muted" style="margin-right:8px;">Viewport:</span>
+        <button class="btn btn-sm btn-secondary" style="padding:3px 8px;font-size:11px;">🖥 Desktop</button>
+        <button class="btn btn-sm btn-ghost" style="padding:3px 8px;font-size:11px;">📱 Tablet</button>
+        <button class="btn btn-sm btn-ghost" style="padding:3px 8px;font-size:11px;">📱 Mobile</button>
+      </div>
+      <!-- Mock iframe area -->
+      <div style="flex:1;padding:16px;display:flex;justify-content:center;background:var(--background);">
+        <div style="width:100%;max-width:800px;background:#ffffff;border-radius:6px;overflow:hidden;min-height:360px;box-shadow:0 4px 24px rgba(0,0,0,.3);">
+          <!-- Simulated mock content -->
+          <div style="background:#1e40af;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;font-size:14px;">
+            <span style="font-weight:600;">FitTrack Pro</span>
+            <span style="font-size:12px;">☰</span>
+          </div>
+          <div style="padding:20px;">
+            <div style="font-size:22px;font-weight:700;color:#111;">Welcome back, Alex</div>
+            <div style="font-size:13px;color:#6b7280;margin-top:4px;">Tuesday, March 25, 2026</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:16px;">
+              <div style="background:#f0fdf4;border-radius:8px;padding:16px;text-align:center;">
+                <div style="font-size:24px;font-weight:700;color:#16a34a;">8,432</div>
+                <div style="font-size:11px;color:#6b7280;">Steps Today</div>
+              </div>
+              <div style="background:#eff6ff;border-radius:8px;padding:16px;text-align:center;">
+                <div style="font-size:24px;font-weight:700;color:#2563eb;">142</div>
+                <div style="font-size:11px;color:#6b7280;">BPM Avg</div>
+              </div>
+              <div style="background:#fef3c7;border-radius:8px;padding:16px;text-align:center;">
+                <div style="font-size:24px;font-weight:700;color:#d97706;">486</div>
+                <div style="font-size:11px;color:#6b7280;">Calories</div>
+              </div>
+            </div>
+            <div style="margin-top:16px;background:#f9fafb;border-radius:8px;padding:16px;">
+              <div style="font-size:13px;font-weight:600;color:#111;margin-bottom:8px;">Today's Workout Plan</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <span style="background:#dbeafe;color:#1e40af;font-size:11px;padding:4px 10px;border-radius:99px;">🏃 5K Run</span>
+                <span style="background:#dcfce7;color:#166534;font-size:11px;padding:4px 10px;border-radius:99px;">💪 Upper Body</span>
+                <span style="background:#fef9c3;color:#854d0e;font-size:11px;padding:4px 10px;border-radius:99px;">🧘 Yoga Flow</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="approve-bar">
+        <button class="btn btn-green btn-full" style="font-weight:600;">✓ Approve &amp; Advance</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCR-005: BEAD DAG EXECUTE TAB -->
+<!-- ============================================================ -->
+<div class="screen" id="screen-dag">
+<div class="page-frame">
+  <div class="navbar">
+    <div class="flex items-center gap-3">
+      <span class="text-blue" style="cursor:pointer;font-size:14px;">← Home</span>
+      <span style="color:var(--border);">|</span>
+      <span style="font-weight:600;">E-Commerce Platform</span>
+    </div>
+    <div class="token-meter">
+      <span>31,200 tokens</span>
+      <div class="token-bar"><div class="token-bar-fill" style="width:88%;"></div></div>
+    </div>
+  </div>
+  <div class="project-layout">
+    <div class="project-sidebar">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);padding:8px 16px;text-transform:uppercase;letter-spacing:.5px;">Pipeline</div>
+      <div class="stage-item"><div class="pip pip-green"></div><span>Vision</span></div>
+      <div class="stage-item"><div class="pip pip-green"></div><span>UX</span></div>
+      <div class="stage-item"><div class="pip pip-green"></div><span>Architecture</span></div>
+      <div class="stage-item active-stage"><div class="pip pip-blue"></div><span style="font-weight:500;">Build</span></div>
+      <div class="stage-item"><div class="pip pip-gray"></div><span style="color:var(--muted);">Complete</span></div>
+    </div>
+    <div class="project-center" style="grid-column:span 2;">
+      <div class="flex items-center justify-between" style="padding:10px 16px;border-bottom:1px solid var(--border);">
+        <div class="flex items-center gap-2">
+          <div class="pip pip-blue"></div>
+          <span style="font-weight:600;">Build</span>
+          <button class="btn btn-red btn-sm">■ Stop</button>
+        </div>
+        <button class="btn btn-primary btn-sm">▶ Run</button>
+      </div>
+      <div class="tab-strip">
+        <div class="tab-item">Chat</div>
+        <div class="tab-item">Artifact</div>
+        <div class="tab-item active">Execute</div>
+      </div>
+      <!-- DAG Canvas -->
+      <div style="padding:16px;flex:1;">
+        <div class="dag-canvas">
+          <svg viewBox="0 0 700 240" style="position:absolute;top:0;left:0;width:100%;height:100%;">
+            <!-- Edges -->
+            <line x1="120" y1="50" x2="240" y2="50" stroke="#4ade80" stroke-width="2" opacity=".4"/>
+            <line x1="120" y1="50" x2="240" y2="120" stroke="#4ade80" stroke-width="2" opacity=".4"/>
+            <line x1="330" y1="50" x2="440" y2="85" stroke="#60a5fa" stroke-width="2" opacity=".4"/>
+            <line x1="330" y1="120" x2="440" y2="85" stroke="#60a5fa" stroke-width="2" opacity=".4"/>
+            <line x1="540" y1="85" x2="610" y2="85" stroke="#3f3f46" stroke-width="2" opacity=".3" stroke-dasharray="4"/>
+            <line x1="330" y1="120" x2="440" y2="170" stroke="#3f3f46" stroke-width="2" opacity=".3" stroke-dasharray="4"/>
+            <line x1="540" y1="170" x2="610" y2="85" stroke="#3f3f46" stroke-width="2" opacity=".3" stroke-dasharray="4"/>
+          </svg>
+          <div class="dag-node dag-node-green" style="left:30px;top:36px;">✓ Init DB Schema</div>
+          <div class="dag-node dag-node-green" style="left:200px;top:36px;">✓ Auth Service</div>
+          <div class="dag-node dag-node-green" style="left:200px;top:106px;">✓ Product API</div>
+          <div class="dag-node dag-node-blue" style="left:400px;top:70px;">⟳ Cart Service</div>
+          <div class="dag-node dag-node-amber" style="left:400px;top:156px;">◯ Payment Gateway</div>
+          <div class="dag-node dag-node-gray" style="left:580px;top:70px;">◻ Frontend App</div>
+        </div>
+        <!-- Execution log -->
+        <div style="margin-top:12px;">
+          <div class="text-xs text-muted mb-2" style="font-weight:500;">Execution Log</div>
+          <div class="log-area">
+            <div><span class="log-dim">[14:23:01]</span> <span class="log-green">✓</span> bead:init-db-schema completed in 3.2s</div>
+            <div><span class="log-dim">[14:23:05]</span> <span class="log-green">✓</span> bead:auth-service completed in 8.7s</div>
+            <div><span class="log-dim">[14:23:14]</span> <span class="log-green">✓</span> bead:product-api completed in 12.1s</div>
+            <div><span class="log-dim">[14:23:26]</span> <span class="log-blue">⟳</span> bead:cart-service executing… <span class="log-amber">(est. ~10s)</span></div>
+            <div><span class="log-dim">[14:23:26]</span> &nbsp;&nbsp;→ Generating cart models and handlers</div>
+            <div><span class="log-dim">[14:23:31]</span> &nbsp;&nbsp;→ Writing src/services/cart/handler.go<span class="cursor-blink"></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="approve-bar">
+        <button class="btn btn-green btn-full btn-disabled" style="font-weight:600;">✓ Approve &amp; Advance</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCR-006: VERSION HISTORY MODAL -->
+<!-- ============================================================ -->
+<div class="screen" id="screen-history">
+<div class="page-frame" style="min-height:560px;position:relative;">
+  <div class="navbar">
+    <div class="flex items-center gap-3">
+      <span class="text-blue" style="cursor:pointer;font-size:14px;">← Home</span>
+      <span style="color:var(--border);">|</span>
+      <span style="font-weight:600;">E-Commerce Platform</span>
+    </div>
+    <div class="token-meter"><span>31,200 tokens</span></div>
+  </div>
+  <div style="padding:24px;filter:blur(1px);opacity:.3;">
+    <div style="height:400px;display:flex;align-items:center;justify-content:center;color:var(--muted);">Project Detail (behind modal)</div>
+  </div>
+  <!-- Modal overlay -->
+  <div class="modal-overlay">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span>🕐 Version History</span>
+        <span style="cursor:pointer;color:var(--muted);">✕</span>
+      </div>
+      <div style="padding:4px 0;">
+        <!-- Entries -->
+        <div class="flex items-center justify-between" style="padding:12px 20px;border-bottom:1px solid rgba(39,39,42,.3);">
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <span class="font-mono text-xs text-muted">a3f7b2c</span>
+              <span class="badge badge-green badge-stage">Architecture</span>
+            </div>
+            <div style="font-size:14px;">Approved architecture artifact</div>
+            <div class="text-xs text-muted" style="margin-top:2px;">Mar 24, 2026 · 14:22</div>
+          </div>
+          <button class="btn btn-sm" style="color:#f87171;background:none;border:1px solid rgba(239,68,68,.2);font-size:12px;">Rollback</button>
+        </div>
+        <div class="flex items-center justify-between" style="padding:12px 20px;border-bottom:1px solid rgba(39,39,42,.3);">
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <span class="font-mono text-xs text-muted">e91c4d8</span>
+              <span class="badge badge-blue badge-stage">UX</span>
+            </div>
+            <div style="font-size:14px;">Approved UX wireframes and flow</div>
+            <div class="text-xs text-muted" style="margin-top:2px;">Mar 23, 2026 · 11:05</div>
+          </div>
+          <button class="btn btn-sm" style="color:#f87171;background:none;border:1px solid rgba(239,68,68,.2);font-size:12px;">Rollback</button>
+        </div>
+        <div class="flex items-center justify-between" style="padding:12px 20px;border-bottom:1px solid rgba(39,39,42,.3);">
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <span class="font-mono text-xs text-muted">7b2f1ae</span>
+              <span class="badge badge-blue badge-stage">Vision</span>
+            </div>
+            <div style="font-size:14px;">Approved product vision document</div>
+            <div class="text-xs text-muted" style="margin-top:2px;">Mar 22, 2026 · 09:30</div>
+          </div>
+          <button class="btn btn-sm" style="color:#f87171;background:none;border:1px solid rgba(239,68,68,.2);font-size:12px;">Rollback</button>
+        </div>
+        <div class="flex items-center justify-between" style="padding:12px 20px;border-bottom:1px solid rgba(39,39,42,.3);">
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <span class="font-mono text-xs text-muted">1d0e3fc</span>
+              <span class="badge badge-gray badge-stage">Init</span>
+            </div>
+            <div style="font-size:14px;">Project created</div>
+            <div class="text-xs text-muted" style="margin-top:2px;">Mar 22, 2026 · 09:28</div>
+          </div>
+          <button class="btn btn-sm" style="color:#f87171;background:none;border:1px solid rgba(239,68,68,.2);font-size:12px;">Rollback</button>
+        </div>
+      </div>
+      <!-- Remote section -->
+      <div style="padding:12px 20px;border-top:1px solid var(--border);">
+        <details>
+          <summary style="cursor:pointer;font-size:13px;font-weight:500;color:var(--muted);">▸ Remote</summary>
+          <div style="padding:12px 0;display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-sm">↑ Push</button>
+            <button class="btn btn-secondary btn-sm">↓ Pull</button>
+            <span class="text-xs text-muted" style="align-self:center;">origin: github.com/team/ecommerce</span>
+          </div>
+        </details>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCR-007 + SCR-008 + SCR-010: CONFIGURE PAULETTE PAGE -->
+<!-- ============================================================ -->
+<div class="screen" id="screen-configure">
+<div class="page-frame">
+  <div class="navbar">
+    <div class="logo"><span>P</span>aulette</div>
+    <div class="token-meter">
+      <span>12,480 tokens</span>
+      <div class="token-bar"><div class="token-bar-fill"></div></div>
+    </div>
+  </div>
+  <div style="max-width:720px;margin:0 auto;padding:24px;">
+    <div class="flex items-center gap-2 mb-4">
+      <span class="text-blue text-sm" style="cursor:pointer;">← Home</span>
+    </div>
+    <h1 style="font-size:22px;font-weight:700;margin-bottom:16px;">Configure Paulette</h1>
+
+    <div class="tab-strip" style="padding:0;margin-bottom:24px;">
+      <div class="tab-item active" id="cfg-tab-conn" onclick="showConfigTab('conn')">Connections</div>
+      <div class="tab-item" id="cfg-tab-defaults" onclick="showConfigTab('defaults')">Stage Defaults</div>
+    </div>
+
+    <!-- Connections Tab Content -->
+    <div id="cfg-content-conn">
+      <div class="flex items-center justify-between mb-4">
+        <span class="text-sm text-muted">Manage LLM provider connections</span>
+        <button class="btn btn-primary btn-sm">＋ Add Connection</button>
+      </div>
+
+      <!-- Connection cards -->
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div class="card flex items-center gap-3">
+          <span class="badge badge-purple">Ollama</span>
+          <div class="flex-1">
+            <div style="font-weight:500;">Local Llama3</div>
+            <div class="text-xs text-muted">llama3:8b · http://localhost:11434</div>
+          </div>
+          <span class="text-green text-xs" style="font-weight:500;">✓ Connected</span>
+          <span class="text-blue text-xs" style="cursor:pointer;">Test</span>
+          <span class="text-muted text-xs" style="cursor:pointer;">Edit</span>
+          <span class="text-red text-xs" style="cursor:pointer;">Delete</span>
+        </div>
+
+        <div class="card flex items-center gap-3">
+          <span class="badge badge-orange">Anthropic</span>
+          <div class="flex-1">
+            <div style="font-weight:500;">Work Claude</div>
+            <div class="text-xs text-muted">claude-sonnet-4-20250514</div>
+          </div>
+          <span class="text-green text-xs" style="font-weight:500;">✓ Connected</span>
+          <span class="text-blue text-xs" style="cursor:pointer;">Test</span>
+          <span class="text-muted text-xs" style="cursor:pointer;">Edit</span>
+          <span class="text-red text-xs" style="cursor:pointer;">Delete</span>
+        </div>
+
+        <div class="card flex items-center gap-3">
+          <span class="badge badge-green">OpenAI</span>
+          <div class="flex-1">
+            <div style="font-weight:500;">GPT-4o Org</div>
+            <div class="text-xs text-muted">gpt-4o · org-abc123</div>
+          </div>
+          <span class="text-red text-xs" style="font-weight:500;">✗ Invalid API key</span>
+          <span class="text-blue text-xs" style="cursor:pointer;">Test</span>
+          <span class="text-muted text-xs" style="cursor:pointer;">Edit</span>
+          <span class="text-red text-xs" style="cursor:pointer;">Delete</span>
+        </div>
+
+        <div class="card flex items-center gap-3 highlight-pulse">
+          <span class="badge badge-indigo">LM Studio</span>
+          <div class="flex-1">
+            <div style="font-weight:500;">Dev LM Studio</div>
+            <div class="text-xs text-muted">mistral-7b · http://localhost:1234</div>
+          </div>
+          <span class="text-red text-xs" style="font-weight:500;">✗ Connection refused</span>
+          <span class="text-blue text-xs" style="cursor:pointer;">Test</span>
+          <span class="text-muted text-xs" style="cursor:pointer;">Edit</span>
+          <span class="text-red text-xs" style="cursor:pointer;">Delete</span>
+        </div>
+
+        <div class="card flex items-center gap-3">
+          <span class="badge badge-gray">Claude CLI</span>
+          <div class="flex-1">
+            <div style="font-weight:500;">Default CLI</div>
+            <div class="text-xs text-muted">Uses local claude binary</div>
+          </div>
+          <span class="text-green text-xs" style="font-weight:500;">✓ Available</span>
+          <span class="text-blue text-xs" style="cursor:pointer;">Test</span>
+          <span class="text-muted text-xs" style="cursor:pointer;">Edit</span>
+          <span class="text-red text-xs" style="cursor:pointer;">Delete</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage Defaults Tab Content -->
+    <div id="cfg-content-defaults" style="display:none;">
+      <div class="text-sm text-muted mb-4">Set default connection and model for each pipeline stage.</div>
+      <table class="tbl">
+        <thead>
+          <tr><th>Stage</th><th>Connection</th><th>Model</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="pip pip-blue mr-2"></span> Vision</td>
+            <td>
+              <select class="form-select" style="width:180px;padding:6px 8px;font-size:13px;">
+                <option>Claude CLI (default)</option>
+                <option selected>Work Claude</option>
+                <option>Local Llama3</option>
+                <option>GPT-4o Org</option>
+              </select>
+            </td>
+            <td>
+              <select class="form-select" style="width:160px;padding:6px 8px;font-size:13px;">
+                <option selected>claude-sonnet-4-20250514</option>
+                <option>claude-opus-4-20250514</option>
+              </select>
+            </td>
+            <td><span class="text-green text-xs" style="font-weight:500;">Saved ✓</span></td>
+          </tr>
+          <tr>
+            <td><span class="pip pip-blue mr-2"></span> UX</td>
+            <td>
+              <select class="form-select" style="width:180px;padding:6px 8px;font-size:13px;">
+                <option>Claude CLI (default)</option>
+                <option selected>Work Claude</option>
+                <option>Local Llama3</option>
+              </select>
+            </td>
+            <td>
+              <select class="form-select" style="width:160px;padding:6px 8px;font-size:13px;">
+                <option selected>claude-sonnet-4-20250514</option>
+              </select>
+            </td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><span class="pip pip-blue mr-2"></span> Architecture</td>
+            <td>
+              <select class="form-select" style="width:180px;padding:6px 8px;font-size:13px;">
+                <option>Claude CLI (default)</option>
+                <option selected>Work Claude</option>
+                <option>Local Llama3</option>
+              </select>
+            </td>
+            <td>
+              <select class="form-select" style="width:160px;padding:6px 8px;font-size:13px;">
+                <option>claude-sonnet-4-20250514</option>
+                <option selected>claude-opus-4-20250514</option>
+              </select>
+            </td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><span class="pip pip-blue mr-2"></span> Build</td>
+            <td>
+              <select class="form-select" style="width:180px;padding:6px 8px;font-size:13px;">
+                <option>Claude CLI (default)</option>
+                <option>Work Claude</option>
+                <option selected>Local Llama3</option>
+              </select>
+            </td>
+            <td>
+              <input class="form-input" style="width:160px;padding:6px 8px;font-size:13px;" value="llama3:8b" />
+            </td>
+            <td></td>
+          </tr>
+          <tr>
+            <td><span class="pip pip-blue mr-2"></span> Complete</td>
+            <td>
+              <select class="form-select" style="width:180px;padding:6px 8px;font-size:13px;">
+                <option selected>Claude CLI (default)</option>
+                <option>Work Claude</option>
+                <option>Local Llama3</option>
+              </select>
+            </td>
+            <td><span class="text-xs text-muted">—</span></td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="text-xs text-muted" style="margin-top:16px;">These defaults apply to all new projects. Existing projects can override per-stage from the project's ⚙ settings.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCR-009: CONNECTION FORM PANEL (slide-over) -->
+<!-- ============================================================ -->
+<div class="screen" id="screen-connform">
+<div class="page-frame" style="min-height:580px;position:relative;overflow:hidden;">
+  <div class="navbar">
+    <div class="logo"><span>P</span>aulette</div>
+  </div>
+  <div style="padding:24px;filter:blur(1px);opacity:.15;">
+    <h1 style="font-size:22px;font-weight:700;">Configure Paulette</h1>
+    <div style="height:400px;"></div>
+  </div>
+  <!-- Backdrop -->
+  <div class="slideover-backdrop"></div>
+  <!-- Slide-over panel -->
+  <div class="slideover">
+    <div class="slideover-header">
+      <span style="font-weight:600;font-size:16px;">Add Connection</span>
+      <span style="cursor:pointer;color:var(--muted);font-size:18px;">✕</span>
+    </div>
+    <div class="slideover-body" style="display:flex;flex-direction:column;gap:0;">
+      <div class="form-group">
+        <label class="form-label">Connection Name</label>
+        <input class="form-input" placeholder="e.g. Local Llama3" value="My Anthropic Key" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Provider Type</label>
+        <select class="form-select">
+          <option>Select provider…</option>
+          <option>Ollama</option>
+          <option>LM Studio</option>
+          <option selected>Anthropic API</option>
+          <option>OpenAI</option>
+          <option>Gemini</option>
+          <option>Claude CLI</option>
+          <option disabled>GitHub Copilot — Coming Soon</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">API Key</label>
+        <input class="form-input" type="password" value="sk-ant-xxxxxxxxxxxxxxxx" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Base URL Override <span class="text-xs text-muted">(optional)</span></label>
+        <input class="form-input" placeholder="https://api.anthropic.com" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Default Model</label>
+        <select class="form-select">
+          <option>claude-sonnet-4-20250514</option>
+          <option selected>claude-sonnet-4-20250514</option>
+          <option>claude-opus-4-20250514</option>
+          <option>claude-haiku-4-20250514</option>
+        </select>
+        <div class="text-green text-xs mt-2" style="font-weight:500;">Models fetched from provider ✓</div>
+      </div>
+
+      <!-- Test Connection -->
+      <button class="btn btn-outline-blue btn-full" style="margin-bottom:12px;">Test Connection</button>
+      <div class="flex items-center gap-2" style="justify-content:center;">
+        <span class="text-green text-sm" style="font-weight:500;">✓ Connected</span>
+      </div>
+
+      <!-- Credential warning -->
+      <div class="banner banner-yellow" style="margin-top:16px;font-size:12px;">
+        ⚠ Credentials are saved in plain text to ~/.paulette/connections.json (user-readable only). No keychain integration in v0.2.0.
+      </div>
+    </div>
+    <div class="slideover-footer">
+      <button class="btn btn-primary" style="flex:1;justify-content:center;">Save</button>
+      <button class="btn btn-secondary" style="flex:1;justify-content:center;">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast">
+    ⚠ Credentials saved to ~/.paulette/connections.json (user-readable only). No keychain integration in this version.
+  </div>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCR-011: PROJECT STAGE SETTINGS PANEL -->
+<!-- ============================================================ -->
+<div class="screen" id="screen-projsettings">
+<div class="page-frame" style="min-height:560px;position:relative;overflow:hidden;">
+  <div class="navbar">
+    <div class="flex items-center gap-3">
+      <span class="text-blue" style="cursor:pointer;font-size:14px;">← Home</span>
+      <span style="color:var(--border);">|</span>
+      <span style="font-weight:600;">AI Dashboard</span>
+      <span style="font-size:16px;color:var(--blue);">⚙</span>
+    </div>
+    <div class="token-meter"><span>8,240 tokens</span></div>
+  </div>
+  <div style="padding:24px;filter:blur(1px);opacity:.15;">
+    <div style="height:420px;"></div>
+  </div>
+  <!-- Backdrop -->
+  <div class="slideover-backdrop"></div>
+  <!-- Wide slide-over -->
+  <div class="slideover" style="width:420px;">
+    <div class="slideover-header">
+      <span style="font-weight:600;font-size:15px;">Stage Connection Settings — AI Dashboard</span>
+      <span style="cursor:pointer;color:var(--muted);font-size:18px;">✕</span>
+    </div>
+    <div class="slideover-body">
+      <table class="tbl" style="font-size:13px;">
+        <thead>
+          <tr><th>Stage</th><th>Connection</th><th>Model</th><th style="width:50px;">Inherit</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="pip pip-green mr-2"></span> Vision</td>
+            <td><span class="text-muted">Work Claude</span></td>
+            <td><span class="text-muted">claude-sonnet-4-20250514</span></td>
+            <td><div class="toggle on"></div></td>
+          </tr>
+          <tr>
+            <td><span class="pip pip-green mr-2"></span> UX</td>
+            <td><span class="text-muted">Work Claude</span></td>
+            <td><span class="text-muted">claude-sonnet-4-20250514</span></td>
+            <td><div class="toggle on"></div></td>
+          </tr>
+          <tr style="background:rgba(250,204,21,.04);">
+            <td><span class="pip pip-blue pip-override mr-2"></span> Architecture</td>
+            <td>
+              <select class="form-select" style="padding:4px 6px;font-size:12px;">
+                <option>Claude CLI (default)</option>
+                <option>Work Claude</option>
+                <option selected>Local Llama3</option>
+              </select>
+            </td>
+            <td>
+              <input class="form-input" style="padding:4px 6px;font-size:12px;" value="llama3:70b" />
+            </td>
+            <td><div class="toggle off"></div></td>
+          </tr>
+          <tr>
+            <td><span class="pip pip-gray mr-2"></span> Build</td>
+            <td><span class="text-muted">Local Llama3</span></td>
+            <td><span class="text-muted">llama3:8b</span></td>
+            <td><div class="toggle on"></div></td>
+          </tr>
+          <tr>
+            <td><span class="pip pip-gray mr-2"></span> Complete</td>
+            <td><span class="text-muted">Claude CLI</span></td>
+            <td><span class="text-muted">—</span></td>
+            <td><div class="toggle on"></div></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="text-xs text-muted mt-4">
+        Stages with the Inherit toggle ON use the global defaults from Configure Paulette.
+      </div>
+    </div>
+    <div class="slideover-footer" style="justify-content:flex-start;">
+      <span class="text-red text-sm" style="cursor:pointer;">Reset all to global defaults</span>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ============================================================ -->
+<!-- SCR-012: INLINE CONNECTION ERROR BANNER -->
+<!-- ============================================================ -->
+<div class="screen" id="screen-error">
+<div class="page-frame">
+  <div class="navbar">
+    <div class="flex items-center gap-3">
+      <span class="text-blue" style="cursor:pointer;font-size:14px;">← Home</span>
+      <span style="color:var(--border);">|</span>
+      <span style="font-weight:600;">AI Dashboard</span>
+      <button class="btn-ghost" style="font-size:16px;">⚙</button>
+    </div>
+    <div class="token-meter"><span>8,240 tokens</span></div>
+  </div>
+  <div class="project-layout">
+    <div class="project-sidebar">
+      <div style="font-size:11px;font-weight:600;color:var(--muted);padding:8px 16px;text-transform:uppercase;letter-spacing:.5px;">Pipeline</div>
+      <div class="stage-item"><div class="pip pip-green"></div><span>Vision</span></div>
+      <div class="stage-item"><div class="pip pip-green"></div><span>UX</span></div>
+      <div class="stage-item active-stage"><div class="pip pip-blue"></div><span style="font-weight:500;">Architecture</span></div>
+      <div class="stage-item"><div class="pip pip-gray"></div><span style="color:var(--muted);">Build</span></div>
+      <div class="stage-item"><div class="pip pip-gray"></div><span style="color:var(--muted);">Complete</span></div>
+    </div>
+    <div class="project-center" style="grid-column:span 2;">
+      <div class="flex items-center justify-between" style="padding:10px 16px;border-bottom:1px solid var(--border);">
+        <div class="flex items-center gap-2">
+          <div class="pip pip-blue"></div>
+          <span style="font-weight:600;">Architecture</span>
+        </div>
+      </div>
+      <div class="tab-strip">
+        <div class="tab-item active">Chat</div>
+        <div class="tab-item">Artifact</div>
+      </div>
+      <div class="chat-messages flex-1 overflow-auto" style="max-height:260px;">
+        <div class="msg msg-ai">
+          I'll analyze the UX artifacts and design the system architecture. Let me start by reviewing the approved wireframes and user flows…
+        </div>
+        <div class="msg msg-user">
+          Please use a microservices approach with event-driven communication.
+        </div>
+        <div class="msg msg-ai" style="color:#a1a1aa;">
+          Understood. I'll design the architecture with event-driven micro—
+        </div>
+        <!-- ERROR BANNER -->
+        <div class="banner banner-error" style="margin:4px 0;border-radius:8px;padding:14px 16px;align-items:flex-start;">
+          <span style="font-size:16px;flex-shrink:0;">⚠</span>
+          <div style="flex:1;">
+            <div style="font-weight:500;margin-bottom:4px;color:#fca5a5;">Connection "Dev LM Studio" is unreachable.</div>
+            <div class="text-xs" style="color:#f87171;opacity:.8;margin-bottom:10px;">Connection refused at http://localhost:1234 — ensure LM Studio is running.</div>
+            <div class="flex gap-3">
+              <span class="text-blue text-sm" style="cursor:pointer;font-weight:500;">Go to Configure →</span>
+              <span class="text-muted text-sm" style="cursor:pointer;">Change stage connection</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="chat-input-area">
+        <input class="chat-input" placeholder="Send a message…" />
+        <button class="btn btn-primary btn-sm">→</button>
+      </div>
+      <div class="approve-bar">
+        <button class="btn btn-green btn-full btn-disabled" style="font-weight:600;">✓ Approve &amp; Advance</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.screen-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+  const tabs = document.querySelectorAll('.screen-tab');
+  const map = ['home','project','mock','dag','history','configure','connform','projsettings','error'];
+  const idx = map.indexOf(id);
+  if (idx >= 0 && tabs[idx]) tabs[idx].classList.add('active');
+}
+
+function showConfigTab(tab) {
+  document.getElementById('cfg-content-conn').style.display = tab === 'conn' ? 'block' : 'none';
+  document.getElementById('cfg-content-defaults').style.display = tab === 'defaults' ? 'block' : 'none';
+  document.getElementById('cfg-tab-conn').classList.toggle('active', tab === 'conn');
+  document.getElementById('cfg-tab-defaults').classList.toggle('active', tab === 'defaults');
+}
+</script>
+
+</body>
+</html>

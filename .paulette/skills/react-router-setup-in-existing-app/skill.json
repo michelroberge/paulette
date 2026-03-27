@@ -1,0 +1,42 @@
+{
+  "id": "react-router-setup-in-existing-app",
+  "name": "React Router Setup in Existing App",
+  "description": "Adds client-side routing to an existing React app that uses state-based navigation, preserving all existing views while introducing URL-based routes and query param support.",
+  "category": "frontend",
+  "tags": [
+    "react",
+    "react-router",
+    "typescript",
+    "routing",
+    "spa",
+    "navigation"
+  ],
+  "version": 1,
+  "parameters": [
+    {
+      "name": "routes",
+      "description": "JSON array of route descriptors: [{path, component, description}]",
+      "default": "[]"
+    },
+    {
+      "name": "existingNavPattern",
+      "description": "Description of the current navigation pattern being replaced (e.g. useState with view enum)"
+    },
+    {
+      "name": "queryParams",
+      "description": "Comma-separated list of query params to parse and pass to components (e.g. tab, highlight)"
+    },
+    {
+      "name": "deepLinkExample",
+      "description": "Example of a deep-link that must work (e.g. /configure?tab=connections\u0026highlight=uuid)"
+    },
+    {
+      "name": "packageManager",
+      "description": "Package manager to use for install command (npm/yarn/pnpm)",
+      "default": "npm"
+    }
+  ],
+  "createdAt": "2026-03-25T22:50:12.38849372Z",
+  "updatedAt": "2026-03-25T22:50:12.38849372Z",
+  "createdBy": "paulette"
+}

@@ -1,0 +1,169 @@
+{
+  "sessions": [
+    {
+      "id": "160ed65e-6cb6-4f08-842e-41319a758ead",
+      "stage": "vision",
+      "kind": "chat",
+      "iteration": 2,
+      "startedAt": "2026-03-25T20:20:59.372910637Z",
+      "endedAt": "2026-03-25T20:22:16.537444277Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 3471
+    },
+    {
+      "id": "5d376842-fbad-4ae1-88a0-7bb660a4d2ba",
+      "stage": "vision",
+      "kind": "chat",
+      "iteration": 2,
+      "startedAt": "2026-03-25T20:26:33.775913513Z",
+      "endedAt": "2026-03-25T20:27:46.499702105Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 2999
+    },
+    {
+      "id": "4ce8f930-1472-4d28-9179-d38673f7c736",
+      "stage": "ux",
+      "kind": "chat",
+      "iteration": 2,
+      "startedAt": "2026-03-25T20:29:00.079973379Z",
+      "endedAt": "2026-03-25T20:33:01.875178915Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 13210
+    },
+    {
+      "id": "f6669300-a4ea-4324-b5dd-321044b6e9b6",
+      "stage": "ux",
+      "kind": "mock",
+      "iteration": 2,
+      "startedAt": "2026-03-25T20:34:37.445080271Z",
+      "endedAt": "2026-03-25T20:38:37.345968686Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 20120
+    },
+    {
+      "id": "413a26d5-3007-42e4-aa83-e31adf830256",
+      "stage": "architecture",
+      "kind": "chat",
+      "iteration": 2,
+      "startedAt": "2026-03-25T20:44:38.413951384Z",
+      "endedAt": "2026-03-25T20:50:24.720815385Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 12709
+    },
+    {
+      "id": "61d4392c-91a6-4f2e-b262-2f726f766dde",
+      "stage": "build",
+      "kind": "chat",
+      "iteration": 2,
+      "startedAt": "2026-03-25T21:09:50.003936752Z",
+      "endedAt": "2026-03-25T21:14:36.011921168Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 8377
+    },
+    {
+      "id": "c3a64c7e-e649-4deb-b378-2b0be68707c2",
+      "stage": "build",
+      "kind": "skills-observe",
+      "iteration": 2,
+      "startedAt": "2026-03-25T23:55:27.119796475Z",
+      "endedAt": "2026-03-26T00:15:38.506050259Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 6301
+    },
+    {
+      "id": "91fd2f57-f10f-49e7-9f15-57f5f6a8f2b9",
+      "stage": "build",
+      "kind": "skills-observe",
+      "iteration": 2,
+      "startedAt": "2026-03-25T23:55:27.119796475Z",
+      "endedAt": "2026-03-26T00:32:22.778829172Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 6031
+    },
+    {
+      "id": "9708973a-baa8-4eeb-a2f2-504189bb5fcc",
+      "stage": "build",
+      "kind": "beads-execute",
+      "iteration": 2,
+      "startedAt": "2026-03-25T23:55:27.137217195Z",
+      "endedAt": "2026-03-26T00:38:56.703746767Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 208793
+    },
+    {
+      "id": "ea726f30-437b-4cdb-8ff1-5adcbeeb48ef",
+      "stage": "build",
+      "kind": "skills-observe",
+      "iteration": 2,
+      "startedAt": "2026-03-26T12:17:24.829398634Z",
+      "endedAt": "2026-03-26T12:38:23.651373873Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 5985
+    },
+    {
+      "id": "654e7fb8-f7e6-46aa-b11e-45e8034eb4ae",
+      "stage": "build",
+      "kind": "skills-observe",
+      "iteration": 2,
+      "startedAt": "2026-03-26T12:54:20.687281642Z",
+      "endedAt": "2026-03-26T13:09:44.130608383Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 4357
+    },
+    {
+      "id": "4b6a1e04-4caa-4433-9284-a5144a39dafe",
+      "stage": "build",
+      "kind": "skills-observe",
+      "iteration": 2,
+      "startedAt": "2026-03-26T12:54:20.687281642Z",
+      "endedAt": "2026-03-26T13:25:52.442127092Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 6008
+    },
+    {
+      "id": "5e71d255-94bf-4f1e-9ad3-7496b9cb12e6",
+      "stage": "build",
+      "kind": "beads-execute",
+      "iteration": 2,
+      "startedAt": "2026-03-26T14:46:30.829466516Z",
+      "endedAt": "2026-03-26T15:08:46.46234451Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 40102
+    },
+    {
+      "id": "c8f0dca3-0356-4222-9e52-e01b00e5fcb2",
+      "stage": "build",
+      "kind": "skills-observe",
+      "iteration": 2,
+      "startedAt": "2026-03-26T21:06:59.644485534Z",
+      "endedAt": "2026-03-26T21:27:33.990176092Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 6504
+    },
+    {
+      "id": "f44eef9f-df81-4e67-82d8-96c98020f129",
+      "stage": "complete",
+      "kind": "summary",
+      "iteration": 2,
+      "startedAt": "2026-03-26T23:18:51.710818416Z",
+      "endedAt": "2026-03-26T23:20:14.160901755Z",
+      "inputTokens": 0,
+      "outputTokens": 0,
+      "totalTokens": 3221
+    }
+  ]
+}

@@ -12,11 +12,12 @@ interface Props {
   totalTokens?: number;
   onShowHistory?: () => void;
   onShowProfile?: () => void;
+  onShowStageSettings?: () => void;
   autonomous?: boolean;
   onToggleAutonomous?: () => void;
 }
 
-export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onShowProfile, autonomous, onToggleAutonomous }: Readonly<Props>) {
+export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onShowProfile, onShowStageSettings, autonomous, onToggleAutonomous }: Readonly<Props>) {
   return (
     <header className="project-header">
       <button className="back-button" onClick={onBack}>&larr;</button>
@@ -38,6 +39,16 @@ export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onS
           title={autonomous ? 'Autonomous mode ON — phases auto-advance' : 'Manual mode — approve each phase manually'}
         >
           {autonomous ? 'Auto' : 'Manual'}
+        </button>
+      )}
+      {onShowStageSettings && (
+        <button
+          className="stage-settings-button"
+          onClick={onShowStageSettings}
+          title="Stage connection settings"
+          aria-label="Stage connection settings"
+        >
+          ⚙
         </button>
       )}
       {onShowHistory && (

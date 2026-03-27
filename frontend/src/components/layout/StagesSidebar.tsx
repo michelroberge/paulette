@@ -15,6 +15,8 @@ interface Props {
   selectedStage: StageName | null;
   onReset: (stage: StageName) => void;
   stageTokens?: Partial<Record<StageName, number>>;
+  /** Set of stage names that have a project-level connection override active. */
+  stagesWithOverrides?: Set<StageName>;
 }
 
 const stageLabels: Record<StageName, string> = {
@@ -25,7 +27,7 @@ const stageLabels: Record<StageName, string> = {
   complete: 'Complete',
 };
 
-export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset, stageTokens }: Readonly<Props>) {
+export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset, stageTokens, stagesWithOverrides }: Readonly<Props>) {
   const [confirmStage, setConfirmStage] = useState<StageName | null>(null);
   const [appVersion, setAppVersion] = useState('');
   const [appAuthor, setAppAuthor] = useState('');
@@ -68,7 +70,12 @@ export function StagesSidebar({ pipeline, onSelectStage, selectedStage, onReset,
                 onClick={() => stage.status !== 'locked' && onSelectStage(stage.name)}
               >
                 <div className="stage-item-row">
-                  <StageRobot stage={stage.name} activity={stage.activity} />
+                  <span
+                    className={stagesWithOverrides?.has(stage.name) ? 'stage-robot-wrapper stage-robot-wrapper--override' : 'stage-robot-wrapper'}
+                    title={stagesWithOverrides?.has(stage.name) ? 'Custom connection override active for this stage' : undefined}
+                  >
+                    <StageRobot stage={stage.name} activity={stage.activity} />
+                  </span>
                   <span className="stage-name">{stageLabels[stage.name]}</span>
                   {(stageTokens?.[stage.name] ?? 0) > 0 && (
                     <span className="stage-token-count">{formatTokens(stageTokens![stage.name]!)}</span>

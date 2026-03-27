@@ -84,3 +84,20 @@ export function getWorkingDiff(projectId: string): Promise<WorkingDiffEntry[]> {
 export function pull(projectId: string): Promise<{ project: Project; pipeline: PipelineState }> {
   return apiFetch(`/projects/${projectId}/git/pull`, { method: 'POST' });
 }
+
+export interface GlobalGitIdentity { name: string; email: string; }
+
+export function getGlobalSSHKey(): Promise<{ publicKey: string }> {
+  return apiFetch('/git/ssh-key');
+}
+
+export function getGlobalIdentity(): Promise<GlobalGitIdentity> {
+  return apiFetch('/git/identity');
+}
+
+export function setGlobalIdentity(name: string, email: string): Promise<void> {
+  return apiFetch('/git/identity', {
+    method: 'POST',
+    body: JSON.stringify({ name, email }),
+  });
+}

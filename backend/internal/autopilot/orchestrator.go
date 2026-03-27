@@ -2,6 +2,7 @@ package autopilot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/handler"
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/repository"
@@ -74,8 +76,9 @@ func NewOrchestrator(
 	}
 }
 
-// StartAll resumes autonomous goroutines for all in-progress autonomous projects.
-// Also marks any stale "running" activities as failed (the process died mid-run).
+// StartAll resumes any in-progress operations and starts autonomous goroutines.
+// For each project, stale "running" activities are either restarted (mock,
+// beads-generate, beads-execute) or marked as failed (chat, summary).
 // Call once at server startup in a goroutine.
 func (o *Orchestrator) StartAll() {
 	projects, err := o.registry.List()
@@ -84,29 +87,81 @@ func (o *Orchestrator) StartAll() {
 		return
 	}
 	for _, p := range projects {
-		o.clearStaleActivities(&p)
+		o.resumeOrClearStaleActivities(&p)
 		if p.Autonomous {
 			o.Ensure(p.ID)
 		}
 	}
 }
 
-// clearStaleActivities marks any "running" activity entries as failed.
-// Called at startup because the process that set them is no longer alive.
-func (o *Orchestrator) clearStaleActivities(p *model.Project) {
+// resumeOrClearStaleActivities handles stale "running" activity entries at startup.
+// Restartable operations (mock, beads-generate, beads-execute) are restarted so
+// they pick up where they left off. For autonomous projects, stale chat activities
+// are cleared so the orchestrator re-evaluates the stage cleanly. Everything else
+// is marked as failed so the UI shows what happened.
+func (o *Orchestrator) resumeOrClearStaleActivities(p *model.Project) {
 	activities, err := o.activityRepo.ReadActivity(p.HostDir)
 	if err != nil || len(activities) == 0 {
 		return
 	}
 	for stage, a := range activities {
-		if a.Status == "running" {
-			updated := *a
-			updated.Status = "failed"
-			updated.Error = "server restarted while this operation was running"
-			if setErr := o.activityRepo.SetActivity(p.HostDir, stage, &updated); setErr != nil {
-				log.Printf("orchestrator: clearStaleActivities(%s/%s): %v", p.ID, stage, setErr)
-			}
+		if a.Status != "running" {
+			continue
 		}
+		if o.tryResumeStaleActivity(p, stage, a) {
+			log.Printf("orchestrator: resumed stale %s/%s for project %s", stage, a.Operation, p.ID)
+			continue
+		}
+		updated := *a
+		updated.Status = "failed"
+		updated.Error = "server restarted while this operation was running"
+		if setErr := o.activityRepo.SetActivity(p.HostDir, stage, &updated); setErr != nil {
+			log.Printf("orchestrator: resumeOrClearStaleActivities(%s/%s): %v", p.ID, stage, setErr)
+		}
+	}
+}
+
+// tryResumeStaleActivity attempts to restart a stale operation.
+// Returns true if the operation was successfully restarted or cleanly cleared,
+// false if it should be marked as failed instead.
+func (o *Orchestrator) tryResumeStaleActivity(p *model.Project, stage model.StageName, a *model.StageActivity) bool {
+	switch a.Operation {
+	case "mock":
+		if _, err := o.mockH.StartMockRun(p, ""); err != nil {
+			log.Printf("orchestrator: failed to resume mock for %s: %v", p.ID, err)
+			return false
+		}
+		return true
+
+	case "beads-generate":
+		if _, err := o.beadH.StartGenerateRun(p); err != nil {
+			log.Printf("orchestrator: failed to resume beads-generate for %s: %v", p.ID, err)
+			return false
+		}
+		return true
+
+	case "beads-execute":
+		if _, err := o.beadH.StartExecuteRun(p, 2); err != nil {
+			log.Printf("orchestrator: failed to resume beads-execute for %s: %v", p.ID, err)
+			return false
+		}
+		return true
+
+	case "chat":
+		// For autonomous projects the orchestrator will re-evaluate the stage and
+		// re-run if the artifact is still missing. Clear the stale activity so the
+		// UI doesn't show a false "running" badge while the orchestrator catches up.
+		if p.Autonomous {
+			if clearErr := o.activityRepo.ClearActivity(p.HostDir, stage); clearErr != nil {
+				log.Printf("orchestrator: failed to clear stale chat activity for %s/%s: %v", p.ID, stage, clearErr)
+			}
+			return true
+		}
+		// Non-autonomous chat needs user context to restart; mark as failed.
+		return false
+
+	default:
+		return false
 	}
 }
 
@@ -196,6 +251,22 @@ func (o *Orchestrator) runProject(ctx context.Context, projectID string) {
 		}
 
 		if stageErr != nil {
+			var planErr *agent.PlanLimitError
+			if errors.As(stageErr, &planErr) {
+				resetAt := parseResetTime(planErr.Message)
+				waitDur := time.Until(resetAt)
+				if waitDur < time.Minute {
+					waitDur = time.Hour // fallback: no parseable reset time, wait 1 hour
+				}
+				log.Printf("orchestrator[%s]: plan limit reached — waiting %v until %v then retrying", projectID, waitDur.Round(time.Second), resetAt.Format(time.RFC3339))
+				select {
+				case <-time.After(waitDur):
+					log.Printf("orchestrator[%s]: resuming after plan limit wait", projectID)
+					continue
+				case <-ctx.Done():
+					return
+				}
+			}
 			log.Printf("orchestrator[%s]: stage %s error: %v", projectID, project.CurrentStage, stageErr)
 			return
 		}
@@ -273,7 +344,7 @@ func (o *Orchestrator) handleBuildStage(ctx context.Context, project *model.Proj
 	}
 
 	// Generate beads if missing
-	graph, _ := fsrepo.ReadBeadGraph(project.HostDir)
+	graph, _ := fsrepo.ReadBdBeadGraph(ctx, project.HostDir)
 	if graph == nil || len(graph.Beads) == 0 {
 		run, err := o.startOrJoinGenerateRun(ctx, project)
 		if err != nil {
@@ -484,6 +555,7 @@ func (o *Orchestrator) startOrJoinExecuteRun(ctx context.Context, project *model
 }
 
 // waitForRunDone subscribes to a run and blocks until it finishes or ctx is cancelled.
+// Returns agent.ErrPlanLimit (as *agent.PlanLimitError) if Claude hits its usage limit.
 func (o *Orchestrator) waitForRunDone(ctx context.Context, run *stream.Run) error {
 	ch, _ := run.Subscribe(0)
 	for {
@@ -495,10 +567,59 @@ func (o *Orchestrator) waitForRunDone(ctx context.Context, run *stream.Run) erro
 			if event.Type == "error" {
 				return fmt.Errorf("run error: %s", event.Content)
 			}
+			if event.Type == "plan_limit" {
+				return &agent.PlanLimitError{Message: event.Content}
+			}
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
+}
+
+// parseResetTime tries to extract a future reset time from a Claude CLI plan-limit message.
+// Handles ISO 8601 timestamps, "January 2, 2006 at 3:04 PM MST", and bare "3:04 PM MST".
+// Returns time.Now().Add(1 hour) as a fallback when no time can be parsed.
+func parseResetTime(msg string) time.Time {
+	fallback := time.Now().Add(time.Hour)
+
+	// ISO 8601 / RFC3339
+	rfc := regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s,]*`)
+	if m := rfc.FindString(msg); m != "" {
+		for _, layout := range []string{time.RFC3339, time.RFC3339Nano} {
+			if t, err := time.Parse(layout, m); err == nil {
+				return t
+			}
+		}
+	}
+
+	// "January 2, 2006 at 3:04 PM MST" or "Jan 2, 2006 at 3:04 PM MST"
+	fullRe := regexp.MustCompile(`(?i)((?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}\s+(?:at\s+)?\d{1,2}:\d{2}\s+[AP]M(?:\s+[A-Z]{2,5})?)`)
+	if m := fullRe.FindString(msg); m != "" {
+		m = regexp.MustCompile(`(?i)\bat\b\s*`).ReplaceAllString(m, "")
+		for _, layout := range []string{"January 2, 2006 3:04 PM MST", "Jan 2, 2006 3:04 PM MST", "January 2 2006 3:04 PM MST"} {
+			if t, err := time.Parse(layout, strings.TrimSpace(m)); err == nil {
+				return t
+			}
+		}
+	}
+
+	// Bare time "3:04 PM MST" — assume today, or tomorrow if already past
+	bareRe := regexp.MustCompile(`(?i)\b(\d{1,2}:\d{2}\s+[AP]M(?:\s+[A-Z]{2,5})?)\b`)
+	if m := bareRe.FindString(msg); m != "" {
+		now := time.Now()
+		base := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		for _, layout := range []string{"3:04 PM MST", "3:04 PM"} {
+			if t, err := time.Parse(layout, strings.TrimSpace(m)); err == nil {
+				candidate := base.Add(time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute)
+				if candidate.Before(now) {
+					candidate = candidate.Add(24 * time.Hour)
+				}
+				return candidate
+			}
+		}
+	}
+
+	return fallback
 }
 
 func extractSuggestions(summary string) string {

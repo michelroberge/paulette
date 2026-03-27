@@ -2,15 +2,34 @@
   "id": "9287a19a-3bba-447e-a22b-7abdf79511de",
   "name": "paulette",
   "author": "Michel Roberge",
-  "version": "0.1.0",
-  "hostDir": "/root/repos/paulette",
-  "currentStage": "complete",
-  "iteration": 1,
+  "version": "0.3.0",
+  "hostDir": "/home/paulette/repos/paulette",
+  "currentStage": "vision",
+  "iteration": 3,
+  "enhancementVision": "Lenient XML-envelope parser / model capability fallback — Smaller models (Ollama gemma3:4b, Gemini small variants) frequently fail to follow the strict \u003cresponse\u003e\u003cartifact\u003e...\u003c/artifact\u003e\u003c/response\u003e format that agent/parse.go requires, silently breaking artifact extraction. Adding a lenient parsing mode (e.g., treat all content as artifact body if no envelope detected) or a per-provider response format setting would dramatically improve reliability with local/small models. \nAutomatic provider failover / retry — Currently, a connection failure during streaming surfaces an error and stops. Adding optional fallback logic (e.g., \"if primary connection fails, try fallback connection X\") would improve pipeline resilience for autonomous/hands-free mode, where an unattended failure halts the entire run. Could be a simple per-stage \"fallback connection\" field in the Stage Defaults UI. Also, in configuration section, let's add a step in the background to test capabilities so we can tag each connection properly and define the proper strategy to get response. We should already implement current xml, json, plain text response.",
   "imported": true,
-  "summaryReady": true,
-  "summaryApproved": true,
+  "summaryReady": false,
   "autonomous": false,
   "baseBranch": "develop",
+  "devCommands": [
+    "cd /home/paulette/repos/paulette/frontend \u0026\u0026 npm run dev",
+    "cd /home/paulette/repos/paulette/backend \u0026\u0026 go run main.go"
+  ],
+  "buildCommands": [
+    "cd /home/paulette/repos/paulette/frontend \u0026\u0026 npm run build",
+    "cd /home/paulette/repos/paulette/backend \u0026\u0026 go build -o paulette ./main.go"
+  ],
+  "runCommands": [
+    "cd /home/paulette/repos/paulette/backend \u0026\u0026 ./paulette"
+  ],
+  "summaryTokens": 3221,
+  "stageTokens": {
+    "architecture": 12709,
+    "build": 289652,
+    "complete": 3221,
+    "ux": 33330,
+    "vision": 6470
+  },
   "createdAt": "2026-03-25T14:40:10.532830075Z",
-  "updatedAt": "2026-03-25T19:38:29.588556948Z"
+  "updatedAt": "2026-03-26T23:42:00.824763689Z"
 }

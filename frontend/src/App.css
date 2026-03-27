@@ -605,6 +605,23 @@ body {
   background: #b91c1c;
 }
 
+.close-verified-button {
+  padding: 0.35rem 0.9rem;
+  background: #15803d;
+  color: white;
+  border: 1px solid #16a34a;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.close-verified-button:hover {
+  background: #166534;
+}
+
 .chat-input .stop-button {
   padding: 0.75rem 1.5rem;
   font-size: 0.9rem;
@@ -1144,6 +1161,31 @@ body {
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
   border: 1px solid #334155;
   border-radius: 12px;
+  position: relative;
+}
+
+.paulette-banner-cog {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  transition: color 0.15s;
+  display: flex;
+  align-items: center;
+}
+
+.paulette-banner-cog svg {
+  width: 2rem;
+  height: 2rem;
+}
+
+.paulette-banner-cog:hover {
+  color: #94a3b8;
 }
 
 .paulette-ascii {
@@ -1701,7 +1743,21 @@ body {
   flex-direction: column;
   border-left: 1px solid #334155;
   background: #0f172a;
-  overflow: hidden;
+  overflow-y: auto;
+}
+
+.execute-paulette {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.execute-details-empty {
+  padding: 1.5rem 1rem;
+  color: #64748b;
+  font-size: 0.85rem;
+  line-height: 1.6;
 }
 
 /* Bead config bar */
@@ -1900,6 +1956,25 @@ body {
   color: #64748b;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* Stage connection settings gear icon button */
+.stage-settings-button {
+  padding: 0.3rem 0.5rem;
+  background: transparent;
+  border: 1px solid #475569;
+  border-radius: 6px;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.stage-settings-button:hover {
+  color: #e2e8f0;
+  border-color: #64748b;
+  background: rgba(100, 116, 139, 0.15);
 }
 
 /* History button in project header */
@@ -3846,6 +3921,23 @@ body {
 }
 
 /* ── Stage robot icons ─────────────────────────────────────── */
+
+/* Wrapper for stage robot icon — used to apply override ring accent */
+.stage-robot-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+
+/* Yellow ring accent when a project-level connection override is active for a stage */
+.stage-robot-wrapper--override {
+  outline: 2px solid #facc15;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 
 .stage-robot {
   position: relative;

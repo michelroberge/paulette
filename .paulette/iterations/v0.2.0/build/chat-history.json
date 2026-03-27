@@ -1,0 +1,25 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "Generate build plan for this iteration enhancements",
+      "timestamp": "2026-03-25T20:57:13.401647382Z"
+    },
+    {
+      "role": "user",
+      "content": "Generate build plan for this iteration enhancements",
+      "timestamp": "2026-03-25T21:01:20.929229198Z"
+    },
+    {
+      "role": "user",
+      "content": "This is an enhancement iteration. Here's what I want to improve: I would like to support different tools than Claude. Not everything makes sense, but in some places, it would. Therefore, I would like to add an abastraction layer in front of the calls to claude, and a way to configure different tools like ollama, open ai, gemini, copilot, and lm studio. We should be able to set the URL, perform the login (or setup credentials), ollama url should be configurable. Then, we'd need a place to be able to setup at each step, which connection to use, and which model. If we can retrieve the model, great, but if we can't it's fine to just let the user enter the model manually. I would like to be able to do this from a setup page, perhaps accessible from the home page. I expect this would write to json file inside the paulette workdir",
+      "timestamp": "2026-03-25T21:09:49.868316626Z"
+    },
+    {
+      "role": "assistant",
+      "content": "I've thoroughly explored the existing Paulette codebase to understand the current architecture, file structure, and patterns. The build plan below covers only the incremental changes needed for v0.2.0 — the pluggable LLM provider layer. Tasks are organized into 6 milestones with clear dependencies, traceability to journey/architecture IDs, and acceptance criteria.\n\nKey observations from the codebase that inform the plan:\n- `agent.Chat()` in `agent/agent.go` is the single integration point — it spawns `claude` CLI and returns `\u003c-chan StreamEvent`\n- `handler/chat.go` has a hardcoded `stageModels` map that assigns Claude models per stage\n- The frontend has no URL-based routing (all state-driven in `App.tsx`) — we need to add React Router\n- `~/.paulette/settings.json` exists but `connections.json` and `config.json` do not yet\n- The `stream.Run` / SSE pattern is well-established and the new providers just need to emit the same `StreamEvent` types",
+      "timestamp": "2026-03-25T21:14:35.991461988Z"
+    }
+  ],
+  "nextTurn": ""
+}

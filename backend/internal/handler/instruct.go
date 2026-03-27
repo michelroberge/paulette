@@ -97,7 +97,7 @@ func (h *InstructHandler) Plan(w http.ResponseWriter, r *http.Request) {
 	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
 	archContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
 
-	graph, _ := fsrepo.ReadBeadGraph(project.HostDir)
+	graph, _ := fsrepo.ReadBdBeadGraph(r.Context(), project.HostDir)
 	var graphJSON string
 	if graph != nil {
 		b, _ := json.MarshalIndent(graph.Beads, "", "  ")
@@ -188,8 +188,6 @@ func (h *InstructHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	}
 	var created []createdBead
 
-	mu := beadGraphLock(project.HostDir)
-
 	for _, nb := range plan.NewBeads {
 		beadType := nb.Type
 		if beadType == "" {
@@ -207,20 +205,11 @@ func (h *InstructHandler) Apply(w http.ResponseWriter, r *http.Request) {
 			bdDepAdd(ctx, project.HostDir, beadID, dep)
 		}
 
-		// Persist extended metadata to graph
-		updateGraphBeadFields(mu, project.HostDir, beadID, func(b *model.Bead) {
-			if nb.EpicID != "" {
-				b.EpicID = nb.EpicID
-			}
-			if len(nb.TargetFiles) > 0 {
-				b.TargetFiles = nb.TargetFiles
-			}
-			if len(nb.Tags) > 0 {
-				b.Tags = nb.Tags
-			}
-			if len(nb.Deps) > 0 {
-				b.Deps = nb.Deps
-			}
+		// Persist extended metadata to bd notes
+		fsrepo.WriteBeadMeta(ctx, project.HostDir, beadID, &fsrepo.BeadMeta{ //nolint:errcheck
+			EpicID:      nb.EpicID,
+			TargetFiles: nb.TargetFiles,
+			Tags:        nb.Tags,
 		})
 
 		created = append(created, createdBead{RequestedTitle: nb.Title, ID: beadID})
@@ -230,20 +219,14 @@ func (h *InstructHandler) Apply(w http.ResponseWriter, r *http.Request) {
 	for _, ub := range plan.UpdatedBeads {
 		if ub.Description != nil {
 			runBd(ctx, project.HostDir, "update", ub.ID, "--description", *ub.Description)
-			updateGraphBeadFields(mu, project.HostDir, ub.ID, func(b *model.Bead) {
-				b.Description = *ub.Description
-			})
 		}
 		if ub.Title != nil {
 			runBd(ctx, project.HostDir, "update", ub.ID, "--title", *ub.Title)
-			updateGraphBeadFields(mu, project.HostDir, ub.ID, func(b *model.Bead) {
-				b.Title = *ub.Title
-			})
 		}
 	}
 
 	// Return updated graph
-	graph, _ := fsrepo.ReadBeadGraph(project.HostDir)
+	graph, _ := fsrepo.ReadBdBeadGraph(ctx, project.HostDir)
 
 	resp := struct {
 		Created []createdBead     `json:"created"`

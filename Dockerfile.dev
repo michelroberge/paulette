@@ -1,43 +1,53 @@
-# Dev image: mounts source from host, uses air for Go hot reload.
-# Build: make dev-docker-build
-# Run:   make dev-docker-up
+# Dev image: Go + Node + air + all runtime tools
+# Source is mounted as a volume — no build step. Changes on the host are reflected immediately.
+# Usage: docker compose -f docker-compose.dev.yml up --build
 FROM golang:1.26-bookworm
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    curl \
-    ca-certificates \
+# Install Node 22, system deps, air, and Docker-only runtime deps
+# In the official golang image GOPATH=/go, so air lands at /go/bin/air
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends \
+        nodejs \
+        git \
+        curl \
+        ca-certificates \
+        openssh-client \
+        gosu \
     && rm -rf /var/lib/apt/lists/* \
-    # Node 22
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    # Dolt — version-controlled issue tracking (used by beads)
+    && go install github.com/air-verse/air@latest \
+    && cp /go/bin/air /usr/local/bin/air \
     && curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash \
-    # Claude Code CLI
     && npm install -g @anthropic-ai/claude-code \
-    # beads (bd) issue tracker
     && (npm install -g @beads/bd 2>/dev/null || curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash) \
     && bd --version \
-    # air — Go live-reload tool
-    && go install github.com/air-verse/air@latest \
-    # repos dir + Claude Code permissions for non-interactive agent use
-    && mkdir -p /root/repos /root/.claude \
-    && printf '%s' \
-         '{"permissions":{"allow":[' \
-         '"Write(/root/repos/**)",' \
-         '"Edit(/root/repos/**)",' \
-         '"Bash(*)",' \
-         '"Read(/root/repos/**)"' \
-         ']}}' \
-         > /root/.claude/settings.json
+    && (curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh || echo "rtk install skipped (optional)")
 
-WORKDIR /workspace
+COPY entrypoint.dev.sh /entrypoint.dev.sh
+RUN chmod +x /entrypoint.dev.sh && \
+    useradd -m -s /bin/bash paulette && \
+    mkdir -p /home/paulette/.paulette /home/paulette/repos /home/paulette/.claude && \
+    printf '%s' \
+        '{"permissions":{"allow":[' \
+        '"Write(/home/paulette/repos/**)",' \
+        '"Edit(/home/paulette/repos/**)",' \
+        '"Bash(*)",' \
+        '"Read(/home/paulette/repos/**)"' \
+        ']}}' \
+        > /home/paulette/.claude/settings.json && \
+    chown -R paulette:paulette /home/paulette/.paulette \
+                               /home/paulette/repos \
+                               /home/paulette/.claude && \
+    su paulette -c "git config --global --add safe.directory '*'" && \
+    # Allow paulette to write to the Go module cache (/go is GOPATH in the golang image)
+    mkdir -p /go/pkg/mod && chown -R paulette:paulette /go
 
-ENV HOME=/root \
-    REGISTRY_PATH=/root/.paulette \
-    REPOS_PATH=/root/repos \
+ENV HOME=/home/paulette \
+    REGISTRY_PATH=/home/paulette/.paulette \
+    REPOS_PATH=/home/paulette/repos \
     CLAUDE_PATH=claude \
     PORT=8080
 
-EXPOSE 8080 5173
+WORKDIR /app/backend
+EXPOSE 8080
+
+ENTRYPOINT ["/entrypoint.dev.sh"]

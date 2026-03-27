@@ -1,0 +1,48 @@
+{
+  "id": "go-file-persisted-store-with-mutex",
+  "name": "Go File-Persisted Store with Mutex",
+  "description": "Creates a Go struct that manages a slice of records persisted to a JSON file, with atomic writes (write-to-temp + rename), chmod permissions, sync.RWMutex concurrency safety, and full CRUD methods.",
+  "category": "backend",
+  "tags": [
+    "go",
+    "persistence",
+    "file-storage",
+    "crud",
+    "concurrency",
+    "json",
+    "mutex"
+  ],
+  "version": 1,
+  "parameters": [
+    {
+      "name": "entityName",
+      "description": "Name of the entity being stored (e.g. Connection, Project)"
+    },
+    {
+      "name": "packageName",
+      "description": "Go package name",
+      "default": "store"
+    },
+    {
+      "name": "filePath",
+      "description": "Path expression for the JSON file (e.g. ~/.paulette/connections.json)"
+    },
+    {
+      "name": "filePermissions",
+      "description": "File chmod permissions (e.g. 0600, 0644)",
+      "default": "0644"
+    },
+    {
+      "name": "idField",
+      "description": "Name of the ID field on the struct",
+      "default": "ID"
+    },
+    {
+      "name": "extraDeleteReturn",
+      "description": "Optional: extra computed value to return from Delete (e.g. affected stage names). Leave empty if not needed."
+    }
+  ],
+  "createdAt": "2026-03-25T22:50:12.388846354Z",
+  "updatedAt": "2026-03-25T22:50:12.388846354Z",
+  "createdBy": "paulette"
+}

@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "Generate the required UX enhancements for this enhancement",
+      "timestamp": "2026-03-25T20:29:00.046049187Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Analyzing the v0.2.0 vision against the v0.1.0 baseline, the UX delta centres on three new surfaces:\n\n1. **Configure Paulette page** — a dedicated setup screen (two-tab: Connections + Stage Defaults) reachable from the home page\n2. **Per-project stage override panel** — a gear-icon entry point on the project detail view\n3. **Inline connection-error state** — surfaced within any active stage when an assigned connection is unreachable\n\nAll v0.1.0 journeys, screens, and interaction patterns are preserved exactly. New content is marked **[NEW]** and modifications to existing content are marked **[MODIFIED]**.",
+      "timestamp": "2026-03-25T20:33:01.855892158Z"
+    }
+  ],
+  "nextTurn": ""
+}

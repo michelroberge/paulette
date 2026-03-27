@@ -12,8 +12,24 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
-// ErrPlanLimit is returned when Claude hits its plan/turn limit.
+// ErrPlanLimit is the sentinel error for Claude usage/plan limit.
 var ErrPlanLimit = errors.New("claude plan limit reached")
+
+// PlanLimitError wraps ErrPlanLimit and carries the raw message from the Claude CLI,
+// which typically includes the reset time (e.g. "Your limit resets at 5:00 PM UTC").
+type PlanLimitError struct {
+	Message string
+}
+
+func (e *PlanLimitError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return "claude plan limit reached"
+}
+
+// Is makes errors.Is(err, ErrPlanLimit) return true for PlanLimitError values.
+func (e *PlanLimitError) Is(target error) bool { return target == ErrPlanLimit }
 
 // claudeBin is the path to the claude executable. Defaults to "claude" (PATH lookup).
 var claudeBin = "claude"
@@ -23,6 +39,14 @@ func SetClaudePath(path string) {
 	if path != "" {
 		claudeBin = path
 	}
+}
+
+// GetClaudeBin returns the currently configured claude executable path.
+// Callers that need a stable snapshot (e.g. per-instance provider structs)
+// should capture this value at construction time rather than reading the
+// package-level variable on every call.
+func GetClaudeBin() string {
+	return claudeBin
 }
 
 // StreamEvent represents an event sent to the client via SSE.
@@ -59,7 +83,19 @@ type claudeContent struct {
 
 // Chat spawns a Claude CLI subprocess and streams the response.
 // modelID selects the Claude model (e.g. "claude-sonnet-4-6"); empty string uses the CLI default.
+// The global claudeBin path (set via SetClaudePath) is used for the subprocess.
 func Chat(ctx context.Context, modelID string, systemPrompt string, history []model.Message, userMessage string, projectDir string) (<-chan StreamEvent, error) {
+	return ChatWithBin(ctx, claudeBin, modelID, systemPrompt, history, userMessage, projectDir)
+}
+
+// ChatWithBin is identical to Chat but accepts an explicit binary path instead of
+// using the package-level claudeBin variable. Use this when the caller owns a
+// per-instance path (e.g. ClaudeCLIProvider.claudePath) and needs to guarantee
+// that the binary used for chat matches the binary used for TestConnection.
+func ChatWithBin(ctx context.Context, bin string, modelID string, systemPrompt string, history []model.Message, userMessage string, projectDir string) (<-chan StreamEvent, error) {
+	if bin == "" {
+		bin = claudeBin
+	}
 	prompt := formatConversation(history, userMessage)
 
 	args := []string{
@@ -72,7 +108,7 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 	if modelID != "" {
 		args = append(args, "--model", modelID)
 	}
-	cmd := exec.CommandContext(ctx, claudeBin, args...)
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = projectDir
 
@@ -121,7 +157,11 @@ func Chat(ctx context.Context, modelID string, systemPrompt string, history []mo
 				}
 			case "result":
 				if event.IsError {
-					ch <- StreamEvent{Type: "plan_limit", Content: "Claude plan limit reached"}
+					msg := event.Result
+					if msg == "" {
+						msg = "Claude plan limit reached"
+					}
+					ch <- StreamEvent{Type: "plan_limit", Content: msg}
 					return
 				}
 				if event.Usage != nil {

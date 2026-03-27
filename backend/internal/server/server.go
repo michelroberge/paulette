@@ -13,21 +13,26 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/config"
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/handler"
+	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
 type Server struct {
-	cfg          *config.Config
-	registry     repository.RegistryRepo
-	projectRepo  repository.ProjectRepo
-	artifactRepo repository.ArtifactRepo
-	activityRepo repository.ActivityRepo
-	chatRepo     repository.ChatRepo
-	runs         *stream.Manager
-	staticFS     fs.FS
-	orchestrator *autopilot.Orchestrator
+	cfg              *config.Config
+	registry         repository.RegistryRepo
+	projectRepo      repository.ProjectRepo
+	artifactRepo     repository.ArtifactRepo
+	activityRepo     repository.ActivityRepo
+	chatRepo         repository.ChatRepo
+	runs             *stream.Manager
+	staticFS         fs.FS
+	orchestrator     *autopilot.Orchestrator
+	connStore        *provider.ConnectionStore
+	providerRegistry *provider.Registry
+	stageConfig      *provider.StageConfigStore
+	gitIdentity      *git.GlobalIdentityStore
 }
 
 func New(
@@ -37,16 +42,23 @@ func New(
 	artifactRepo repository.ArtifactRepo,
 	chatRepo repository.ChatRepo,
 	staticFS fs.FS,
+	connStore *provider.ConnectionStore,
+	providerRegistry *provider.Registry,
+	stageConfig *provider.StageConfigStore,
 ) *Server {
 	return &Server{
-		cfg:          cfg,
-		registry:     registry,
-		projectRepo:  projectRepo,
-		artifactRepo: artifactRepo,
-		activityRepo: fsrepo.NewActivityRepo(),
-		chatRepo:     chatRepo,
-		runs:         stream.NewManager(),
-		staticFS:     staticFS,
+		cfg:              cfg,
+		registry:         registry,
+		projectRepo:      projectRepo,
+		artifactRepo:     artifactRepo,
+		activityRepo:     fsrepo.NewActivityRepo(),
+		chatRepo:         chatRepo,
+		runs:             stream.NewManager(),
+		staticFS:         staticFS,
+		connStore:        connStore,
+		providerRegistry: providerRegistry,
+		stageConfig:      stageConfig,
+		gitIdentity:      git.NewGlobalIdentityStore(cfg.RegistryPath),
 	}
 }
 
@@ -89,15 +101,16 @@ func (s *Server) Router() http.Handler {
 	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
 	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, gitSvc)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
-	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs)
-	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
+	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
+	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
 	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo)
 	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
 	acth := handler.NewActivityHandler(s.runs, s.activityRepo, s.registry)
 	gh := handler.NewGitHandler(s.registry, s.projectRepo, gitSvc)
-	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath)
+	ggh := handler.NewGitGlobalHandler(gitSvc, s.gitIdentity)
+	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath, s.gitIdentity)
 	sh := handler.NewSessionHandler(s.registry)
 	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs)
 
@@ -113,11 +126,24 @@ func (s *Server) Router() http.Handler {
 	cfgH := handler.NewConfigHandler(s.cfg)
 	r.Get("/api/config", cfgH.GetInfo)
 
+	// Connection CRUD, test, and model-discovery endpoints.
+	connH := handler.NewConnectionHandler(s.connStore, s.providerRegistry, s.stageConfig, s.registry)
+	r.Route("/api/connections", connH.RegisterRoutes)
+
+	// Stage-config global defaults: GET /api/config/stages, PUT /api/config/stages/:stage
+	scfgH := handler.NewStageConfigHandler(s.stageConfig, s.connStore, s.registry)
+	r.Get("/api/config/stages", scfgH.GetGlobalDefaults)
+	r.Put("/api/config/stages/{stage}", scfgH.SetGlobalStageDefault)
+
 	authH := handler.NewAuthHandler(s.cfg.ClaudePath)
 	r.Get("/api/auth/status", authH.Status)
 	r.Get("/api/auth/login", authH.Login)
 	r.Post("/api/auth/login/input", authH.LoginInput)
 	r.Post("/api/auth/logout", authH.Logout)
+
+	r.Get("/api/git/ssh-key", ggh.SSHKey)
+	r.Get("/api/git/identity", ggh.GetIdentity)
+	r.Post("/api/git/identity", ggh.SetIdentity)
 
 	r.Route("/api/projects", func(r chi.Router) {
 		r.Get("/activity", acth.Summary)
@@ -192,6 +218,11 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/stages/build/skills/suggestions", skh.GetSuggestions)
 		r.Get("/{id}/stages/build/skills/observed", skh.GetObserved)
 		r.Post("/{id}/stages/build/skills/approve", skh.ApproveSuggestions)
+
+		// Per-project stage-config overrides.
+		r.Get("/{id}/config/stages", scfgH.GetProjectOverrides)
+		r.Put("/{id}/config/stages/{stage}", scfgH.SetProjectStageOverride)
+		r.Post("/{id}/config/stages/reset", scfgH.ResetProjectOverrides)
 	})
 
 	r.Route("/api/skills", func(r chi.Router) {
