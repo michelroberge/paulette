@@ -112,12 +112,24 @@ func extractCDATA(s string) string {
 }
 
 // extractJSONPlan pulls <jsonplan> content as a byte slice for json.Unmarshal.
+// Falls back to extracting the first top-level JSON object or array found in the
+// string when no <jsonplan> tags are present (e.g. Ollama models that ignore the
+// envelope instruction and return raw JSON).
 func extractJSONPlan(s string) []byte {
 	content := extractBetween(s, "<"+TagJSON+">", "</"+TagJSON+">")
-	if content == "" {
+	if content != "" {
+		return repairJSON([]byte(content))
+	}
+	// Fallback: find the outermost { ... } or [ ... ] in the raw string.
+	start := strings.IndexAny(s, "{[")
+	if start < 0 {
 		return nil
 	}
-	return repairJSON([]byte(content))
+	end := strings.LastIndexAny(s, "}]")
+	if end <= start {
+		return nil
+	}
+	return repairJSON([]byte(s[start : end+1]))
 }
 
 // streamFilterState tracks which section of the XML envelope is being streamed.

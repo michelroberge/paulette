@@ -143,9 +143,6 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
               Generate Beads
             </button>
           )}
-          {!hasBeads && !isGenerating && loading && (
-            <BuildingAnimation />
-          )}
         </div>
       )}
 

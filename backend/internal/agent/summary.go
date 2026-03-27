@@ -3,7 +3,6 @@ package agent
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -132,36 +131,7 @@ func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, pr
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-			var event claudeEvent
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				continue
-			}
-			switch event.Type {
-			case "assistant":
-				if event.Message != nil {
-					for _, c := range event.Message.Content {
-						if c.Type == "text" && c.Text != "" {
-							fullText.WriteString(c.Text)
-							ch <- StreamEvent{Type: "chunk", Content: c.Text}
-						}
-					}
-				}
-			case "result":
-				if event.Usage != nil {
-					total := event.Usage.InputTokens + event.Usage.OutputTokens
-					ch <- StreamEvent{Type: "tokens", Content: fmt.Sprintf("%d", total)}
-				}
-				if fullText.Len() == 0 && event.Result != "" {
-					fullText.WriteString(event.Result)
-					ch <- StreamEvent{Type: "chunk", Content: event.Result}
-				}
-			}
-		}
+		processStreamEvents(scanner, &fullText, ch, streamOptions{tokenField: "content"})
 
 		summary := ParseResponse(fullText.String()).Discussion
 		if summary == "" {

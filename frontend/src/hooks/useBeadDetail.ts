@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import { getBeadDetail, updateBead, controlBead, sendBeadChat, sendInstruction, applyInstructionPlan } from '../api/beads';
+import { getBeadDetail, updateBead, controlBead, executeSingleBead, sendBeadChat, sendInstruction, applyInstructionPlan } from '../api/beads';
 import type { BeadDetail, BeadGraph, InstructionPlan, Message, StreamEvent } from '../types';
 
 export function useBeadDetail(projectId: string) {
@@ -142,10 +142,34 @@ export function useBeadDetail(projectId: string) {
     setInstructStreamingContent('');
   }, []);
 
-  const doControl = useCallback(async (beadId: string, action: 'pause' | 'restart' | 'close') => {
+  const doControl = useCallback(async (beadId: string, action: 'pause' | 'restart' | 'close' | 'cancel') => {
     await controlBead(projectId, beadId, action);
     await loadDetail(beadId);
   }, [projectId, loadDetail]);
+
+  const [beadStreaming, setBeadStreaming] = useState(false);
+
+  const startBead = useCallback(async (beadId: string, onUpdate?: (eventContent: string) => void) => {
+    if (beadStreaming) return;
+    setBeadStreaming(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      await executeSingleBead(projectId, beadId, (event) => {
+        if (event.type === 'bead_update' || event.type === 'log' || event.type === 'error') {
+          onUpdate?.(event.content ?? '');
+        }
+      }, controller.signal);
+    } catch (err) {
+      if (err instanceof Error && err.name !== 'AbortError') {
+        console.error('Single bead execute error:', err);
+      }
+    } finally {
+      setBeadStreaming(false);
+      abortRef.current = null;
+      await loadDetail(beadId);
+    }
+  }, [projectId, beadStreaming, loadDetail]);
 
   return {
     detail,
@@ -156,6 +180,7 @@ export function useBeadDetail(projectId: string) {
     instructStreamingContent,
     instructionProposal,
     applyingProposal,
+    beadStreaming,
     loadDetail,
     saveDetail,
     sendChat,
@@ -164,5 +189,6 @@ export function useBeadDetail(projectId: string) {
     applyProposal,
     dismissProposal,
     control: doControl,
+    startBead,
   };
 }

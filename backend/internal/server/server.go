@@ -183,6 +183,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/stages/build/beads/{beadId}", bh.GetDetail)
 		r.Patch("/{id}/stages/build/beads/{beadId}", bh.UpdateBead)
 		r.Post("/{id}/stages/build/beads/{beadId}/control", bh.ControlBead)
+		r.Post("/{id}/stages/build/beads/{beadId}/execute", bh.ExecuteSingleBead)
 		r.Post("/{id}/stages/build/beads/{beadId}/chat", bh.BeadChat)
 		r.Get("/{id}/stages/build/beads/{beadId}/files", bh.GetBeadFiles)
 		r.Get("/{id}/stages/build/beads/{beadId}/diff", bh.GetBeadDiff)

@@ -21,3 +21,4 @@ repos/
 
 # Beads / Dolt files (added by bd init)
 .beads-credential-key
+backend/backend.exe
