@@ -4,10 +4,12 @@ interface Props {
   projectId: string;
   disabled: boolean;
   onApproved: () => void;
+  warning?: string;
 }
 
-export function ApproveButton({ projectId, disabled, onApproved }: Props) {
+export function ApproveButton({ projectId, disabled, onApproved, warning }: Readonly<Props>) {
   const handleApprove = async () => {
+    if (warning && !window.confirm(warning)) return;
     try {
       await approveStage(projectId);
       onApproved();

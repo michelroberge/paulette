@@ -2,6 +2,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { getChatHistory, sendMessage, resumeChat } from '../api/chat';
 import { getActiveRuns, reconnectToRun } from '../api/activity';
 import type { Message, StageName, StreamEvent } from '../types';
+import type { ConnectionError } from '../types/provider';
+import { parseConnectionError } from '../components/chat/ConnectionErrorBanner';
 
 export function useChat(projectId: string | null, stage: StageName | null, reloadTrigger?: number, onTokens?: (n: number) => void) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -10,6 +12,8 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
   const [artifactUpdated, setArtifactUpdated] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [nextTurn, setNextTurn] = useState<'agent' | 'user'>('agent');
+  /** Populated when the SSE stream emits a structured connection-failure error. */
+  const [connectionError, setConnectionError] = useState<ConnectionError | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const onTokensRef = useRef(onTokens);
   onTokensRef.current = onTokens;
@@ -40,19 +44,29 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
         setStreamingContent('');
         setStreaming(false);
         break;
-      case 'error':
-        setMessages(prev => [
-          ...prev,
-          {
-            role: 'assistant',
-            content: event.content || 'An error occurred. Please try again.',
-            timestamp: new Date().toISOString(),
-            isError: true,
-          },
-        ]);
+      case 'error': {
+        const connErr = parseConnectionError(event.content);
+        if (connErr) {
+          // Structured connection error — surface the ConnectionErrorBanner instead of
+          // adding a generic error message to the chat history.  The banner persists
+          // until the user sends a new message (which clears it in `send`/`resume`).
+          setConnectionError(connErr);
+        } else {
+          // Generic / non-connection error — fall back to the existing inline message.
+          setMessages(prev => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: event.content || 'An error occurred. Please try again.',
+              timestamp: new Date().toISOString(),
+              isError: true,
+            },
+          ]);
+        }
         setStreamingContent('');
         setStreaming(false);
         break;
+      }
     }
   }, []);
 
@@ -113,6 +127,9 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
   const send = useCallback(async (message: string) => {
     if (!projectId || !stage || streaming) return;
 
+    // Dismiss any pending connection error banner so the user gets a fresh start.
+    setConnectionError(null);
+
     // Add user message immediately
     const userMsg: Message = {
       role: 'user',
@@ -135,6 +152,8 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
   // Resume re-invokes the agent for an unanswered user message (e.g. after server restart).
   const resume = useCallback(async () => {
     if (!projectId || !stage || streaming) return;
+    // Clear any connection error banner before attempting a resume.
+    setConnectionError(null);
     setStreaming(true);
     setStreamingContent('');
 
@@ -147,5 +166,5 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     }, controller.signal);
   }, [projectId, stage, streaming, handleEvent]);
 
-  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, loadHistory, send, resume, stop };
+  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, loadHistory, send, resume, stop };
 }

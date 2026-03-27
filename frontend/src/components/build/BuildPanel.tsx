@@ -16,18 +16,19 @@ interface Props {
   onBeadTokens?: (n: number) => void;
   onExecutionComplete?: () => void;
   onBuildDone?: () => void;
+  onHasBeads?: (v: boolean) => void;
   agentActive?: boolean;
   agentOperation?: string;
   agentStreamingText?: string;
 }
 
-export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, onExecutionComplete, onBuildDone, agentActive, agentOperation, agentStreamingText }: Props) {
+export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTab, hidden, onBeadTokens, onExecutionComplete, onBuildDone, onHasBeads, agentActive, agentOperation, agentStreamingText }: Props) {
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [maxParallel, setMaxParallel] = useState(2);
   const [selectedBeadId, setSelectedBeadId] = useState<string | null>(null);
 
-  const { graph, setGraph, phase, loading, executionLog, streamingText, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
+  const { graph, setGraph, phase, loading, executionLog, streamingText, generateTokens, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
 
   const logRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
@@ -71,6 +72,11 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
   const completedCount = taskBeads.filter(b => b.status === 'closed').length;
   const totalCount = taskBeads.length;
 
+  // Notify parent of bead existence
+  useEffect(() => {
+    onHasBeads?.(hasBeads);
+  }, [hasBeads]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Notify parent when execution completes
   const prevPhaseRef = useRef(phase);
   useEffect(() => {
@@ -102,6 +108,15 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
       prevBeadTokensRef.current = totalBeadTokens;
     }
   }, [totalBeadTokens]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const prevGenerateTokensRef = useRef(0);
+  useEffect(() => {
+    const delta = generateTokens - prevGenerateTokensRef.current;
+    if (delta > 0) {
+      onBeadTokens?.(delta);
+      prevGenerateTokensRef.current = generateTokens;
+    }
+  }, [generateTokens]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="build-panel" style={{ display: hidden ? 'none' : 'flex' }}>
@@ -183,130 +198,106 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
               </div>
             )}
 
-            {!hasBeads && !isGenerating && loading && (
-              <div className="artifact-preview empty">
-                <BuildingAnimation />
+            <div className="execute-main">
+              <div className="execute-graph">
+                {hasBeads ? (
+                  <BeadGraph graph={graph} onBeadClick={setSelectedBeadId} />
+                ) : (isGenerating || loading) ? (
+                  <div className="execute-paulette">
+                    <BuildingAnimation />
+                  </div>
+                ) : null}
               </div>
-            )}
 
-            {!hasBeads && !isGenerating && !loading && (
-              <div className="artifact-preview empty">
-                <p>No beads generated yet.</p>
-                <p>Click <strong>Generate Beads</strong> to parse the build plan into trackable tasks.</p>
-              </div>
-            )}
-
-            {isGenerating && !hasBeads && (
-              <div className="mock-generating">
-                <div className="mock-stream-header">
-                  <span className="mock-stream-dot" />
-                  Generating beads...
-                </div>
-                {streamingText && (
+              <div className="execute-details">
+                {isGenerating && streamingText && (
                   <div className="mock-stream-text" ref={streamRef}>
                     {streamingText}
                   </div>
                 )}
-              </div>
-            )}
 
-            {hasBeads && (
-              <div className="execute-main">
-                <div className="execute-graph">
-                  <BeadGraph graph={graph} onBeadClick={setSelectedBeadId} />
-                </div>
-
-                <div className="execute-details">
-                  {isGenerating && (
-                    <div className="execute-status-sidebar">
-                      <div className="execute-status-row">
-                        <span className="execute-status-dot" />
-                        <span className="execute-status-label">Generating… {graph.beads.length} beads</span>
-                      </div>
-                      {streamingText && (
-                        <div className="mock-stream-text" ref={streamRef} style={{ flex: 'none', maxHeight: '200px' }}>
-                          {streamingText}
-                        </div>
+                {isExecuting && (
+                  <div className="execute-status-sidebar">
+                    <div className="execute-status-row">
+                      <span className="execute-status-dot" />
+                      <span className="execute-status-label">Executing</span>
+                      {activeCount > 0 && (
+                        <span className="execute-agent-badge">{activeCount} agent{activeCount !== 1 ? 's' : ''}</span>
                       )}
-                    </div>
-                  )}
-
-                  {isExecuting && (
-                    <div className="execute-status-sidebar">
-                      <div className="execute-status-row">
-                        <span className="execute-status-dot" />
-                        <span className="execute-status-label">Executing</span>
-                        {activeCount > 0 && (
-                          <span className="execute-agent-badge">{activeCount} agent{activeCount !== 1 ? 's' : ''}</span>
-                        )}
-                        <button className="stop-button" style={{ marginLeft: 'auto' }} onClick={stop}>
-                          Stop
-                        </button>
-                      </div>
-                      {totalCount > 0 && (
-                        <div className="execute-progress-row">
-                          <div className="execute-progress-track">
-                            <div
-                              className="execute-progress-fill"
-                              style={{ width: `${(completedCount / totalCount) * 100}%` }}
-                            />
-                          </div>
-                          <span className="execute-progress-label">{completedCount} / {totalCount}</span>
-                        </div>
-                      )}
-                      {streamingText && (
-                        <div className="mock-stream-text" ref={streamRef} style={{ flex: 'none', maxHeight: '200px' }}>
-                          {streamingText}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {!isGenerating && !isExecuting && !isDone && (
-                    <div className="bead-config-bar">
-                      <label className="bead-config-label">
-                        Max parallel agents:
-                        <input
-                          className="bead-config-input"
-                          type="number"
-                          min={1}
-                          max={10}
-                          value={maxParallel}
-                          onChange={e => setMaxParallel(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
-                        />
-                      </label>
-                      <button
-                        className="generate-mock-button"
-                        onClick={handleBuild}
-                        disabled={isGenerating}
-                      >
-                        Build
+                      <button className="stop-button" style={{ marginLeft: 'auto' }} onClick={stop}>
+                        Stop
                       </button>
                     </div>
-                  )}
-
-                  {isDone && (
-                    <div className="bead-config-bar">
-                      <span className="bead-done-badge">All beads complete</span>
-                    </div>
-                  )}
-
-                  {executionLog.length > 0 && (
-                    <div className="execute-log" ref={logRef}>
-                      <button className="log-clear-button" onClick={clearLog} title="Clear log">✕</button>
-                      {executionLog.map((line, i) => (
-                        <div
-                          key={i}
-                          className={`execute-log-entry${line.startsWith('ERROR') ? ' log-error' : line.includes('Done:') ? ' log-done' : line.includes('Starting:') ? ' log-claimed' : ''}`}
-                        >
-                          {line}
+                    {totalCount > 0 && (
+                      <div className="execute-progress-row">
+                        <div className="execute-progress-track">
+                          <div
+                            className="execute-progress-fill"
+                            style={{ width: `${(completedCount / totalCount) * 100}%` }}
+                          />
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                        <span className="execute-progress-label">{completedCount} / {totalCount}</span>
+                      </div>
+                    )}
+                    {streamingText && (
+                      <div className="mock-stream-text" ref={streamRef} style={{ flex: 'none', maxHeight: '200px' }}>
+                        {streamingText}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!isGenerating && !isExecuting && !hasBeads && !loading && (
+                  <div className="execute-details-empty">
+                    <p>No beads generated yet.</p>
+                    <p>Click <strong>Generate Beads</strong> above to parse the build plan into trackable tasks.</p>
+                  </div>
+                )}
+
+                {!isGenerating && !isExecuting && !isDone && hasBeads && (
+                  <div className="bead-config-bar">
+                    <label className="bead-config-label">
+                      Max parallel agents:
+                      <input
+                        className="bead-config-input"
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={maxParallel}
+                        onChange={e => setMaxParallel(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))}
+                      />
+                    </label>
+                    <button
+                      className="generate-mock-button"
+                      onClick={handleBuild}
+                      disabled={isGenerating}
+                    >
+                      Build
+                    </button>
+                  </div>
+                )}
+
+                {isDone && (
+                  <div className="bead-config-bar">
+                    <span className="bead-done-badge">All beads complete</span>
+                  </div>
+                )}
+
+                {executionLog.length > 0 && (
+                  <div className="execute-log" ref={logRef}>
+                    <button className="log-clear-button" onClick={clearLog} title="Clear log">✕</button>
+                    {executionLog.map((line, i) => (
+                      <div
+                        key={i}
+                        className={`execute-log-entry${line.startsWith('ERROR') ? ' log-error' : line.includes('Done:') ? ' log-done' : line.includes('Starting:') ? ' log-claimed' : ''}`}
+                      >
+                        {line}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>
@@ -322,6 +313,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
             onBeadSelect={setSelectedBeadId}
             onClose={() => setSelectedBeadId(null)}
             onBeadsUpdated={setGraph}
+            onBeadControlled={loadGraph}
           />
         ) : null;
       })()}

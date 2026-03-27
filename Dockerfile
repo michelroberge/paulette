@@ -1,8 +1,8 @@
 # ── Stage 1: Build React frontend ──────────────────────────────────────────
 FROM node:22-bookworm-slim AS frontend-builder
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+COPY frontend/package.json  ./
+RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
@@ -23,6 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ca-certificates \
+    openssh-client \
+    gosu \
     && rm -rf /var/lib/apt/lists/* \
     # Dolt — standalone binary, used by beads for version-controlled issue tracking
     && curl -L https://github.com/dolthub/dolt/releases/latest/download/install.sh | bash \
@@ -34,11 +36,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # rtk — token optimizer (optional, non-fatal if install fails)
     && (curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh || echo "rtk install skipped (optional)")
 
-# Copy paulette binary from the Go build stage
+# Copy paulette binary and entrypoint from the Go build stage
 COPY --from=go-builder /paulette /usr/local/bin/paulette
-
-# Non-root user for runtime
-RUN useradd -m -s /bin/bash paulette && \
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh && \
+    useradd -m -s /bin/bash paulette && \
     mkdir -p /home/paulette/.paulette /home/paulette/repos \
              /home/paulette/.claude && \
     printf '%s' \
@@ -51,8 +53,10 @@ RUN useradd -m -s /bin/bash paulette && \
         > /home/paulette/.claude/settings.json && \
     chown -R paulette:paulette /home/paulette/.paulette \
                                /home/paulette/repos \
-                               /home/paulette/.claude
-USER paulette
+                               /home/paulette/.claude && \
+    # Trust all directories (needed for volume-mounted repos from the host OS)
+    su paulette -c "git config --global --add safe.directory '*'"
+
 WORKDIR /home/paulette
 
 ENV HOME=/home/paulette \
@@ -62,4 +66,5 @@ ENV HOME=/home/paulette \
     PORT=8080
 
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/paulette"]
+# Entrypoint runs as root, fixes permissions on bind-mounted repos, then execs paulette user
+ENTRYPOINT ["/entrypoint.sh"]

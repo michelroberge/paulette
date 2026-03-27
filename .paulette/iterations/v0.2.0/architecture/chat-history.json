@@ -1,0 +1,15 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "Review architecture according to the required changes.",
+      "timestamp": "2026-03-25T20:44:38.376645818Z"
+    },
+    {
+      "role": "assistant",
+      "content": "I've thoroughly explored the existing Paulette codebase. The current architecture has a clean separation: the `agent` package wraps the Claude CLI subprocess, handlers orchestrate requests, and the stream manager handles SSE. The key integration point for v0.2.0 is replacing the hardwired `agent.Chat()` call with a pluggable provider layer that can route to Ollama, LM Studio, OpenAI, Gemini, Anthropic API, or retain the existing Claude CLI path.\n\nHere is the complete architecture document for v0.2.0, preserving all v0.1.0 elements and marking new/modified components clearly.",
+      "timestamp": "2026-03-25T20:50:24.705138731Z"
+    }
+  ],
+  "nextTurn": ""
+}

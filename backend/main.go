@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"fmt"
 	"io/fs"
 	"log"
@@ -14,9 +15,13 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/cli"
 	"github.com/michelroberge/paulette/backend/internal/config"
+	"github.com/michelroberge/paulette/backend/internal/provider"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/server"
 )
+
+//go:embed all:static
+var staticFiles embed.FS
 
 func main() {
 	if len(os.Args) > 1 {
@@ -41,18 +46,26 @@ func main() {
 	artifactRepo := fsrepo.NewArtifactRepo()
 	chatRepo := fsrepo.NewChatRepo()
 
+	// Initialise the pluggable provider layer (v0.2.0).
+	// ConnectionStore and StageConfigStore load lazily — missing files are treated
+	// as empty config, so existing Claude CLI projects continue to work unchanged.
+	connStore := provider.NewConnectionStore(cfg.RegistryPath)
+	providerRegistry := provider.NewRegistry(connStore)
+	stageConfig := provider.NewStageConfigStore(cfg.RegistryPath)
+
 	// Strip the "static" prefix so files are served from "/".
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		log.Fatalf("failed to load embedded static files: %v", err)
 	}
 
-	srv := server.New(cfg, registry, projectRepo, artifactRepo, chatRepo, staticSub)
+	srv := server.New(cfg, registry, projectRepo, artifactRepo, chatRepo, staticSub, connStore, providerRegistry, stageConfig)
 
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
 	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: srv.Router(),
+		Addr:              addr,
+		Handler:           srv.Router(),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Start server in a goroutine
@@ -77,8 +90,8 @@ func main() {
 	srv.Runs().CancelAll()
 	log.Println("cancelled all active agent runs")
 
-	// Gracefully shut down the HTTP server (5s deadline for in-flight requests)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Gracefully shut down the HTTP server (90s deadline for in-flight requests)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
 		log.Printf("HTTP shutdown error: %v", err)

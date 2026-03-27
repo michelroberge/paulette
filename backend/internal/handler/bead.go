@@ -26,14 +26,6 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
-// beadGraphMu serializes writes to beads-graph.json per project host directory.
-var beadGraphMu sync.Map // key: hostDir string, value: *sync.Mutex
-
-func beadGraphLock(hostDir string) *sync.Mutex {
-	mu, _ := beadGraphMu.LoadOrStore(hostDir, &sync.Mutex{})
-	return mu.(*sync.Mutex)
-}
-
 type BeadHandler struct {
 	registry     repository.RegistryRepo
 	projectRepo  repository.ProjectRepo
@@ -48,8 +40,7 @@ func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.Pro
 	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs, skillRepo: skillRepo, gitSvc: git.NewService()}
 }
 
-// GetGraph returns the current bead graph JSON for a project,
-// reconciled with live bd status so the UI always reflects reality.
+// GetGraph returns the current bead graph JSON for a project, assembled from bd.
 func (h *BeadHandler) GetGraph(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	project, err := h.registry.Get(id)
@@ -58,56 +49,22 @@ func (h *BeadHandler) GetGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+	// One-time migration: if old beads-graph.json exists, migrate to bd notes
+	fsrepo.MigrateBeadGraphIfNeeded(r.Context(), project.HostDir)
+
+	// Reset stale in_progress beads if no execution is currently active (e.g. after a restart)
+	if h.runs.Active(project.ID, "build", "beads-execute") == nil {
+		bdResetStale(r.Context(), project.HostDir)
+	}
+
+	graph, err := fsrepo.ReadBdBeadGraph(r.Context(), project.HostDir)
 	if err != nil {
 		http.Error(w, "failed to read bead graph: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Reconcile graph with live bd status
-	if len(graph.Beads) > 0 {
-		// Reset stale in_progress beads if no execution is currently active (e.g. after a restart)
-		if h.runs.Active(project.ID, "build", "beads-execute") == nil {
-			bdResetStale(r.Context(), project.HostDir)
-		}
-		if changed := reconcileGraphWithBd(r.Context(), project.HostDir, graph); changed {
-			fsrepo.WriteBeadGraph(project.HostDir, graph)
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(graph)
-}
-
-// reconcileGraphWithBd queries `bd list --json` for all beads and updates
-// the graph in-place so statuses match reality. Returns true if anything changed.
-func reconcileGraphWithBd(ctx context.Context, hostDir string, graph *model.BeadGraph) bool {
-	out, err := runBd(ctx, hostDir, "list", "--json")
-	if err != nil || strings.TrimSpace(out) == "" || strings.TrimSpace(out) == "[]" {
-		return false
-	}
-
-	var live []struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
-	}
-	if err := json.Unmarshal([]byte(out), &live); err != nil {
-		return false
-	}
-
-	liveStatus := make(map[string]model.BeadStatus, len(live))
-	for _, b := range live {
-		liveStatus[b.ID] = model.BeadStatus(b.Status)
-	}
-
-	changed := false
-	for i := range graph.Beads {
-		if s, ok := liveStatus[graph.Beads[i].ID]; ok && s != graph.Beads[i].Status {
-			graph.Beads[i].Status = s
-			changed = true
-		}
-	}
-	return changed
 }
 
 // Watch opens a long-lived SSE connection that polls bd every 10s
@@ -135,13 +92,17 @@ func (h *BeadHandler) Watch(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	// Track last-known status per bead to detect changes
+	// Track last-known status per bead to detect changes; seed from bd
 	prev := map[string]model.BeadStatus{}
-
-	// Seed from the current graph file
-	if graph, err := fsrepo.ReadBeadGraph(project.HostDir); err == nil {
-		for _, b := range graph.Beads {
-			prev[b.ID] = b.Status
+	if out, err := runBd(ctx, project.HostDir, "list", "--all", "--limit", "0", "--json"); err == nil {
+		var live []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		}
+		if json.Unmarshal([]byte(out), &live) == nil {
+			for _, b := range live {
+				prev[b.ID] = model.BeadStatus(b.Status)
+			}
 		}
 	}
 
@@ -172,7 +133,6 @@ func (h *BeadHandler) Watch(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			mu := beadGraphLock(project.HostDir)
 			var updates []model.Bead
 			for _, b := range live {
 				s := model.BeadStatus(b.Status)
@@ -184,27 +144,9 @@ func (h *BeadHandler) Watch(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if len(updates) > 0 {
-				// Persist to graph file
-				mu.Lock()
-				graph, err := fsrepo.ReadBeadGraph(project.HostDir)
-				if err == nil {
-					for i := range graph.Beads {
-						for _, u := range updates {
-							if graph.Beads[i].ID == u.ID {
-								graph.Beads[i].Status = u.Status
-							}
-						}
-					}
-					fsrepo.WriteBeadGraph(project.HostDir, graph)
-				}
-				mu.Unlock()
-
-				// Stream each change
-				for _, u := range updates {
-					beadJSON, _ := json.Marshal(u)
-					emitJSON(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
-				}
+			for _, u := range updates {
+				beadJSON, _ := json.Marshal(u)
+				emitJSON(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 			}
 		}
 	}
@@ -290,6 +232,7 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 				var n int
 				fmt.Sscanf(event.Content, "%d", &n)
 				generateTokens += n
+				run.Emit(event)
 			} else if event.Type == "chunk" {
 				run.Emit(event)
 			}
@@ -315,14 +258,9 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 		}
 
 		// Step 3: Create epics and tasks
-		graph := &model.BeadGraph{
-			GeneratedAt: time.Now(),
-			ProjectID:   project.ID,
-			Beads:       []model.Bead{},
-		}
-
-		// title -> bead ID map for dep resolution
+		// title -> bead ID map for dep resolution and event emission
 		titleToID := map[string]string{}
+		var allBeads []model.Bead
 
 		for _, epic := range plan.Epics {
 			if ctx.Err() != nil {
@@ -345,12 +283,10 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 				Deps:        []string{},
 			}
 			titleToID[epic.Title] = epicID
-			graph.Beads = append(graph.Beads, epicBead)
+			allBeads = append(allBeads, epicBead)
 
 			beadJSON, _ := json.Marshal(epicBead)
 			run.Emit(agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
-
-			fsrepo.WriteBeadGraph(project.HostDir, graph)
 
 			for _, task := range epic.Tasks {
 				if ctx.Err() != nil {
@@ -384,18 +320,27 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 					ArchRefs:    task.ArchRefs,
 				}
 				titleToID[task.Title] = taskID
-				graph.Beads = append(graph.Beads, taskBead)
+				allBeads = append(allBeads, taskBead)
+
+				// Persist Paulette-specific metadata to bd notes
+				fsrepo.WriteBeadMeta(ctx, project.HostDir, taskID, &fsrepo.BeadMeta{ //nolint:errcheck
+					EpicID:      epicID,
+					Tags:        task.Tags,
+					TargetFiles: task.TargetFiles,
+					JourneyRefs: task.JourneyRefs,
+					ArchRefs:    task.ArchRefs,
+				})
 
 				beadJSON, _ := json.Marshal(taskBead)
 				run.Emit(agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
-
-				fsrepo.WriteBeadGraph(project.HostDir, graph)
 			}
 		}
 
 		// Step 4: Set up dependencies
 		run.Emit(agent.StreamEvent{Type: "log", Content: "Setting up dependencies..."})
 
+		// Track deps in-memory for event emission
+		depsMap := map[string][]string{}
 		for _, epic := range plan.Epics {
 			for _, task := range epic.Tasks {
 				taskID, ok := titleToID[task.Title]
@@ -408,29 +353,21 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 						continue
 					}
 					bdDepAdd(ctx, project.HostDir, taskID, depID)
-
-					// Update in-memory graph
-					for i := range graph.Beads {
-						if graph.Beads[i].ID == taskID {
-							graph.Beads[i].Deps = append(graph.Beads[i].Deps, depID)
-							break
-						}
-					}
+					depsMap[taskID] = append(depsMap[taskID], depID)
 				}
 			}
 		}
 
-		fsrepo.WriteBeadGraph(project.HostDir, graph)
-
 		// Emit bead_update for every bead that received deps, so the frontend graph is current
-		for _, bead := range graph.Beads {
-			if len(bead.Deps) > 0 || bead.EpicID != "" {
+		for _, bead := range allBeads {
+			if deps := depsMap[bead.ID]; len(deps) > 0 || bead.EpicID != "" {
+				bead.Deps = deps
 				beadJSON, _ := json.Marshal(bead)
 				run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 			}
 		}
 
-		summary := fmt.Sprintf("Generated %d beads (%d epics)", len(graph.Beads), len(plan.Epics))
+		summary := fmt.Sprintf("Generated %d beads (%d epics)", len(allBeads), len(plan.Epics))
 		run.Emit(agent.StreamEvent{Type: "done", Content: summary})
 	}()
 
@@ -559,7 +496,6 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, maxParallel)
-		mu := beadGraphLock(project.HostDir)
 
 		for {
 			if ctx.Err() != nil {
@@ -571,8 +507,8 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				break
 			}
 
-			// Enrich bead with scoping metadata from graph (bd CLI doesn't return these)
-			enrichBeadFromGraph(project.HostDir, bead)
+			// Enrich bead with scoping metadata from bd notes (bd list returns basic fields only)
+			enrichBeadFromBd(ctx, project.HostDir, bead)
 
 			sem <- struct{}{}
 
@@ -588,9 +524,8 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 			b := *bead
 			b.Status = model.BeadStatusInProgress
 			b.PreExecutionCommit = preCommit
-			updateGraphBeadFields(mu, project.HostDir, b.ID, func(stored *model.Bead) {
-				stored.Status = model.BeadStatusInProgress
-				stored.PreExecutionCommit = preCommit
+			updateBeadMeta(ctx, project.HostDir, b.ID, func(m *fsrepo.BeadMeta) {
+				m.PreExecutionCommit = preCommit
 			})
 			beadJSON, _ := json.Marshal(b)
 			run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
@@ -656,12 +591,11 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				for iteration := 0; iteration < maxReviewIterations; iteration++ {
 					// Signal: devil is reviewing
 					currentBead.Status = model.BeadStatusReviewing
-					updateGraphStatus(mu, project.HostDir, currentBead.ID, model.BeadStatusReviewing)
 					beadJSON, _ := json.Marshal(currentBead)
 					run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 😈 Devil's advocate reviewing (attempt %d/%d)...", currentBead.ID, iteration+1, maxReviewIterations)})
 
-					siblings := siblingBeads(project.HostDir, currentBead)
+					siblings := siblingBeads(ctx, project.HostDir, currentBead)
 					findings, reviewTokens, reviewErr := agent.ReviewBead(ctx, project.HostDir, currentBead, artifacts, siblings, enhCtx)
 					if reviewTokens > 0 {
 						currentBead.Tokens += reviewTokens
@@ -671,7 +605,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					}
 					if reviewErr != nil {
 						if errors.Is(reviewErr, agent.ErrPlanLimit) {
-							run.Emit(agent.StreamEvent{Type: "plan_limit", Content: "Claude plan limit reached during review"})
+							run.Emit(agent.StreamEvent{Type: "plan_limit", Content: reviewErr.Error()})
 							return
 						}
 						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] review error: %v (closing anyway)", currentBead.ID, reviewErr)})
@@ -695,9 +629,10 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						}
 						postCommit := h.gitSvc.CurrentHash(project.HostDir)
 						currentBead.Status = model.BeadStatusClosed
-						updateGraphBeadFields(mu, project.HostDir, b.ID, func(stored *model.Bead) {
-							stored.PostExecutionCommit = postCommit
+						updateBeadMeta(ctx, project.HostDir, b.ID, func(m *fsrepo.BeadMeta) {
+							m.PostExecutionCommit = postCommit
 						})
+						b.Status = model.BeadStatusClosed
 						b.PostExecutionCommit = postCommit
 						beadJSON, _ = json.Marshal(b)
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
@@ -713,7 +648,6 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						return
 					}
 					currentBead.Status = model.BeadStatusClosed
-					updateGraphStatus(mu, project.HostDir, currentBead.ID, model.BeadStatusClosed)
 					beadJSON, _ = json.Marshal(currentBead)
 					run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 
@@ -746,7 +680,6 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						JourneyRefs: currentBead.JourneyRefs,
 						ArchRefs:    currentBead.ArchRefs,
 					}
-					updateGraphStatus(mu, project.HostDir, corrID, model.BeadStatusInProgress)
 					beadJSON, _ = json.Marshal(corrBead)
 					run.Emit(agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
 					run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
@@ -983,47 +916,28 @@ func runBd(ctx context.Context, hostDir string, args ...string) (string, error) 
 	return out.String(), err
 }
 
-func updateGraphStatus(mu *sync.Mutex, hostDir, beadID string, status model.BeadStatus) {
-	updateGraphBeadFields(mu, hostDir, beadID, func(b *model.Bead) {
-		b.Status = status
-	})
+// updateBeadMeta reads the BeadMeta for beadID, applies mutate, then writes it back via bd.
+func updateBeadMeta(ctx context.Context, hostDir, beadID string, mutate func(*fsrepo.BeadMeta)) {
+	meta, _ := fsrepo.ReadBeadMeta(ctx, hostDir, beadID)
+	if meta == nil {
+		meta = &fsrepo.BeadMeta{}
+	}
+	mutate(meta)
+	fsrepo.WriteBeadMeta(ctx, hostDir, beadID, meta) //nolint:errcheck
 }
 
-// updateGraphBeadFields applies an arbitrary mutation to a single bead in the stored graph.
-func updateGraphBeadFields(mu *sync.Mutex, hostDir, beadID string, mutate func(*model.Bead)) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	graph, err := fsrepo.ReadBeadGraph(hostDir)
-	if err != nil {
-		return
-	}
-	for i := range graph.Beads {
-		if graph.Beads[i].ID == beadID {
-			mutate(&graph.Beads[i])
-			break
-		}
-	}
-	fsrepo.WriteBeadGraph(hostDir, graph)
-}
-
-// enrichBeadFromGraph copies Tags, TargetFiles, and EpicID from the stored bead graph
+// enrichBeadFromBd copies Tags, TargetFiles, EpicID and other metadata from bd notes
 // into a bead returned by bdReady (which only has basic fields from the bd CLI).
-func enrichBeadFromGraph(hostDir string, bead *model.Bead) {
-	graph, err := fsrepo.ReadBeadGraph(hostDir)
+func enrichBeadFromBd(ctx context.Context, hostDir string, bead *model.Bead) {
+	enriched, err := fsrepo.ReadSingleBead(ctx, hostDir, bead.ID)
 	if err != nil {
 		return
 	}
-	for _, b := range graph.Beads {
-		if b.ID == bead.ID {
-			bead.Tags = b.Tags
-			bead.TargetFiles = b.TargetFiles
-			bead.EpicID = b.EpicID
-			bead.JourneyRefs = b.JourneyRefs
-			bead.ArchRefs = b.ArchRefs
-			return
-		}
-	}
+	bead.Tags = enriched.Tags
+	bead.TargetFiles = enriched.TargetFiles
+	bead.EpicID = enriched.EpicID
+	bead.JourneyRefs = enriched.JourneyRefs
+	bead.ArchRefs = enriched.ArchRefs
 }
 
 // ── Bead detail endpoints ──
@@ -1047,21 +961,9 @@ func (h *BeadHandler) GetDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find bead in graph
-	graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+	// Find bead via bd
+	found, err := fsrepo.ReadSingleBead(r.Context(), project.HostDir, beadID)
 	if err != nil {
-		http.Error(w, "failed to read bead graph", http.StatusInternalServerError)
-		return
-	}
-
-	var found *model.Bead
-	for i := range graph.Beads {
-		if graph.Beads[i].ID == beadID {
-			found = &graph.Beads[i]
-			break
-		}
-	}
-	if found == nil {
 		http.Error(w, "bead not found", http.StatusNotFound)
 		return
 	}
@@ -1112,20 +1014,6 @@ func (h *BeadHandler) UpdateBead(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to update description", http.StatusInternalServerError)
 			return
 		}
-		// Update in graph
-		mu := beadGraphLock(project.HostDir)
-		mu.Lock()
-		graph, err := fsrepo.ReadBeadGraph(project.HostDir)
-		if err == nil {
-			for i := range graph.Beads {
-				if graph.Beads[i].ID == beadID {
-					graph.Beads[i].Description = *req.Description
-					break
-				}
-			}
-			fsrepo.WriteBeadGraph(project.HostDir, graph)
-		}
-		mu.Unlock()
 	}
 
 	if req.Notes != nil {
@@ -1165,7 +1053,6 @@ func (h *BeadHandler) ControlBead(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to pause bead", http.StatusInternalServerError)
 			return
 		}
-		updateGraphStatus(beadGraphLock(project.HostDir), project.HostDir, beadID, model.BeadStatusOpen)
 
 	case "restart":
 		// Soft restart: reset to open so it can be re-picked by the execution loop
@@ -1173,10 +1060,16 @@ func (h *BeadHandler) ControlBead(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to restart bead", http.StatusInternalServerError)
 			return
 		}
-		updateGraphStatus(beadGraphLock(project.HostDir), project.HostDir, beadID, model.BeadStatusOpen)
+
+	case "close":
+		// Manual close: mark bead as verified/done without running the agent
+		if err := bdClose(r.Context(), project.HostDir, beadID); err != nil {
+			http.Error(w, "failed to close bead", http.StatusInternalServerError)
+			return
+		}
 
 	default:
-		http.Error(w, "invalid action: must be 'pause' or 'restart'", http.StatusBadRequest)
+		http.Error(w, "invalid action: must be 'pause', 'restart', or 'close'", http.StatusBadRequest)
 		return
 	}
 
@@ -1211,23 +1104,13 @@ func (h *BeadHandler) BeadChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find bead in graph
-	graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+	// Find bead via bd
+	beadVal, err := fsrepo.ReadSingleBead(r.Context(), project.HostDir, beadID)
 	if err != nil {
-		http.Error(w, "failed to read bead graph", http.StatusInternalServerError)
-		return
-	}
-	var bead *model.Bead
-	for i := range graph.Beads {
-		if graph.Beads[i].ID == beadID {
-			bead = &graph.Beads[i]
-			break
-		}
-	}
-	if bead == nil {
 		http.Error(w, "bead not found", http.StatusNotFound)
 		return
 	}
+	bead := beadVal
 
 	// Save user message
 	userMsg := model.Message{
@@ -1339,20 +1222,8 @@ func (h *BeadHandler) GetBeadFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+	bead, err := fsrepo.ReadSingleBead(r.Context(), project.HostDir, beadID)
 	if err != nil {
-		http.Error(w, "failed to read bead graph", http.StatusInternalServerError)
-		return
-	}
-
-	var bead *model.Bead
-	for i := range graph.Beads {
-		if graph.Beads[i].ID == beadID {
-			bead = &graph.Beads[i]
-			break
-		}
-	}
-	if bead == nil {
 		http.Error(w, "bead not found", http.StatusNotFound)
 		return
 	}
@@ -1403,20 +1274,8 @@ func (h *BeadHandler) GetBeadDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	graph, err := fsrepo.ReadBeadGraph(project.HostDir)
+	bead, err := fsrepo.ReadSingleBead(r.Context(), project.HostDir, beadID)
 	if err != nil {
-		http.Error(w, "failed to read bead graph", http.StatusInternalServerError)
-		return
-	}
-
-	var bead *model.Bead
-	for i := range graph.Beads {
-		if graph.Beads[i].ID == beadID {
-			bead = &graph.Beads[i]
-			break
-		}
-	}
-	if bead == nil {
 		http.Error(w, "bead not found", http.StatusNotFound)
 		return
 	}
@@ -1492,11 +1351,11 @@ func languageFromPath(path string) string {
 }
 
 // siblingBeads returns all task beads in the same epic as bead, excluding bead itself.
-func siblingBeads(hostDir string, bead model.Bead) []model.Bead {
+func siblingBeads(ctx context.Context, hostDir string, bead model.Bead) []model.Bead {
 	if bead.EpicID == "" {
 		return nil
 	}
-	graph, err := fsrepo.ReadBeadGraph(hostDir)
+	graph, err := fsrepo.ReadBdBeadGraph(ctx, hostDir)
 	if err != nil {
 		return nil
 	}

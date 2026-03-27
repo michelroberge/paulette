@@ -147,7 +147,7 @@ export function updateBead(projectId: string, beadId: string, updates: { descrip
   });
 }
 
-export function controlBead(projectId: string, beadId: string, action: 'pause' | 'restart'): Promise<void> {
+export function controlBead(projectId: string, beadId: string, action: 'pause' | 'restart' | 'close'): Promise<void> {
   return apiFetch(`/projects/${projectId}/stages/build/beads/${beadId}/control`, {
     method: 'POST',
     body: JSON.stringify({ action }),

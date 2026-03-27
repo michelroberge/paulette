@@ -18,8 +18,10 @@ services:
       - registry-data:/home/paulette/.paulette
       # generated project repos — named volume, survives container rebuilds
       - repos-data:/home/paulette/repos
+      - ./:/home/paulette/repos/paulette
       # paulette's own beads DB — named volume, survives container rebuilds
       - beads-data:/home/paulette/.beads
+      - ~/.claude/.credentials.json:/home/paulette/.claude/.credentials.json:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/auth/status"]

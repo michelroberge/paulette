@@ -2,10 +2,33 @@ import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Message } from '../../types';
+import { ConnectionErrorBanner } from './ConnectionErrorBanner';
+import type { ConnectionError } from '../../types/provider';
 
 const ARTIFACT_RE = /<!--\s*ARTIFACT:START\s*-->[\s\S]*?<!--\s*ARTIFACT:END\s*-->/g;
 function stripArtifact(text: string) {
   return text.replace(ARTIFACT_RE, '').trim();
+}
+
+const THINKING_PHRASES = [
+  'Thinking...', 'Inferring...', 'Contemplating...', 'Pondering...', 'Ruminating...',
+  'Hypothesizing...', 'Deliberating...', 'Extrapolating...', 'Synthesizing...', 'Cogitating...',
+  'Deducing...', 'Reasoning...', 'Envisioning...', 'Speculating...', 'Calculating...',
+  'Mulling it over...', 'Connecting dots...', 'Brewing ideas...', 'Processing...', 'Manifesting...',
+  'Brewing coffe...', 'Taking a nap...', 'Enjoying the sun...'
+];
+
+function useThinkingPhrase(active: boolean) {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    setIndex(Math.floor(Math.random() * THINKING_PHRASES.length));
+    const id = setInterval(() => {
+      setIndex(i => (i + 1) % THINKING_PHRASES.length);
+    }, 2500);
+    return () => clearInterval(id);
+  }, [active]);
+  return THINKING_PHRASES[index];
 }
 
 interface Props {
@@ -14,11 +37,32 @@ interface Props {
   streamingContent: string;
   onSend: (message: string) => void;
   onStop?: () => void;
+  /**
+   * When set, replaces the streaming area with a `ConnectionErrorBanner` describing
+   * the failing provider connection (SCR-012 / JRN-v0.2.0-008).
+   * Cleared automatically by `useChat` when the user sends a new message.
+   */
+  connectionError?: ConnectionError | null;
+  /**
+   * Opens the Project Stage Settings slide-over so the user can reassign this
+   * stage to a working connection without navigating away.
+   * When omitted, the "Change stage connection" CTA is not rendered in the banner.
+   */
+  onOpenProjectSettings?: () => void;
+  /**
+   * Retries the last unanswered user message without requiring re-typing.
+   * Wired to `resume()` from `useChat`. Shown in the error banner so the user
+   * can fix the connection inline (via "Change stage connection") then immediately
+   * retry without navigating away or losing their original message.
+   * When omitted, the Retry button is not rendered in the banner.
+   */
+  onRetry?: () => void;
 }
 
-export function ChatPanel({ messages, streaming, streamingContent, onSend, onStop }: Props) {
+export function ChatPanel({ messages, streaming, streamingContent, onSend, onStop, connectionError, onOpenProjectSettings, onRetry }: Props) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const thinkingPhrase = useThinkingPhrase(streaming);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -49,19 +93,27 @@ export function ChatPanel({ messages, streaming, streamingContent, onSend, onSto
             </div>
           </div>
         ))}
-        {streaming && (
+        {/* Connection error banner replaces the streaming area (SCR-012 / JRN-v0.2.0-008).
+            The banner persists until the user sends a new message (which clears it in useChat). */}
+        {connectionError ? (
+          <ConnectionErrorBanner
+            connectionName={connectionError.connectionName}
+            connectionId={connectionError.connectionId}
+            reason={connectionError.reason}
+            onOpenProjectSettings={onOpenProjectSettings}
+            onRetry={onRetry}
+          />
+        ) : streaming ? (
           <div className="message assistant streaming">
             <div className="message-role">
               Agent
-              <span className="thinking-label">
-                <span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" />
-              </span>
+              <span className="thinking-label">{thinkingPhrase}</span>
             </div>
             <div className="message-content">
               {stripArtifact(streamingContent) || '\u00A0'}
             </div>
           </div>
-        )}
+        ) : null}
         <div ref={messagesEndRef} />
       </div>
 

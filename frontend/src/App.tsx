@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Routes, Route, useNavigate, useParams } from 'react-router-dom';
 import { ProjectList } from './components/project/ProjectList';
 import { ImportProgressView } from './components/import/ImportProgressView';
 import { ProjectHeader } from './components/layout/ProjectHeader';
@@ -13,6 +14,8 @@ import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { VersionHistoryModal } from './components/git/VersionHistoryModal';
 import { ProfileModal } from './components/git/ProfileModal';
+import { ConfigurePage } from './components/configure/ConfigurePage';
+import { ProjectStageSettings } from './components/configure/ProjectStageSettings';
 import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
 import { getArtifact } from './api/artifacts';
 import { getMock } from './api/mock';
@@ -21,6 +24,7 @@ import { startEnhancement } from './api/enhance';
 import { getProject, patchProject } from './api/projects';
 import { getActiveRuns, sendBtw } from './api/activity';
 import type { ActiveRun } from './api/activity';
+import { getProjectOverrides } from './api/stageConfig';
 import { useChat } from './hooks/useChat';
 import { useAgentStream } from './hooks/useAgentStream';
 import { AgentStreamingView } from './components/layout/AgentStreamingView';
@@ -34,12 +38,18 @@ const KICKOFF_MESSAGES: Partial<Record<StageName, string>> = {
   build: "I've reviewed all approved artifacts. Let me create a concrete build plan with milestones and tasks.",
 };
 
+const PREV_STAGE: Partial<Record<StageName, StageName>> = {
+  ux: 'vision',
+  architecture: 'ux',
+  build: 'architecture',
+};
+
 interface StageTab {
   id: string;
   label: string;
 }
 
-function getTabsForStage(stage: StageName | null, imported?: boolean, hasBeads?: boolean): StageTab[] {
+function getTabsForStage(stage: StageName | null): StageTab[] {
   if (!stage || stage === 'complete') return [];
   if (stage === 'ux') return [
     { id: 'chat', label: 'Chat' },
@@ -52,7 +62,7 @@ function getTabsForStage(stage: StageName | null, imported?: boolean, hasBeads?:
       { id: 'artifact', label: 'Build Plan' },
       { id: 'skills', label: 'Skills' },
     ];
-    if (!imported || hasBeads) tabs.push({ id: 'execute', label: 'Execute' });
+    tabs.push({ id: 'execute', label: 'Execute' });
     return tabs;
   }
   return [
@@ -61,8 +71,26 @@ function getTabsForStage(stage: StageName | null, imported?: boolean, hasBeads?:
   ];
 }
 
-function App() {
+// ── Project List Page ──────────────────────────────────────────────────────────
+
+function ProjectListPage() {
+  const navigate = useNavigate();
+  return (
+    <ProjectList
+      onSelect={(p) => navigate(`/projects/${p.id}`)}
+      onConfigure={() => navigate('/configure')}
+    />
+  );
+}
+
+// ── Project Detail Page ────────────────────────────────────────────────────────
+
+function ProjectDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+
   const [project, setProject] = useState<Project | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
   const [selectedStage, setSelectedStage] = useState<StageName | null>(null);
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0);
@@ -70,6 +98,8 @@ function App() {
   const [stageTokens, setStageTokens] = useState<Partial<Record<StageName, number>>>({});
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showStageSettings, setShowStageSettings] = useState(false);
+  const [stagesWithOverrides, setStagesWithOverrides] = useState<Set<StageName>>(new Set());
   const [showImportProgress, setShowImportProgress] = useState(false);
   const [mockGenerated, setMockGenerated] = useState(false);
   const [buildComplete, setBuildComplete] = useState(false);
@@ -77,6 +107,17 @@ function App() {
   const [activeRuns, setActiveRuns] = useState<ActiveRun[]>([]);
   const [btwInput, setBtwInput] = useState('');
   const [btwSending, setBtwSending] = useState(false);
+
+  // Load project from URL param on mount / ID change
+  useEffect(() => {
+    if (!id) { navigate('/'); return; }
+    setLoadError(false);
+    setProject(null);
+    setPipeline(null);
+    getProject(id).then(setProject).catch(() => {
+      setLoadError(true);
+    });
+  }, [id, navigate]);
 
   const addTokens = useCallback((stage: StageName, n: number) => {
     if (n <= 0) return;
@@ -88,7 +129,7 @@ function App() {
     [stageTokens],
   );
 
-  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, loadHistory, send, resume, stop } =
+  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, loadHistory, send, resume, stop } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger, selectedStage ? (n) => addTokens(selectedStage, n) : undefined);
 
   const { active: agentActive, streamingText: agentStreamingText, operation: agentOperation, stage: agentStage } =
@@ -99,6 +140,22 @@ function App() {
     const state = await getPipeline(project.id);
     setPipeline(state);
     return state;
+  }, [project]);
+
+  /** Load per-project stage overrides and update the pip accent set. */
+  const loadStageOverrides = useCallback(async () => {
+    if (!project) return;
+    try {
+      const config = await getProjectOverrides(project.id);
+      const overridden = new Set<StageName>(
+        (Object.entries(config.overrides) as [StageName, unknown][])
+          .filter(([, v]) => v != null)
+          .map(([k]) => k),
+      );
+      setStagesWithOverrides(overridden);
+    } catch {
+      // Non-critical — silently swallow; no override accents shown
+    }
   }, [project]);
 
   // Restore persisted stage tokens when selecting a project
@@ -119,8 +176,9 @@ function App() {
       loadPipeline().then(state => {
         if (state) setSelectedStage(state.currentStage);
       });
+      loadStageOverrides();
     }
-  }, [project, loadPipeline]);
+  }, [project, loadPipeline, loadStageOverrides]);
 
   // Subscribe to live pipeline updates via SSE
   useEffect(() => {
@@ -214,11 +272,28 @@ function App() {
 
     if (messages.length === 0) {
       // Fresh stage — send the opening kickoff message.
-      let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
-      if (project?.enhancementVision && selectedStage === 'vision') {
-        kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
-      }
-      if (kickoff) send(kickoff);
+      const doKickoff = async () => {
+        let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
+        if (project?.enhancementVision) {
+          if (selectedStage === 'vision') {
+            kickoff = `This is an enhancement iteration. Here's what I want to improve: ${project.enhancementVision}`;
+          } else if (kickoff) {
+            const prevStage = selectedStage ? PREV_STAGE[selectedStage] : undefined;
+            let prevArtifact = '';
+            if (prevStage && project?.id) {
+              try {
+                const artifact = await getArtifact(project.id, prevStage);
+                if (artifact?.content?.trim()) prevArtifact = artifact.content.trim();
+              } catch { /* ignore */ }
+            }
+            kickoff = prevArtifact
+              ? `${kickoff}\n\nThis is an enhancement iteration — focus on: ${project.enhancementVision}\n\nApproved ${prevStage} artifact to build upon:\n\n${prevArtifact}`
+              : `${kickoff} This is an enhancement iteration — focus on: ${project.enhancementVision}`;
+          }
+        }
+        if (kickoff) send(kickoff);
+      };
+      doKickoff();
     } else {
       // Unanswered user message (e.g. server restarted mid-generation) — resume.
       resume();
@@ -275,22 +350,40 @@ function App() {
     setProject(updated);
   };
 
+  // ── Loading / error states ──
+
+  if (loadError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: '1rem' }}>
+        <p style={{ color: '#ef4444' }}>Project not found.</p>
+        <button onClick={() => navigate('/')} style={{ color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer' }}>
+          ← Back to projects
+        </button>
+      </div>
+    );
+  }
+
   if (!project) {
-    return <ProjectList onSelect={setProject} />;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        <span style={{ color: '#64748b' }}>Loading…</span>
+      </div>
+    );
   }
 
   const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
   const isActiveStage = currentStageInfo?.status === 'active';
-  const tabs = getTabsForStage(selectedStage, project?.imported, hasBeads);
+  const tabs = getTabsForStage(selectedStage);
 
   return (
     <div className="app-shell">
       <ProjectHeader
         project={project}
-        onBack={() => { setProject(null); setPipeline(null); }}
+        onBack={() => navigate('/')}
         totalTokens={grandTotal}
         onShowHistory={() => setShowVersionHistory(true)}
         onShowProfile={() => setShowProfile(true)}
+        onShowStageSettings={() => setShowStageSettings(true)}
         autonomous={!!project.autonomous}
         onToggleAutonomous={handleToggleAutonomous}
       />
@@ -302,6 +395,7 @@ function App() {
           onSelectStage={setSelectedStage}
           onReset={handleReset}
           stageTokens={stageTokens}
+          stagesWithOverrides={stagesWithOverrides}
         />
 
         <main className="main-content">
@@ -318,7 +412,7 @@ function App() {
             <CompletionView
               project={project}
               activity={pipeline?.stages.find(s => s.name === 'complete')?.activity}
-              onNewProject={() => { setProject(null); setPipeline(null); }}
+              onNewProject={() => navigate('/')}
               onViewStage={stage => setSelectedStage(stage)}
               onEnhance={handleEnhance}
               onSummaryReady={async () => {
@@ -358,6 +452,9 @@ function App() {
                     streamingContent={streamingContent}
                     onSend={send}
                     onStop={stop}
+                    connectionError={connectionError}
+                    onOpenProjectSettings={() => setShowStageSettings(true)}
+                    onRetry={resume}
                   />
                 )}
 
@@ -396,6 +493,7 @@ function App() {
                     onBeadTokens={(n) => addTokens('build', n)}
                     onExecutionComplete={() => setBuildComplete(true)}
                     onBuildDone={() => setBuildComplete(true)}
+                    onHasBeads={setHasBeads}
                     agentActive={agentActive}
                     agentOperation={agentOperation}
                     agentStreamingText={agentStreamingText}
@@ -411,7 +509,16 @@ function App() {
                   ) : (
                     <ApproveButton
                       projectId={project.id}
-                      disabled={streaming || (selectedStage === 'ux' && !mockGenerated) || (selectedStage === 'build' && !buildComplete && !project?.imported)}
+                      disabled={streaming || (selectedStage === 'ux' && !mockGenerated)}
+                      warning={
+                        selectedStage === 'build'
+                          ? !hasBeads
+                            ? "Are you sure? You didn't build anything yet"
+                            : !buildComplete
+                              ? "Are you sure? There's still work to do!"
+                              : undefined
+                          : undefined
+                      }
                       onApproved={handleApproved}
                     />
                   )}
@@ -436,8 +543,26 @@ function App() {
           onClose={() => setShowProfile(false)}
         />
       )}
+      {showStageSettings && (
+        <ProjectStageSettings
+          projectId={project.id}
+          projectName={project.name}
+          onClose={() => setShowStageSettings(false)}
+          onOverridesChange={loadStageOverrides}
+        />
+      )}
     </div>
   );
 }
 
-export default App;
+// ── App Router ─────────────────────────────────────────────────────────────────
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<ProjectListPage />} />
+      <Route path="/projects/:id" element={<ProjectDetailPage />} />
+      <Route path="/configure" element={<ConfigurePage />} />
+    </Routes>
+  );
+}

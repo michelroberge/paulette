@@ -15,35 +15,93 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
-// stageModels maps each pipeline stage to the Claude model to use for chat.
-var stageModels = map[model.StageName]string{
-	model.StageVision:       "claude-sonnet-4-6",
-	model.StageUX:           "claude-sonnet-4-6",
-	model.StageArchitecture: "claude-opus-4-6",
-	model.StageBuild:        "claude-opus-4-6",
+// connectionErrorPayload is the structured JSON payload embedded in a
+// StreamEvent{Type: "error"} Content field when the error originates from a
+// provider connection failure. It matches the frontend ConnectionError type in
+// types/provider.ts so the frontend can render the actionable ConnectionErrorBanner.
+type connectionErrorPayload struct {
+	IsConnectionError bool   `json:"isConnectionError"`
+	ConnectionID      string `json:"connectionId"`
+	ConnectionName    string `json:"connectionName"`
+	Reason            string `json:"reason"`
 }
 
 type ChatHandler struct {
-	registry     repository.RegistryRepo
-	chatRepo     repository.ChatRepo
-	artifactRepo repository.ArtifactRepo
-	activityRepo repository.ActivityRepo
-	runs         *stream.Manager
+	registry         repository.RegistryRepo
+	chatRepo         repository.ChatRepo
+	artifactRepo     repository.ArtifactRepo
+	activityRepo     repository.ActivityRepo
+	runs             *stream.Manager
+	providerRegistry *provider.Registry
+	stageConfig      *provider.StageConfigStore
+	connStore        *provider.ConnectionStore
 }
 
-func NewChatHandler(registry repository.RegistryRepo, chatRepo repository.ChatRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager) *ChatHandler {
+// NewChatHandler creates a ChatHandler. providerRegistry, stageConfig, and
+// connStore may be nil — in that case every stage falls back to the Claude CLI
+// provider, preserving v0.1.0 behaviour exactly.
+func NewChatHandler(
+	registry repository.RegistryRepo,
+	chatRepo repository.ChatRepo,
+	artifactRepo repository.ArtifactRepo,
+	activityRepo repository.ActivityRepo,
+	runs *stream.Manager,
+	providerRegistry *provider.Registry,
+	stageConfig *provider.StageConfigStore,
+	connStore *provider.ConnectionStore,
+) *ChatHandler {
 	return &ChatHandler{
-		registry:     registry,
-		chatRepo:     chatRepo,
-		artifactRepo: artifactRepo,
-		activityRepo: activityRepo,
-		runs:         runs,
+		registry:         registry,
+		chatRepo:         chatRepo,
+		artifactRepo:     artifactRepo,
+		activityRepo:     activityRepo,
+		runs:             runs,
+		providerRegistry: providerRegistry,
+		stageConfig:      stageConfig,
+		connStore:        connStore,
 	}
+}
+
+// buildProviderErrorEvent builds a StreamEvent{Type: "error"} whose Content is a
+// JSON-encoded connectionErrorPayload. It attempts to look up the connection name
+// for the given stage; on any lookup failure it falls back to safe defaults so
+// the event is always emittable.
+func (h *ChatHandler) buildProviderErrorEvent(hostDir string, stage model.StageName, err error) agent.StreamEvent {
+	payload := connectionErrorPayload{
+		IsConnectionError: true,
+		ConnectionName:    "configured connection",
+		Reason:            err.Error(),
+	}
+
+	// Best-effort: enrich the payload with the connection ID and human-readable name.
+	if h.stageConfig != nil && h.connStore != nil {
+		if assignment := h.stageConfig.ResolveStage(hostDir, stage); assignment != nil {
+			payload.ConnectionID = assignment.ConnectionID
+			if conn, lookupErr := h.connStore.Get(assignment.ConnectionID); lookupErr == nil {
+				payload.ConnectionName = conn.Name
+			}
+		}
+	}
+
+	content, _ := json.Marshal(payload)
+	return agent.StreamEvent{Type: "error", Content: string(content)}
+}
+
+// resolveProvider returns the Provider and model ID to use for a stage. It
+// delegates to the Registry when one is available; otherwise it falls back to
+// the Claude CLI provider using the hardcoded stage-model map (v0.1.0 behaviour).
+func (h *ChatHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+	}
+	// Nil registry — construct a bare Claude CLI provider as a safe fallback.
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
 }
 
 func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
@@ -198,11 +256,27 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 	}
 	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
 
-	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, message, project.HostDir)
-	if err != nil {
+	// Resolve the LLM provider for this stage (project override → global default → Claude CLI).
+	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
+	if provErr != nil {
+		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
 		clearActivity(h.activityRepo, project.HostDir, stage)
 		run.Finish(h.runs)
-		return nil, fmt.Errorf("failed to start agent: %w", err)
+		return run, nil
+	}
+
+	events, chatErr := prov.Chat(run.Context(), provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: systemPrompt,
+		History:      history,
+		UserMessage:  message,
+		ProjectDir:   project.HostDir,
+	})
+	if chatErr != nil {
+		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
+		clearActivity(h.activityRepo, project.HostDir, stage)
+		run.Finish(h.runs)
+		return run, nil
 	}
 
 	go func() {
@@ -210,6 +284,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 		defer clearActivity(h.activityRepo, project.HostDir, stage)
 
 		var stageTokensAccum int
+		var accumulated strings.Builder
 		runStart := time.Now()
 		defer func() {
 			if stageTokensAccum > 0 {
@@ -226,7 +301,11 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 				stageTokensAccum += n
 			}
 			if event.Type == "done" {
-				if artifact, found := agent.ExtractArtifact(event.Content); found {
+				fullContent := event.Content
+				if fullContent == "" {
+					fullContent = accumulated.String()
+				}
+				if artifact, found := agent.ExtractArtifact(fullContent); found {
 					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
@@ -234,7 +313,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 					}
 				}
 
-				chatContent := agent.StripArtifact(event.Content)
+				chatContent := agent.StripArtifact(fullContent)
 				assistantMsg := model.Message{
 					Role:      model.RoleAssistant,
 					Content:   chatContent,
@@ -244,6 +323,9 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 
 				run.Emit(agent.StreamEvent{Type: "done", Content: chatContent})
 			} else {
+				if event.Type == "chunk" {
+					accumulated.WriteString(event.Content)
+				}
 				run.Emit(event)
 			}
 		}
@@ -318,12 +400,28 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	}
 	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
 
-	// Start Claude CLI subprocess using the run's context (survives client disconnect)
-	events, err := agent.Chat(run.Context(), stageModels[stage], systemPrompt, history, message, project.HostDir)
-	if err != nil {
+	// Resolve the LLM provider for this stage (project override → global default → Claude CLI).
+	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
+	if provErr != nil {
+		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
 		clearActivity(h.activityRepo, project.HostDir, stage)
 		run.Finish(h.runs)
-		return nil, fmt.Errorf("failed to start agent: %w", err)
+		return run, nil
+	}
+
+	// Start LLM streaming via the resolved provider (survives client disconnect).
+	events, chatErr := prov.Chat(run.Context(), provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: systemPrompt,
+		History:      history,
+		UserMessage:  message,
+		ProjectDir:   project.HostDir,
+	})
+	if chatErr != nil {
+		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
+		clearActivity(h.activityRepo, project.HostDir, stage)
+		run.Finish(h.runs)
+		return run, nil
 	}
 
 	// Background goroutine: process agent events, emit through run.
@@ -333,6 +431,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		defer clearActivity(h.activityRepo, project.HostDir, stage)
 
 		var stageTokensAccum int
+		var accumulated strings.Builder
 		runStart := time.Now()
 		defer func() {
 			if stageTokensAccum > 0 {
@@ -349,8 +448,12 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 				stageTokensAccum += n
 			}
 			if event.Type == "done" {
+				fullContent := event.Content
+				if fullContent == "" {
+					fullContent = accumulated.String()
+				}
 				// Extract and save artifact if present
-				if artifact, found := agent.ExtractArtifact(event.Content); found {
+				if artifact, found := agent.ExtractArtifact(fullContent); found {
 					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
@@ -359,7 +462,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 				}
 
 				// Save assistant response without artifact block
-				chatContent := agent.StripArtifact(event.Content)
+				chatContent := agent.StripArtifact(fullContent)
 				assistantMsg := model.Message{
 					Role:      model.RoleAssistant,
 					Content:   chatContent,
@@ -369,6 +472,9 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 
 				run.Emit(agent.StreamEvent{Type: "done", Content: chatContent})
 			} else {
+				if event.Type == "chunk" {
+					accumulated.WriteString(event.Content)
+				}
 				run.Emit(event)
 			}
 		}

@@ -457,7 +457,7 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 		case "result":
 			if event.IsError {
 				cmd.Wait()
-				return "", 0, ErrPlanLimit
+				return "", 0, &PlanLimitError{Message: event.Result}
 			}
 			if event.Usage != nil {
 				totalTokens = event.Usage.InputTokens + event.Usage.OutputTokens

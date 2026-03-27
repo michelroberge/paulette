@@ -3,64 +3,58 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: paulette-dev:latest
-    container_name: paulette-backend-dev
-    working_dir: /workspace/backend
-    command: air
+    volumes:
+      # Source code — changes on host trigger air rebuild
+      - ./backend:/app/backend
+      # Shadow backend/tmp with a Docker volume so air (running as paulette) can write
+      # the compiled binary without hitting the host-file ownership mismatch on Windows
+      - backend-tmp:/app/backend/tmp
+      # Cache Go module downloads across rebuilds (GOPATH=/go in the golang image)
+      - go-modules:/go/pkg/mod
+      # Persist paulette runtime data (same as production)
+      - registry-data:/home/paulette/.paulette
+      - repos-data:/home/paulette/repos
+      - ./:/home/paulette/repos/paulette
+      - beads-data:/home/paulette/.beads
+      - ~/.claude/.credentials.json:/home/paulette/.claude/.credentials.json:ro
     ports:
-      - "${PORT:-8080}:8080"
+      - "8080:8080"
     environment:
       PORT: "8080"
-      REGISTRY_PATH: /root/.paulette
-      REPOS_PATH: /root/repos
+      REGISTRY_PATH: /home/paulette/.paulette
+      REPOS_PATH: /home/paulette/repos
       CLAUDE_PATH: claude
-      HOME: /root
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-    volumes:
-      # Source — changes on host are picked up by air immediately
-      - ./backend:/workspace/backend
-      # Go module cache — avoids re-downloading modules on each restart
-      - go-mod-cache:/root/go/pkg/mod
-      # Runtime persistence — named volumes, same as docker-compose.yml
-      - registry-data:/root/.paulette
-      - repos-data:/root/repos
-      # Mount the paulette repo itself as a project in repos (dev only)
-      - ./:/root/repos/paulette
-      # Shared beads DB — same named volume as docker-compose.yml (paulette_beads-data)
-      - beads-data:/root/.beads
-      # Mount host Claude credentials so OAuth login works without going through
-      # the container (Cloudflare blocks docker IPs on the token exchange endpoint).
-      # Run `claude auth login` on your host machine once, then restart dev containers.
-      - ${USERPROFILE:-${HOME}}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
 
   frontend:
     image: node:22-bookworm-slim
-    container_name: paulette-frontend-dev
-    working_dir: /workspace/frontend
-    # --host makes Vite listen on 0.0.0.0 so the port is reachable from the host
-    command: sh -c "npm install && npm run dev -- --host"
+    volumes:
+      # Source code — Vite HMR picks up changes instantly
+      - ./frontend:/app/frontend
+      # Separate volume for node_modules so host node_modules don't shadow container's
+      - frontend-modules:/app/frontend/node_modules
+    working_dir: /app/frontend
     ports:
       - "5173:5173"
     environment:
-      # Overrides the proxy target in vite.config.ts for the Docker network
+      # Vite proxy forwards /api to this URL (resolved inside the Docker network)
       BACKEND_URL: "http://backend:8080"
-      # Polling fallback — required on Windows where inotify events don't
-      # cross the host→container boundary reliably
-      CHOKIDAR_USEPOLLING: "true"
-      CHOKIDAR_INTERVAL: "500"
-    volumes:
-      # Source — Vite HMR watches for changes
-      - ./frontend:/workspace/frontend
-      # Isolated node_modules inside the container (avoids Windows path issues)
-      - frontend-node-modules:/workspace/frontend/node_modules
+    # Install deps if needed, then start Vite dev server bound to all interfaces
+    command: sh -c "npm install && npm run dev -- --host"
     depends_on:
       - backend
 
 volumes:
-  # Shared with docker-compose.yml (same Docker project name = paulette_*)
-  beads-data:
+  backend-tmp:
+  go-modules:
+  frontend-modules:
+  # Reuse the same named volumes as production so repos and settings are shared
   registry-data:
+    external: true
+    name: paulette_registry-data
   repos-data:
-  # Dev-only
-  go-mod-cache:
-  frontend-node-modules:
+    external: true
+    name: paulette_repos-data
+  beads-data:
+    external: true
+    name: paulette_beads-data

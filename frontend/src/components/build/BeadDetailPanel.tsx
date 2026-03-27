@@ -13,11 +13,12 @@ interface Props {
   onBeadSelect: (id: string) => void;
   onClose: () => void;
   onBeadsUpdated?: (graph: BeadGraph) => void;
+  onBeadControlled?: () => void;
 }
 
 type ChatMode = 'ask' | 'instruct';
 
-export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelect, onClose, onBeadsUpdated }: Props) {
+export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelect, onClose, onBeadsUpdated, onBeadControlled }: Props) {
   const {
     detail, loading,
     chatStreaming, chatStreamingContent,
@@ -63,8 +64,14 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
     }
   }, [instructionProposal]);
 
-  const isClosed = bead.status === 'closed';
-  const isInProgress = bead.status === 'in_progress' || bead.status === 'reviewing';
+  const currentStatus = detail?.status ?? bead.status;
+  const isClosed = currentStatus === 'closed';
+  const isInProgress = currentStatus === 'in_progress' || currentStatus === 'reviewing';
+
+  const handleControl = async (action: 'pause' | 'restart' | 'close') => {
+    await control(beadId, action);
+    onBeadControlled?.();
+  };
 
   const handleSave = async () => {
     const updates: { description?: string; notes?: string } = {};
@@ -206,13 +213,20 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
                         <button className="generate-mock-button" onClick={handleSave}>Save Changes</button>
                       )}
                       {isInProgress && (
-                        <button className="stop-button" onClick={() => control(beadId, 'pause')}>Pause</button>
+                        <button className="stop-button" onClick={() => handleControl('pause')}>Pause</button>
                       )}
                       {(descDirty || notesDirty) && !isInProgress && (
-                        <button className="stop-button" onClick={async () => { await handleSave(); await control(beadId, 'restart'); }}>
+                        <button className="stop-button" onClick={async () => { await handleSave(); await handleControl('restart'); }}>
                           Save &amp; Restart
                         </button>
                       )}
+                      <button
+                        className="close-verified-button"
+                        onClick={() => handleControl('close')}
+                        title="Mark this bead as verified and close it"
+                      >
+                        ✓ Close (Verified)
+                      </button>
                     </div>
                   )}
 

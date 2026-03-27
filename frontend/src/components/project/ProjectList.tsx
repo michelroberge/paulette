@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { listProjects, createProject, deleteProject } from '../../api/projects';
 import { importProject } from '../../api/import';
 import { getConfig } from '../../api/config';
 import { getProjectsActivity } from '../../api/activity';
 import { getAuthStatus, startLogin, logout, sendLoginCode } from '../../api/auth';
 import type { AuthStatus } from '../../api/auth';
+import { getGlobalIdentity } from '../../api/git';
+import type { GlobalGitIdentity } from '../../api/git';
 import { StageRobot } from '../layout/StageRobot';
 import type { Project, StageName } from '../../types';
 
@@ -49,9 +52,11 @@ function StageProgress({ currentStage }: Readonly<{ currentStage: string }>) {
 
 interface Props {
   readonly onSelect: (project: Project) => void;
+  readonly onConfigure?: () => void;
 }
 
-export function ProjectList({ onSelect }: Props) {
+export function ProjectList({ onSelect, onConfigure }: Props) {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [showImportForm, setShowImportForm] = useState(false);
@@ -71,6 +76,8 @@ export function ProjectList({ onSelect }: Props) {
   const [appAuthor, setAppAuthor] = useState('');
   const [activityCounts, setActivityCounts] = useState<Record<string, number>>({});
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [gitIdentity, setGitIdentity] = useState<GlobalGitIdentity | null>(null);
+  const [gitIdentityLoaded, setGitIdentityLoaded] = useState(false);
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   const [loginLines, setLoginLines] = useState<string[]>([]);
   const [loginError, setLoginError] = useState('');
@@ -87,6 +94,7 @@ export function ProjectList({ onSelect }: Props) {
       setAppAuthor(c.author);
     }).catch(console.error);
     getAuthStatus().then(setAuthStatus).catch(console.error);
+    getGlobalIdentity().then(id => { setGitIdentity(id); setGitIdentityLoaded(true); }).catch(() => setGitIdentityLoaded(true));
     return () => { if (authPollTimer.current) clearInterval(authPollTimer.current); };
   }, []);
 
@@ -170,11 +178,9 @@ export function ProjectList({ onSelect }: Props) {
       await sendLoginCode(loginCode.trim());
       setLoginCodeSent(true);
       setLoginCode('');
-      // Close the SSE stream — no longer needed once code is submitted.
-      // Then poll auth status directly, since the SSE done event can be
-      // lost if the connection drops while the CLI exchanges the token.
-      loginCleanup.current?.();
-      loginCleanup.current = null;
+      // Keep the SSE stream open — the backend will send a "done" or "error"
+      // event once the token exchange completes.  Poll as a fallback in case
+      // the SSE connection drops before that event arrives.
       let attempts = 0;
       authPollTimer.current = setInterval(() => {
         attempts++;
@@ -182,11 +188,15 @@ export function ProjectList({ onSelect }: Props) {
           if (status.authenticated) {
             clearInterval(authPollTimer.current!);
             authPollTimer.current = null;
+            loginCleanup.current?.();
+            loginCleanup.current = null;
             setAuthStatus(status);
             setShowLoginPanel(false);
           } else if (attempts >= 30) {
             clearInterval(authPollTimer.current!);
             authPollTimer.current = null;
+            loginCleanup.current?.();
+            loginCleanup.current = null;
             setLoginError('Authentication timed out — please try again.');
             setLoginCodeSent(false);
           }
@@ -204,6 +214,14 @@ export function ProjectList({ onSelect }: Props) {
   return (
     <div className="project-list">
       <div className="paulette-banner">
+        {onConfigure && (
+          <button className="paulette-banner-cog" onClick={onConfigure} title="Configure Paulette">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        )}
         <pre className="paulette-ascii">
 {"        ♥\n"}
 {"       ╱│╲\n"}
@@ -250,6 +268,24 @@ export function ProjectList({ onSelect }: Props) {
               <span className="auth-dot">●</span>
               <span>Not authenticated</span>
               <button className="auth-action" onClick={handleStartLogin}>Login</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {gitIdentityLoaded && (
+        <div className={`auth-banner ${gitIdentity?.name && gitIdentity?.email ? 'auth-ok' : 'auth-warn'}`}>
+          {gitIdentity?.name && gitIdentity?.email ? (
+            <>
+              <span className="auth-dot">●</span>
+              <span>Git identity: {gitIdentity.name} &lt;{gitIdentity.email}&gt;</span>
+              <button className="auth-action" onClick={() => navigate('/configure?tab=git')}>Configure</button>
+            </>
+          ) : (
+            <>
+              <span className="auth-dot">●</span>
+              <span>Git identity not set — SSH clone may fail</span>
+              <button className="auth-action" onClick={() => navigate('/configure?tab=git')}>Set Up Git</button>
             </>
           )}
         </div>
@@ -343,6 +379,25 @@ export function ProjectList({ onSelect }: Props) {
           <span className="plus" style={{ fontSize: '1.5rem' }}>&#8615;</span>
           <span>Import Repo</span>
         </div>
+
+        {onConfigure && (
+          <div className="project-card new-project configure-card" onClick={onConfigure}>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ width: '1.5rem', height: '1.5rem', marginBottom: '0.25rem' }}
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            <span>Configure Paulette</span>
+          </div>
+        )}
+
       </div>
 
       {confirmDelete && (

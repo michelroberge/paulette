@@ -99,6 +99,11 @@ func buildMockSystemPrompt(cfg *model.FrameworkConfig) string {
 
 const maxMockRetries = 2
 
+// MaxMockRetries is the exported maximum number of retry attempts when the LLM
+// does not include a valid HTML envelope in its response. Exported so the mock
+// handler can implement the same retry loop when using the provider layer.
+const MaxMockRetries = maxMockRetries
+
 const mockRetryPrompt = `Your previous response is missing the required XML envelope with CDATA HTML content.
 
 You MUST wrap the HTML exactly like this:
@@ -121,6 +126,23 @@ Now output the complete HTML wireframe mockup wrapped in the required XML envelo
 func hasHTMLBlock(s string) bool {
 	return strings.Contains(s, "<htmlcontent>") && strings.Contains(s, "</htmlcontent>")
 }
+
+// HasHTMLBlock is the exported version of hasHTMLBlock. It checks whether the
+// response string contains the expected XML envelope with CDATA HTML content.
+// Exported so the mock handler can use it in the provider-layer retry loop.
+func HasHTMLBlock(s string) bool { return hasHTMLBlock(s) }
+
+// BuildMockSystemPrompt is the exported version of buildMockSystemPrompt.
+// It constructs the mock generation system prompt for the given framework
+// configuration. Exported so the mock handler can build the prompt when
+// calling the provider layer directly (bypassing agent.GenerateMock).
+func BuildMockSystemPrompt(cfg *model.FrameworkConfig) string { return buildMockSystemPrompt(cfg) }
+
+// MockRetryPrompt is the exported correction prompt template used when the LLM
+// returns conversational text instead of a valid HTML envelope. Callers should
+// fmt.Sprintf(agent.MockRetryPrompt, snippet) where snippet is the first 500
+// characters of the bad response.
+const MockRetryPrompt = mockRetryPrompt
 
 // invokeMockClaude runs a single Claude invocation and collects streamed events.
 // It sends chunks to the provided channel and returns the full response text.
