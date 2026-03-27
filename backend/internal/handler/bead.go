@@ -21,23 +21,42 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
 type BeadHandler struct {
-	registry     repository.RegistryRepo
-	projectRepo  repository.ProjectRepo
-	artifactRepo repository.ArtifactRepo
-	activityRepo repository.ActivityRepo
-	runs         *stream.Manager
-	skillRepo    *fsrepo.SkillRepo
-	gitSvc       *git.Service
+	registry         repository.RegistryRepo
+	projectRepo      repository.ProjectRepo
+	artifactRepo     repository.ArtifactRepo
+	activityRepo     repository.ActivityRepo
+	runs             *stream.Manager
+	skillRepo        *fsrepo.SkillRepo
+	gitSvc           *git.Service
+	providerRegistry *provider.Registry
+	stageConfig      *provider.StageConfigStore
 }
 
 func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, skillRepo *fsrepo.SkillRepo) *BeadHandler {
 	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs, skillRepo: skillRepo, gitSvc: git.NewService()}
+}
+
+// SetProviderRegistry wires in the provider registry and stage config so bead
+// execution can be routed through non-Claude-CLI providers.
+func (h *BeadHandler) SetProviderRegistry(reg *provider.Registry, sc *provider.StageConfigStore) {
+	h.providerRegistry = reg
+	h.stageConfig = sc
+}
+
+// resolveProvider returns the Provider and model to use for the given stage,
+// falling back to ClaudeCLI when no registry is configured.
+func (h *BeadHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
 }
 
 // GetGraph returns the current bead graph JSON for a project, assembled from bd.
@@ -212,10 +231,32 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 
 		ctx := run.Context()
 
-		// Step 1: Parse build.md with Claude (architecture provided for scoping inference)
+		// Step 1: Parse build.md via the provider registry (falls back to Claude CLI).
 		run.Emit(agent.StreamEvent{Type: "log", Content: "Parsing build plan..."})
 
-		events, err := agent.ParseBuildPlan(ctx, buildContent, archContent)
+		prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
+		if provErr != nil {
+			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to resolve provider: " + provErr.Error()})
+			return
+		}
+
+		var parseBuildPlanPrompt strings.Builder
+		parseBuildPlanPrompt.WriteString("Build Plan:\n---\n")
+		parseBuildPlanPrompt.WriteString(buildContent)
+		parseBuildPlanPrompt.WriteString("\n---\n\n")
+		if archContent != "" {
+			parseBuildPlanPrompt.WriteString("Architecture (use this to infer target files and tags for each task):\n---\n")
+			parseBuildPlanPrompt.WriteString(archContent)
+			parseBuildPlanPrompt.WriteString("\n---\n\n")
+		}
+		parseBuildPlanPrompt.WriteString("Extract all milestones and tasks from this build plan into the required JSON format. Include tags and targetFiles for each task.")
+
+		events, err := prov.Chat(ctx, provider.ChatRequest{
+			Model:        modelID,
+			SystemPrompt: agent.ParseBuildPlanSystemPrompt,
+			UserMessage:  parseBuildPlanPrompt.String(),
+			ProjectDir:   project.HostDir,
+		})
 		if err != nil {
 			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to start parser: " + err.Error()})
 			return
@@ -491,7 +532,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		}
 
 		// Set up skill observer to detect emergent patterns during execution
-		observer := NewSkillObserver(project.HostDir, h.skillRepo, run, project, 5)
+		observer := NewSkillObserver(project.HostDir, h.skillRepo, run, project, 5, h.providerRegistry, h.stageConfig)
 		defer observer.Flush()
 
 		var wg sync.WaitGroup
@@ -559,8 +600,13 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					}
 				}
 
-				// Execute initial bead
-				agentEvents, err := agent.ExecuteBead(beadCtx, project.HostDir, currentBead, artifacts, enhCtx)
+				// Execute initial bead via provider
+				prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
+				if provErr != nil {
+					run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] resolve provider: %v", currentBead.ID, provErr)})
+					return
+				}
+				agentEvents, err := dispatchExecuteBead(beadCtx, prov, modelID, project.HostDir, currentBead, artifacts, enhCtx)
 				if err != nil {
 					run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] execute failed: %v", currentBead.ID, err)})
 					return
@@ -596,7 +642,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 😈 Devil's advocate reviewing (attempt %d/%d)...", currentBead.ID, iteration+1, maxReviewIterations)})
 
 					siblings := siblingBeads(ctx, project.HostDir, currentBead)
-					findings, reviewTokens, reviewErr := agent.ReviewBead(ctx, project.HostDir, currentBead, artifacts, siblings, enhCtx)
+					findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, prov, modelID, project.HostDir, currentBead, artifacts, siblings, enhCtx)
 					if reviewTokens > 0 {
 						currentBead.Tokens += reviewTokens
 						totalBuildTokens.Add(int64(reviewTokens))
@@ -685,7 +731,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Starting correction: %s", corrID, corrTitle)})
 
-					corrEvents, err := agent.ExecuteBead(ctx, project.HostDir, corrBead, artifacts, enhCtx)
+					corrEvents, err := dispatchExecuteBead(ctx, prov, modelID, project.HostDir, corrBead, artifacts, enhCtx)
 					if err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] correction execute failed: %v", corrID, err)})
 						return
@@ -765,7 +811,12 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				run.Emit(agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
 				run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 🔧 Fixing validation failures...", fixID)})
 
-				fixEvents, err := agent.ExecuteBead(ctx, project.HostDir, fixBead, artifacts, enhCtx)
+				fixProv, fixModelID, fixProvErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
+			if fixProvErr != nil {
+				run.Emit(agent.StreamEvent{Type: "error", Content: "Fix bead resolve provider failed: " + fixProvErr.Error()})
+				break
+			}
+			fixEvents, err := dispatchExecuteBead(ctx, fixProv, fixModelID, project.HostDir, fixBead, artifacts, enhCtx)
 				if err != nil {
 					run.Emit(agent.StreamEvent{Type: "error", Content: "Fix bead execution failed: " + err.Error()})
 					break
@@ -790,6 +841,82 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 	}()
 
 	return run, nil
+}
+
+// --- Provider dispatch helpers ---
+
+// dispatchExecuteBead routes bead execution through the provider abstraction.
+// For ClaudeCLIProvider it delegates to agent.ExecuteBead (which handles skill
+// context injection, enhancement context, etc.).
+// For all other providers it builds the prompt directly and calls ExecuteAgent.
+func dispatchExecuteBead(
+	ctx context.Context,
+	prov provider.Provider,
+	modelID string,
+	projectDir string,
+	bead model.Bead,
+	artifacts map[model.StageName]string,
+	enhCtx *agent.EnhancementContext,
+) (<-chan agent.StreamEvent, error) {
+	if _, ok := prov.(*provider.ClaudeCLIProvider); ok {
+		return agent.ExecuteBead(ctx, projectDir, bead, artifacts, enhCtx)
+	}
+	// Build system + user prompts for non-CLI providers.
+	systemPrompt, userMsg := agent.BuildExecuteBeadRequest(ctx, projectDir, bead, artifacts, enhCtx)
+	return prov.ExecuteAgent(ctx, provider.AgentRequest{
+		Model:        modelID,
+		SystemPrompt: systemPrompt,
+		UserMessage:  userMsg,
+		ProjectDir:   projectDir,
+		Tools:        provider.StandardTools(),
+	})
+}
+
+// dispatchReviewBead routes review execution through the provider abstraction.
+func dispatchReviewBead(
+	ctx context.Context,
+	prov provider.Provider,
+	modelID string,
+	projectDir string,
+	bead model.Bead,
+	artifacts map[model.StageName]string,
+	siblings []model.Bead,
+	enhCtx *agent.EnhancementContext,
+) (string, int, error) {
+	if _, ok := prov.(*provider.ClaudeCLIProvider); ok {
+		return agent.ReviewBead(ctx, projectDir, bead, artifacts, siblings, enhCtx)
+	}
+	systemPrompt, userMsg := agent.BuildReviewBeadRequest(projectDir, bead, artifacts, siblings, enhCtx)
+	ch, err := prov.ExecuteAgent(ctx, provider.AgentRequest{
+		Model:        modelID,
+		SystemPrompt: systemPrompt,
+		UserMessage:  userMsg,
+		ProjectDir:   projectDir,
+		Tools:        provider.BashOnlyTools(),
+	})
+	if err != nil {
+		return "", 0, err
+	}
+	var fullText strings.Builder
+	var tokens int
+	for ev := range ch {
+		switch ev.Type {
+		case "chunk":
+			fullText.WriteString(ev.Content)
+		case "tokens":
+			tokens += ev.Tokens
+		case "error":
+			return "", tokens, fmt.Errorf("%s", ev.Content)
+		}
+	}
+	discussion := agent.ParseResponse(fullText.String()).Discussion
+	if discussion == "" {
+		discussion = strings.TrimSpace(fullText.String())
+	}
+	if agent.IsLGTM(discussion) {
+		return "", tokens, nil
+	}
+	return discussion, tokens, nil
 }
 
 // --- bd CLI helpers ---

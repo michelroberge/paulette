@@ -12,6 +12,9 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
+// StreamEvent is an alias to model.StreamEvent so existing callers are unaffected.
+type StreamEvent = model.StreamEvent
+
 // ErrPlanLimit is the sentinel error for Claude usage/plan limit.
 var ErrPlanLimit = errors.New("claude plan limit reached")
 
@@ -47,13 +50,6 @@ func SetClaudePath(path string) {
 // package-level variable on every call.
 func GetClaudeBin() string {
 	return claudeBin
-}
-
-// StreamEvent represents an event sent to the client via SSE.
-type StreamEvent struct {
-	Type    string `json:"type"`             // "chunk", "artifact", "done", "error", "tokens"
-	Content string `json:"content"`          // text content for chunk, path for artifact, message for error
-	Tokens  int    `json:"tokens,omitempty"` // token count for "tokens" events
 }
 
 // claudeEvent represents a line from claude --output-format stream-json --verbose

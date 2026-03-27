@@ -206,6 +206,180 @@ func (p *AnthropicProvider) ListModels(_ context.Context) ([]ModelInfo, error) {
 	}, nil
 }
 
+// ExecuteAgent runs an agentic tool-use loop via the Anthropic Messages API.
+func (p *AnthropicProvider) ExecuteAgent(ctx context.Context, req AgentRequest) (<-chan StreamEvent, error) {
+	if req.Model == "" {
+		return nil, fmt.Errorf("anthropic execute-agent: model must not be empty")
+	}
+	ch := make(chan StreamEvent, 64)
+	go func() {
+		defer close(ch)
+		runAnthropicAgentLoop(ctx, p, req, ch)
+	}()
+	return ch, nil
+}
+
+// anthropicAgentTool is the tool definition format for the Anthropic Messages API.
+type anthropicAgentTool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"input_schema"`
+}
+
+// anthropicToolUseBlock is a content block returned when the model calls a tool.
+type anthropicToolUseBlock struct {
+	Type  string         `json:"type"`
+	ID    string         `json:"id"`
+	Name  string         `json:"name"`
+	Input map[string]any `json:"input"`
+}
+
+// anthropicToolResultBlock is the user-role content block for tool results.
+type anthropicToolResultBlock struct {
+	Type      string `json:"type"`
+	ToolUseID string `json:"tool_use_id"`
+	Content   string `json:"content"`
+}
+
+// runAnthropicAgentLoop is the Anthropic agentic loop body.
+func runAnthropicAgentLoop(ctx context.Context, p *AnthropicProvider, req AgentRequest, ch chan<- StreamEvent) {
+	executor := &ToolExecutor{ProjectDir: req.ProjectDir}
+
+	tools := make([]anthropicAgentTool, len(req.Tools))
+	for i, t := range req.Tools {
+		tools[i] = anthropicAgentTool{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		}
+	}
+
+	// Anthropic uses separate top-level "system" field; messages are user/assistant only.
+	type anthropicMsg struct {
+		Role    string `json:"role"`
+		Content any    `json:"content"` // string or []map[string]any
+	}
+
+	msgs := []anthropicMsg{
+		{Role: "user", Content: req.UserMessage},
+	}
+
+	apiURL := fmt.Sprintf("%s/v1/messages", p.baseURL)
+
+	for iter := 0; iter < maxAgentIterations; iter++ {
+		if ctx.Err() != nil {
+			ch <- StreamEvent{Type: "error", Content: ctx.Err().Error()}
+			return
+		}
+
+		body := map[string]any{
+			"model":      req.Model,
+			"max_tokens": anthropicChatMaxTokens,
+			"system":     req.SystemPrompt,
+			"messages":   msgs,
+			"tools":      tools,
+			"stream":     false,
+		}
+		bodyBytes, err := json.Marshal(body)
+		if err != nil {
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("anthropic execute-agent: marshal: %v", err)}
+			return
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("anthropic execute-agent: create request: %v", err)}
+			return
+		}
+		p.setHeaders(httpReq)
+
+		resp, err := p.httpClient.Do(httpReq)
+		if err != nil {
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("anthropic execute-agent: request: %v", err)}
+			return
+		}
+		if resp.StatusCode != http.StatusOK {
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("anthropic execute-agent: HTTP %d: %s", resp.StatusCode, string(errBody))}
+			return
+		}
+
+		// Parse the non-streaming response. The content field is []ContentBlock.
+		var apiResp struct {
+			StopReason string `json:"stop_reason"` // "tool_use" or "end_turn"
+			Content    []struct {
+				Type  string          `json:"type"`
+				Text  string          `json:"text,omitempty"`
+				ID    string          `json:"id,omitempty"`
+				Name  string          `json:"name,omitempty"`
+				Input map[string]any  `json:"input,omitempty"`
+			} `json:"content"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+			resp.Body.Close()
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("anthropic execute-agent: decode: %v", err)}
+			return
+		}
+		resp.Body.Close()
+
+		if apiResp.StopReason == "tool_use" {
+			// Build assistant message containing all content blocks.
+			var assistantBlocks []map[string]any
+			var toolUseBlocks []anthropicToolUseBlock
+			for _, blk := range apiResp.Content {
+				switch blk.Type {
+				case "text":
+					assistantBlocks = append(assistantBlocks, map[string]any{"type": "text", "text": blk.Text})
+				case "tool_use":
+					assistantBlocks = append(assistantBlocks, map[string]any{
+						"type":  "tool_use",
+						"id":    blk.ID,
+						"name":  blk.Name,
+						"input": blk.Input,
+					})
+					toolUseBlocks = append(toolUseBlocks, anthropicToolUseBlock{
+						Type: blk.Type, ID: blk.ID, Name: blk.Name, Input: blk.Input,
+					})
+				}
+			}
+			msgs = append(msgs, anthropicMsg{Role: "assistant", Content: assistantBlocks})
+
+			// Build tool results as a single user message with multiple content blocks.
+			var resultBlocks []map[string]any
+			for _, tub := range toolUseBlocks {
+				ch <- StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] executing...", tub.Name)}
+				toolOutput, toolErr := executor.Execute(ctx, tub.Name, tub.Input)
+				if toolErr != nil {
+					toolOutput = fmt.Sprintf("error: %v\n%s", toolErr, toolOutput)
+				}
+				ch <- StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] done", tub.Name)}
+				resultBlocks = append(resultBlocks, map[string]any{
+					"type":        "tool_result",
+					"tool_use_id": tub.ID,
+					"content":     toolOutput,
+				})
+			}
+			msgs = append(msgs, anthropicMsg{Role: "user", Content: resultBlocks})
+			continue
+		}
+
+		// Final answer: collect text blocks.
+		var sb strings.Builder
+		for _, blk := range apiResp.Content {
+			if blk.Type == "text" && blk.Text != "" {
+				sb.WriteString(blk.Text)
+			}
+		}
+		text := sb.String()
+		if text != "" {
+			ch <- StreamEvent{Type: "chunk", Content: text}
+		}
+		ch <- StreamEvent{Type: "done", Content: text}
+		return
+	}
+	ch <- StreamEvent{Type: "error", Content: "anthropic execute-agent: max iterations reached"}
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 // setHeaders applies the authentication and versioning headers required by

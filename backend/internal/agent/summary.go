@@ -52,6 +52,30 @@ Items explicitly deferred or flagged as current limitations.
 
 Be concise — aim for a document that can be quickly scanned. Avoid repeating full artifact contents; summarize the decisions and rationale.`
 
+// BuildStreamSummaryRequest returns the system prompt and user message for summary generation.
+// Used by non-CLI providers that call provider.Chat directly.
+func BuildStreamSummaryRequest(artifacts map[model.StageName]string, projectName, version string) (systemPrompt, userMsg string) {
+	var prompt strings.Builder
+	prompt.WriteString(fmt.Sprintf("Project: %s, Version: %s\n\n", projectName, version))
+	stages := []struct {
+		name  model.StageName
+		label string
+	}{
+		{model.StageVision, "Vision"},
+		{model.StageUX, "UX Design"},
+		{model.StageArchitecture, "Architecture"},
+		{model.StageBuild, "Build Plan"},
+	}
+	for _, s := range stages {
+		content := artifacts[s.name]
+		if content == "" {
+			continue
+		}
+		prompt.WriteString(fmt.Sprintf("## %s Artifact\n---\n%s\n---\n\n", s.label, content))
+	}
+	return summarySystemPrompt, prompt.String()
+}
+
 // StreamSummary calls Claude to produce a concise summary of all approved artifacts,
 // streaming chunks as StreamEvents. The channel is closed when generation finishes.
 func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, projectName string, version string) (<-chan StreamEvent, error) {

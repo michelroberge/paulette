@@ -1,9 +1,12 @@
 package provider
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
 )
@@ -62,4 +65,114 @@ func (p *ClaudeCLIProvider) TestConnection(ctx context.Context) error {
 // model entry for this provider type.
 func (p *ClaudeCLIProvider) ListModels(_ context.Context) ([]ModelInfo, error) {
 	return nil, ErrModelListUnsupported
+}
+
+// ExecuteAgent spawns the Claude CLI in agentic mode (with tool access) and
+// streams the response as StreamEvents.  The tool names from req.Tools are
+// passed as --allowedTools.
+func (p *ClaudeCLIProvider) ExecuteAgent(ctx context.Context, req AgentRequest) (<-chan StreamEvent, error) {
+	if req.Model == "" {
+		req.Model = "claude-sonnet-4-6"
+	}
+
+	names := toolNames(req.Tools)
+	toolsArg := strings.Join(names, ",")
+	if toolsArg == "" {
+		toolsArg = "Bash"
+	}
+
+	args := []string{
+		"--print",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--include-partial-messages",
+		"--model", req.Model,
+		"--allowedTools", toolsArg,
+		"--permission-mode", "acceptEdits",
+		"--system-prompt", req.SystemPrompt,
+	}
+
+	cmd := exec.CommandContext(ctx, p.claudePath, args...)
+	cmd.Stdin = strings.NewReader(req.UserMessage)
+	if req.ProjectDir != "" {
+		cmd.Dir = req.ProjectDir
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("claude-cli execute-agent: stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("claude-cli execute-agent: start: %w", err)
+	}
+
+	ch := make(chan StreamEvent, 64)
+
+	go func() {
+		defer close(ch)
+		defer cmd.Wait()
+
+		type claudeEvent struct {
+			Type    string `json:"type"`
+			Message *struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"message,omitempty"`
+			Result  string `json:"result,omitempty"`
+			IsError bool   `json:"is_error,omitempty"`
+			Usage   *struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage,omitempty"`
+		}
+
+		var fullResponse strings.Builder
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				continue
+			}
+			var ev claudeEvent
+			if err := json.Unmarshal([]byte(line), &ev); err != nil {
+				continue
+			}
+			switch ev.Type {
+			case "assistant":
+				if ev.Message != nil {
+					for _, c := range ev.Message.Content {
+						if c.Type == "text" && c.Text != "" {
+							fullResponse.WriteString(c.Text)
+							ch <- StreamEvent{Type: "chunk", Content: c.Text}
+						}
+					}
+				}
+			case "result":
+				if ev.IsError {
+					msg := ev.Result
+					if msg == "" {
+						msg = "Claude plan limit reached"
+					}
+					ch <- StreamEvent{Type: "plan_limit", Content: msg}
+					return
+				}
+				if ev.Usage != nil {
+					total := ev.Usage.InputTokens + ev.Usage.OutputTokens
+					ch <- StreamEvent{Type: "tokens", Tokens: total}
+				}
+				if fullResponse.Len() == 0 && ev.Result != "" {
+					fullResponse.WriteString(ev.Result)
+					ch <- StreamEvent{Type: "chunk", Content: ev.Result}
+				}
+			}
+		}
+
+		ch <- StreamEvent{Type: "done", Content: fullResponse.String()}
+	}()
+
+	return ch, nil
 }

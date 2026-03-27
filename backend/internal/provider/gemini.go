@@ -162,6 +162,11 @@ func (p *GeminiProvider) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	return models, nil
 }
 
+// ExecuteAgent is a stub — Gemini tool-use is not yet implemented.
+func (p *GeminiProvider) ExecuteAgent(_ context.Context, _ AgentRequest) (<-chan StreamEvent, error) {
+	return nil, fmt.Errorf("ExecuteAgent not yet implemented for Gemini provider")
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 // buildChatRequest converts a ChatRequest into the Gemini JSON wire format.

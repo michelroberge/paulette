@@ -122,3 +122,12 @@ func (p *OpenAIProvider) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	}
 	return models, nil
 }
+
+// ExecuteAgent runs an agentic tool-use loop via the OpenAI Chat Completions API.
+func (p *OpenAIProvider) ExecuteAgent(ctx context.Context, req AgentRequest) (<-chan StreamEvent, error) {
+	ch, err := openAICompatExecuteAgent(ctx, p.httpClient, p.baseURL, p.authHeaders(), req)
+	if err != nil {
+		return nil, fmt.Errorf("openai: %w", err)
+	}
+	return ch, nil
+}

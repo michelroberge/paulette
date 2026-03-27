@@ -99,7 +99,7 @@ func (s *Server) Router() http.Handler {
 	skillRepo := fsrepo.NewSkillRepo(s.cfg.RegistryPath)
 
 	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
-	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, gitSvc)
+	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, gitSvc, s.providerRegistry, s.stageConfig)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
@@ -112,7 +112,7 @@ func (s *Server) Router() http.Handler {
 	ggh := handler.NewGitGlobalHandler(gitSvc, s.gitIdentity)
 	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath, s.gitIdentity)
 	sh := handler.NewSessionHandler(s.registry)
-	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs)
+	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs, s.providerRegistry, s.stageConfig)
 
 	// Wire orchestrator (created once, reused across Router calls)
 	if s.orchestrator == nil {

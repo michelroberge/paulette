@@ -11,17 +11,20 @@ import (
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
 type SkillHandler struct {
-	registry     repository.RegistryRepo
-	artifactRepo repository.ArtifactRepo
-	activityRepo repository.ActivityRepo
-	skillRepo    *fsrepo.SkillRepo
-	runs         *stream.Manager
+	registry         repository.RegistryRepo
+	artifactRepo     repository.ArtifactRepo
+	activityRepo     repository.ActivityRepo
+	skillRepo        *fsrepo.SkillRepo
+	runs             *stream.Manager
+	providerRegistry *provider.Registry
+	stageConfig      *provider.StageConfigStore
 }
 
 func NewSkillHandler(
@@ -30,14 +33,27 @@ func NewSkillHandler(
 	activityRepo repository.ActivityRepo,
 	skillRepo *fsrepo.SkillRepo,
 	runs *stream.Manager,
+	providerRegistry *provider.Registry,
+	stageConfig *provider.StageConfigStore,
 ) *SkillHandler {
 	return &SkillHandler{
-		registry:     registry,
-		artifactRepo: artifactRepo,
-		activityRepo: activityRepo,
-		skillRepo:    skillRepo,
-		runs:         runs,
+		registry:         registry,
+		artifactRepo:     artifactRepo,
+		activityRepo:     activityRepo,
+		skillRepo:        skillRepo,
+		runs:             runs,
+		providerRegistry: providerRegistry,
+		stageConfig:      stageConfig,
 	}
+}
+
+// resolveProvider returns the Provider and model ID to use for the given stage,
+// falling back to ClaudeCLI when no registry is configured.
+func (h *SkillHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
 }
 
 // Analyze triggers Claude-based skill analysis of the build plan (pre-phase).
@@ -71,12 +87,30 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	}
 	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "skills-analyze")
 
+	// Resolve the LLM provider for the Build stage before entering the goroutine.
+	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
+	if provErr != nil {
+		run.Emit(agent.StreamEvent{Type: "error", Content: provErr.Error()})
+		clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
+		run.Finish(h.runs)
+		run.StreamTo(w, r, 0)
+		return
+	}
+
+	// Build system prompt and user message outside the goroutine.
+	systemPrompt, userMsg := agent.BuildAnalyzeSkillsRequest(buildContent, archContent, existingSkills)
+
 	go func() {
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
 
 		runStart := time.Now()
-		events, err := agent.AnalyzeSkills(run.Context(), buildContent, archContent, existingSkills)
+		events, err := prov.Chat(run.Context(), provider.ChatRequest{
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  userMsg,
+			ProjectDir:   project.HostDir,
+		})
 		if err != nil {
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
 			return

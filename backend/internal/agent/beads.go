@@ -11,7 +11,10 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
-const parseBuildPlanSystemPrompt = `You are a Build Plan Parser for an AI App Factory. Read the build plan and architecture below and extract all milestones and tasks into a structured JSON format.
+// ParseBuildPlanSystemPrompt is exported so handlers can pass it to provider.Chat directly.
+const ParseBuildPlanSystemPrompt = parseBuildPlanSystemPrompt
+
+const parseBuildPlanSystemPrompt = `You are a Build Plan Parser for an AI App Factory. Read the build plan and architecture below and extract all milestones and tasks into a structured JSON format. 
 
 OUTPUT FORMAT: Wrap in <response>...</response>. Put JSON only in <jsonplan>...</jsonplan>. No discussion.
 <response>
@@ -51,7 +54,8 @@ Rules:
 - targetFiles: relative file/directory paths (from the project root) the task should create or modify. NEVER use absolute paths. If unsure, omit rather than guess.
 - journeyRefs: array of JRN-* IDs from the UX document that this task directly serves. Extract these from the task description and build plan text. If not explicit, infer from context (e.g. a login task serves the authentication journey). Always output as an array (use [] if genuinely unknown).
 - archRefs: array of ARCH-* IDs from the architecture document that this task directly implements or modifies. Extract from task descriptions and architecture references. Always output as an array (use [] if genuinely unknown).
-- Do not include any text, explanation, or markdown outside the XML envelope`
+- Do not include any text, explanation, or markdown outside the XML envelope
+- Do not include any time estimates`
 
 const devilAdvocateSystemPrompt = `You are the Devil's Advocate Agent for an AI App Factory. Your role is to critically review code just written by another agent and challenge its quality, completeness, and correctness.
 
@@ -478,6 +482,151 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 		return "", totalTokens, nil
 	}
 	return discussion, totalTokens, nil
+}
+
+// IsLGTM is the exported form of isLGTM for use by handler dispatch helpers.
+func IsLGTM(response string) bool { return isLGTM(response) }
+
+// BuildExecuteBeadRequest builds the system prompt and user message for a code-writer
+// bead execution without actually running Claude. This is used by non-CLI providers
+// that call ExecuteAgent directly.
+func BuildExecuteBeadRequest(
+	ctx context.Context,
+	projectDir string,
+	bead model.Bead,
+	artifacts map[model.StageName]string,
+	enhancement *EnhancementContext,
+) (systemPrompt, userMsg string) {
+	var sp strings.Builder
+	var artifactContext strings.Builder
+
+	relevantStages := model.RelevantStages(bead.Tags)
+	for _, stage := range relevantStages {
+		if content, ok := artifacts[stage]; ok && content != "" {
+			artifactContext.WriteString(strings.ToUpper(string(stage)))
+			artifactContext.WriteString(":\n---\n")
+			artifactContext.WriteString(content)
+			artifactContext.WriteString("\n---\n\n")
+		}
+	}
+
+	sp.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactContext.String()))
+	sp.WriteString(fmt.Sprintf("\n\nProject root: `%s`\nALWAYS use relative paths for file operations — never hardcode absolute paths.", projectDir))
+
+	if enhancement != nil {
+		sp.WriteString("\n\n--- ENHANCEMENT CONTEXT ---\n")
+		sp.WriteString(`IMPORTANT: This is an ENHANCEMENT ITERATION. Code already exists in this project from a previous iteration.
+
+Your approach MUST be:
+1. READ existing files before writing — use Bash(cat/ls) to understand what's already there.
+2. Use the Edit tool to MODIFY existing files rather than overwriting them with Write.
+3. Only use Write for genuinely NEW files that don't exist yet.
+4. Preserve existing functionality — your changes should be additive or surgical modifications.
+5. Do NOT rewrite files from scratch unless the task explicitly requires a complete replacement.
+6. Reference the previous iteration summary below to understand what already exists.
+`)
+		if enhancement.Summary != "" {
+			sp.WriteString("\nPrevious iteration summary (describes what code already exists):\n---\n")
+			sp.WriteString(enhancement.Summary)
+			sp.WriteString("\n---\n\n")
+		}
+		sp.WriteString("Enhancement request: ")
+		sp.WriteString(enhancement.Vision)
+		sp.WriteString("\n--- END ENHANCEMENT CONTEXT ---\n")
+	}
+
+	if skillCtx, ok := ctx.Value(skillContextKey{}).(*SkillContext); ok && skillCtx != nil && len(skillCtx.Skills) > 0 {
+		sp.WriteString("\n\n--- REUSABLE SKILL TEMPLATES ---\n")
+		sp.WriteString("The following skill templates are available to guide your implementation. Use them as patterns where applicable:\n\n")
+		for _, ms := range skillCtx.Skills {
+			sp.WriteString(fmt.Sprintf("### Skill: %s\n", ms.Name))
+			sp.WriteString(ms.Prompt)
+			sp.WriteString("\n\n")
+		}
+		sp.WriteString("--- END SKILL TEMPLATES ---\n")
+	}
+
+	var um strings.Builder
+	um.WriteString(fmt.Sprintf("Task: %s\n\n", bead.Title))
+	if bead.Description != "" {
+		um.WriteString(fmt.Sprintf("Description: %s\n\n", bead.Description))
+	}
+	if len(bead.TargetFiles) > 0 {
+		um.WriteString("Target files/directories:\n")
+		for _, f := range bead.TargetFiles {
+			um.WriteString(fmt.Sprintf("- %s\n", f))
+		}
+		um.WriteString("\nFocus your implementation on these locations.\n\n")
+	}
+	if len(bead.JourneyRefs) > 0 {
+		um.WriteString(fmt.Sprintf("User journeys served by this task: %s\n", strings.Join(bead.JourneyRefs, ", ")))
+		um.WriteString("Ensure the implementation correctly supports the UX flows for these journeys.\n\n")
+	}
+	if len(bead.ArchRefs) > 0 {
+		um.WriteString(fmt.Sprintf("Architectural elements to implement: %s\n", strings.Join(bead.ArchRefs, ", ")))
+		um.WriteString("Refer to the architecture document for the specification of these elements.\n\n")
+	}
+	um.WriteString("Implement this task completely. Write all necessary code and files.")
+	if enhancement != nil {
+		um.WriteString("\n\nREMEMBER: This project has existing code from a prior iteration. Read existing files before modifying them. Use Edit for changes to existing files, Write only for new files.")
+	}
+
+	return sp.String(), um.String()
+}
+
+// BuildReviewBeadRequest builds the system prompt and user message for a devil's-advocate
+// review without actually running Claude. Used by non-CLI providers.
+func BuildReviewBeadRequest(
+	projectDir string,
+	bead model.Bead,
+	artifacts map[model.StageName]string,
+	siblings []model.Bead,
+	enhancement *EnhancementContext,
+) (systemPrompt, userMsg string) {
+	var artifactContext strings.Builder
+	for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
+		if content, ok := artifacts[stage]; ok && content != "" {
+			artifactContext.WriteString(strings.ToUpper(string(stage)))
+			artifactContext.WriteString(":\n---\n")
+			artifactContext.WriteString(content)
+			artifactContext.WriteString("\n---\n\n")
+		}
+	}
+
+	var um strings.Builder
+	um.WriteString(fmt.Sprintf("Review the implementation of this task:\n\nTask: %s\n", bead.Title))
+	if bead.Description != "" {
+		um.WriteString(fmt.Sprintf("Description: %s\n", bead.Description))
+	}
+	if len(bead.TargetFiles) > 0 {
+		um.WriteString("\nTarget files to inspect:\n")
+		for _, f := range bead.TargetFiles {
+			um.WriteString(fmt.Sprintf("- %s\n", f))
+		}
+	}
+	if len(siblings) > 0 {
+		um.WriteString("\nSibling tasks in the same epic (for integration context):\n")
+		for _, s := range siblings {
+			tags := ""
+			if len(s.Tags) > 0 {
+				tags = " [" + strings.Join(s.Tags, ", ") + "]"
+			}
+			um.WriteString(fmt.Sprintf("- [%s]%s %s: %s\n", strings.ToUpper(string(s.Status)), tags, s.Title, s.Description))
+		}
+		um.WriteString("\nCheck that this task integrates correctly with completed siblings and leaves the right hooks for pending ones.\n")
+	}
+	um.WriteString("\nProject context:\n")
+	um.WriteString(artifactContext.String())
+	if enhancement != nil {
+		um.WriteString("\nENHANCEMENT CONTEXT: This is an enhancement iteration. Existing code from a prior iteration should have been preserved. Check that:\n")
+		um.WriteString("- Existing files were modified (Edit), not overwritten (Write) unless a full rewrite was needed\n")
+		um.WriteString("- New functionality was added without breaking existing features\n")
+		um.WriteString("- The implementation is incremental, not a from-scratch rewrite\n")
+	}
+	um.WriteString(fmt.Sprintf("\nProject root: `%s`\nUse relative paths in all Bash commands.\n", projectDir))
+	um.WriteString("\nUse Bash to inspect the project files, then assess whether this task was implemented correctly and completely.")
+
+	return devilAdvocateSystemPrompt, um.String()
 }
 
 // isLGTM checks whether the devil's advocate response is an approval.

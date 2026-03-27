@@ -253,6 +253,141 @@ func (p *OllamaProvider) streamResponse(ctx context.Context, body io.Reader, ch 
 	ch <- StreamEvent{Type: "done"}
 }
 
+// ExecuteAgent runs an agentic tool-use loop via the Ollama /api/chat endpoint.
+// Ollama's tool-use format mirrors the OpenAI non-streaming format closely enough
+// that we can reuse the same loop; the only difference is the endpoint path and
+// that Ollama uses NDJSON instead of JSON for streaming (we use non-streaming here).
+func (p *OllamaProvider) ExecuteAgent(ctx context.Context, req AgentRequest) (<-chan StreamEvent, error) {
+	if req.Model == "" {
+		return nil, fmt.Errorf("ollama execute-agent: model must not be empty")
+	}
+	ch := make(chan StreamEvent, 64)
+	go func() {
+		defer close(ch)
+		runOllamaAgentLoop(ctx, p, req, ch)
+	}()
+	return ch, nil
+}
+
+// ollamaAgentToolCall is a tool call entry in an Ollama agentic response.
+type ollamaAgentToolCall struct {
+	Function struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	} `json:"function"`
+}
+
+// ollamaAgentMsg is a message in the Ollama agentic conversation.
+type ollamaAgentMsg struct {
+	Role      string                `json:"role"`
+	Content   string                `json:"content"`
+	ToolCalls []ollamaAgentToolCall `json:"tool_calls,omitempty"`
+}
+
+// ollamaAgentResp is the non-streaming response from POST /api/chat.
+type ollamaAgentResp struct {
+	Message ollamaAgentMsg `json:"message"`
+	Done    bool           `json:"done"`
+	Error   string         `json:"error,omitempty"`
+}
+
+// runOllamaAgentLoop is the Ollama agentic loop.
+func runOllamaAgentLoop(ctx context.Context, p *OllamaProvider, req AgentRequest, ch chan<- StreamEvent) {
+	executor := &ToolExecutor{ProjectDir: req.ProjectDir}
+
+	var toolSchemas []map[string]any
+	for _, t := range req.Tools {
+		toolSchemas = append(toolSchemas, ToolSchemaForLLM(t))
+	}
+
+	msgs := []ollamaAgentMsg{
+		{Role: "system", Content: req.SystemPrompt},
+		{Role: "user", Content: req.UserMessage},
+	}
+
+	apiURL := fmt.Sprintf("%s/api/chat", p.baseURL)
+
+	for iter := 0; iter < maxAgentIterations; iter++ {
+		if ctx.Err() != nil {
+			ch <- StreamEvent{Type: "error", Content: ctx.Err().Error()}
+			return
+		}
+
+		body := map[string]any{
+			"model":    req.Model,
+			"messages": msgs,
+			"tools":    toolSchemas,
+			"stream":   false,
+		}
+		bodyBytes, err := json.Marshal(body)
+		if err != nil {
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("ollama execute-agent: marshal: %v", err)}
+			return
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("ollama execute-agent: create request: %v", err)}
+			return
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := p.httpClient.Do(httpReq)
+		if err != nil {
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("ollama execute-agent: request: %v", err)}
+			return
+		}
+		if resp.StatusCode != http.StatusOK {
+			errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("ollama execute-agent: HTTP %d: %s", resp.StatusCode, string(errBody))}
+			return
+		}
+
+		var apiResp ollamaAgentResp
+		if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+			resp.Body.Close()
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("ollama execute-agent: decode: %v", err)}
+			return
+		}
+		resp.Body.Close()
+
+		if apiResp.Error != "" {
+			ch <- StreamEvent{Type: "error", Content: fmt.Sprintf("ollama execute-agent: %s", apiResp.Error)}
+			return
+		}
+
+		if len(apiResp.Message.ToolCalls) > 0 {
+			// Append assistant message with tool calls.
+			msgs = append(msgs, apiResp.Message)
+			for _, tc := range apiResp.Message.ToolCalls {
+				name := tc.Function.Name
+				ch <- StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] executing...", name)}
+				toolOutput, toolErr := executor.Execute(ctx, name, tc.Function.Arguments)
+				if toolErr != nil {
+					toolOutput = fmt.Sprintf("error: %v\n%s", toolErr, toolOutput)
+				}
+				ch <- StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] done", name)}
+				msgs = append(msgs, ollamaAgentMsg{Role: "tool", Content: toolOutput})
+			}
+			continue
+		}
+
+		// Check if model supports tools but returned nothing — emit advisory.
+		if len(toolSchemas) > 0 && apiResp.Message.Content == "" {
+			ch <- StreamEvent{Type: "error", Content: "ollama: model does not support tool use; switch to a tool-capable model"}
+			return
+		}
+
+		if apiResp.Message.Content != "" {
+			ch <- StreamEvent{Type: "chunk", Content: apiResp.Message.Content}
+		}
+		ch <- StreamEvent{Type: "done", Content: apiResp.Message.Content}
+		return
+	}
+	ch <- StreamEvent{Type: "error", Content: "ollama execute-agent: max iterations reached"}
+}
+
 // fetchModels calls GET /api/tags and returns the list of locally available
 // models. The caller is responsible for applying a deadline via ctx.
 func (p *OllamaProvider) fetchModels(ctx context.Context) ([]ModelInfo, error) {

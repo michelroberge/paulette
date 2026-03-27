@@ -9,6 +9,7 @@ import (
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/provider"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
@@ -16,27 +17,40 @@ import (
 // SkillObserver collects completed bead data and periodically analyzes
 // for emergent patterns that could become reusable skills.
 type SkillObserver struct {
-	mu        sync.Mutex
-	beads     []agent.ObservedBead
-	batchSize int
-	hostDir   string
-	skillRepo *fsrepo.SkillRepo
-	run       *stream.Run
-	project   *model.Project
+	mu               sync.Mutex
+	beads            []agent.ObservedBead
+	batchSize        int
+	hostDir          string
+	skillRepo        *fsrepo.SkillRepo
+	run              *stream.Run
+	project          *model.Project
+	providerRegistry *provider.Registry
+	stageConfig      *provider.StageConfigStore
 }
 
 // NewSkillObserver creates an observer for a bead execution run.
-func NewSkillObserver(hostDir string, skillRepo *fsrepo.SkillRepo, run *stream.Run, project *model.Project, batchSize int) *SkillObserver {
+func NewSkillObserver(hostDir string, skillRepo *fsrepo.SkillRepo, run *stream.Run, project *model.Project, batchSize int, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore) *SkillObserver {
 	if batchSize <= 0 {
 		batchSize = 5
 	}
 	return &SkillObserver{
-		batchSize: batchSize,
-		hostDir:   hostDir,
-		skillRepo: skillRepo,
-		run:       run,
-		project:   project,
+		batchSize:        batchSize,
+		hostDir:          hostDir,
+		skillRepo:        skillRepo,
+		run:              run,
+		project:          project,
+		providerRegistry: providerRegistry,
+		stageConfig:      stageConfig,
 	}
+}
+
+// resolveProvider returns the Provider and model ID to use for the Build stage,
+// falling back to ClaudeCLI when no registry is configured.
+func (o *SkillObserver) resolveProvider() (provider.Provider, string, error) {
+	if o.providerRegistry != nil {
+		return o.providerRegistry.ResolveForStage(o.project.ID, model.StageBuild, o.stageConfig, o.hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(model.StageBuild), nil
 }
 
 // RecordBead adds a completed bead to the observer's buffer.
@@ -85,7 +99,19 @@ func (o *SkillObserver) analyzeBatch() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	events, err := agent.ObserveBeads(ctx, batch, existingSkills)
+	prov, modelID, err := o.resolveProvider()
+	if err != nil {
+		log.Printf("skill observer: resolve provider failed: %v", err)
+		return
+	}
+
+	systemPrompt, userMsg := agent.BuildObserveBeadsRequest(batch, existingSkills)
+	events, err := prov.Chat(ctx, provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: systemPrompt,
+		UserMessage:  userMsg,
+		ProjectDir:   o.hostDir,
+	})
 	if err != nil {
 		log.Printf("skill observer: analysis failed: %v", err)
 		return
@@ -97,7 +123,7 @@ func (o *SkillObserver) analyzeBatch() {
 		if ev.Type == "chunk" {
 			fullText.WriteString(ev.Content)
 		} else if ev.Type == "tokens" {
-			fmt.Sscanf(ev.Content, "%d", &tokens)
+			tokens += ev.Tokens
 		}
 	}
 
