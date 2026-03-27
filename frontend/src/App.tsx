@@ -15,6 +15,8 @@ import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { VersionHistoryModal } from './components/git/VersionHistoryModal';
 import { ProfileModal } from './components/git/ProfileModal';
+import { VersionSelectorDropdown } from './components/layout/VersionSelectorDropdown';
+import { VersionHistoryView } from './components/layout/VersionHistoryView';
 import { ConfigurePage } from './components/configure/ConfigurePage';
 import { ProjectStageSettings } from './components/configure/ProjectStageSettings';
 import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
@@ -98,6 +100,8 @@ function ProjectDetailPage() {
   const [activeTab, setActiveTab] = useState<string>('chat');
   const [stageTokens, setStageTokens] = useState<Partial<Record<StageName, number>>>({});
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [versionSelectorOpen, setVersionSelectorOpen] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [showStageSettings, setShowStageSettings] = useState(false);
   const [stagesWithOverrides, setStagesWithOverrides] = useState<Set<StageName>>(new Set());
@@ -388,29 +392,49 @@ function ProjectDetailPage() {
 
   return (
     <div className="app-shell">
-      <ProjectHeader
-        project={project}
-        onBack={() => navigate('/')}
-        totalTokens={grandTotal}
-        onShowHistory={() => setShowVersionHistory(true)}
-        onShowProfile={() => setShowProfile(true)}
-        onShowStageSettings={() => setShowStageSettings(true)}
-        autonomous={!!project.autonomous}
-        onToggleAutonomous={handleToggleAutonomous}
-      />
+      <div style={{ position: 'relative' }}>
+        <ProjectHeader
+          project={project}
+          onBack={() => navigate('/')}
+          totalTokens={grandTotal}
+          onShowHistory={() => setShowVersionHistory(true)}
+          onShowProfile={() => setShowProfile(true)}
+          onShowStageSettings={() => setShowStageSettings(true)}
+          autonomous={!!project.autonomous}
+          onToggleAutonomous={handleToggleAutonomous}
+          onVersionClick={() => setVersionSelectorOpen(v => !v)}
+          viewingVersion={viewingVersion}
+        />
+        {versionSelectorOpen && (
+          <VersionSelectorDropdown
+            projectId={project.id}
+            currentVersion={project.version}
+            onSelect={v => { setViewingVersion(v); setVersionSelectorOpen(false); }}
+            onClose={() => setVersionSelectorOpen(false)}
+          />
+        )}
+      </div>
 
       <div className="app-body">
-        <StagesSidebar
-          pipeline={pipeline}
-          selectedStage={selectedStage}
-          onSelectStage={setSelectedStage}
-          onReset={handleReset}
-          stageTokens={stageTokens}
-          stagesWithOverrides={stagesWithOverrides}
-        />
+        {!viewingVersion && (
+          <StagesSidebar
+            pipeline={pipeline}
+            selectedStage={selectedStage}
+            onSelectStage={setSelectedStage}
+            onReset={handleReset}
+            stageTokens={stageTokens}
+            stagesWithOverrides={stagesWithOverrides}
+          />
+        )}
 
         <main className="main-content">
-          {showImportProgress ? (
+          {viewingVersion ? (
+            <VersionHistoryView
+              project={project}
+              version={viewingVersion}
+              onClose={() => setViewingVersion(null)}
+            />
+          ) : showImportProgress ? (
             <ImportProgressView
               project={project}
               onComplete={() => {

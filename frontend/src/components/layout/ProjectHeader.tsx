@@ -15,16 +15,25 @@ interface Props {
   onShowStageSettings?: () => void;
   autonomous?: boolean;
   onToggleAutonomous?: () => void;
+  onVersionClick?: () => void;
+  viewingVersion?: string | null;
 }
 
-export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onShowProfile, onShowStageSettings, autonomous, onToggleAutonomous }: Readonly<Props>) {
+export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onShowProfile, onShowStageSettings, autonomous, onToggleAutonomous, onVersionClick, viewingVersion }: Readonly<Props>) {
   return (
     <header className="project-header">
       <button className="back-button" onClick={onBack}>&larr;</button>
       <h2>{project.name}</h2>
-      <span className="version">
-        v{project.version}{project.iteration > 1 && ` (iter ${project.iteration})`}
-      </span>
+      {onVersionClick ? (
+        <button className="version version-btn" onClick={onVersionClick} title="Browse version history">
+          v{project.version}{project.iteration > 1 && ` (iter ${project.iteration})`}
+          {viewingVersion && <span className="version-readonly-badge"> — viewing v{viewingVersion}</span>}
+        </button>
+      ) : (
+        <span className="version">
+          v{project.version}{project.iteration > 1 && ` (iter ${project.iteration})`}
+        </span>
+      )}
       {onShowProfile
         ? <button className="author-button" onClick={onShowProfile}>{project.author}</button>
         : <span className="author">{project.author}</span>

@@ -15,6 +15,7 @@
  */
 
 import type { CSSProperties } from 'react';
+import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ConnectionsTab } from './ConnectionsTab';
 import { StageDefaultsTab } from './StageDefaultsTab';
@@ -55,6 +56,27 @@ const styles = {
     padding: 0,
     marginBottom: '1.5rem',
     fontFamily: 'inherit',
+  } as CSSProperties,
+
+  backButton: {
+    display: 'inline-flex', // inline-flex makes it behave more like a button
+    alignItems: 'center',
+    gap: '0.25rem',
+
+    background: 'transparent',
+    border: '1px solid #a7aeb6', // outline
+    color: '#a6a7a8',
+
+    cursor: 'pointer',
+    fontSize: '0.875rem',
+
+    padding: '0.4rem 0.75rem', // gives button shape
+    marginBottom: '1.5rem',
+    fontFamily: 'inherit',
+
+    borderRadius: '0.375rem', // rounded corners
+    transition: 'all 0.2s ease', // smooth hover
+
   } as CSSProperties,
 
   breadcrumbArrow: {
@@ -161,12 +183,21 @@ export function ConfigurePage() {
     setSearchParams({ tab }); // drops ?highlight= intentionally
   };
 
+  const [isHovered, setIsHovered] = useState(false);
+
   return (
     <div style={styles.page}>
       <div style={styles.inner}>
         {/* Breadcrumb ← Home */}
         <button
-          style={styles.breadcrumb}
+            style={{
+    ...styles.backButton,
+    background: isHovered
+      ? 'rgba(117, 133, 204, 0.26)'
+      : 'transparent',
+  }}
+  onMouseEnter={() => setIsHovered(true)}
+  onMouseLeave={() => setIsHovered(false)}
           onClick={() => navigate('/')}
           type="button"
           aria-label="Back to home"

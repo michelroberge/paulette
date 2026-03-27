@@ -30,18 +30,20 @@ type PipelineHandler struct {
 	projectRepo      repository.ProjectRepo
 	artifactRepo     repository.ArtifactRepo
 	activityRepo     repository.ActivityRepo
+	chatRepo         repository.ChatRepo
 	runs             *stream.Manager
 	git              *git.Service
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 }
 
-func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore) *PipelineHandler {
+func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, chatRepo repository.ChatRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore) *PipelineHandler {
 	return &PipelineHandler{
 		registry:         registry,
 		projectRepo:      projectRepo,
 		artifactRepo:     artifactRepo,
 		activityRepo:     activityRepo,
+		chatRepo:         chatRepo,
 		runs:             runs,
 		git:              gitSvc,
 		providerRegistry: providerRegistry,
@@ -464,13 +466,61 @@ func (h *PipelineHandler) ApproveSummary(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Archive stage chat histories into the versioned docs directory.
+	archiveStages := []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild}
+	for _, stage := range archiveStages {
+		msgs, err := h.chatRepo.GetHistory(project.HostDir, stage)
+		if err != nil {
+			log.Printf("failed to read chat history for stage %s: %v", stage, err)
+			continue
+		}
+		if len(msgs) == 0 {
+			continue
+		}
+		history := model.ChatHistory{Messages: msgs}
+		if err := fsrepo.WriteStageChatHistory(project.HostDir, project.Version, stage, history); err != nil {
+			log.Printf("failed to archive chat history for stage %s: %v", stage, err)
+		}
+	}
+
+	// Snapshot the beads graph if present.
+	beadGraphBytes, err := os.ReadFile(fsrepo.BeadGraphPath(project.HostDir))
+	if err == nil && len(beadGraphBytes) > 0 {
+		if err := fsrepo.WriteBeadsGraphSnapshot(project.HostDir, project.Version, beadGraphBytes); err != nil {
+			log.Printf("failed to snapshot beads graph: %v", err)
+		}
+	}
+
+	// Write version-meta.json linking this approval to its git commit.
+	commitHash := h.git.CurrentHash(project.HostDir)
+	meta := model.VersionMeta{
+		Version:    project.Version,
+		Iteration:  project.Iteration,
+		CommitHash: commitHash,
+		TagName:    "v" + project.Version,
+		ApprovedAt: time.Now(),
+	}
+	if err := fsrepo.WriteVersionMeta(project.HostDir, project.Version, meta); err != nil {
+		log.Printf("failed to write version meta: %v", err)
+	}
+
 	if err := fsrepo.WriteReadme(project); err != nil {
 		log.Printf("failed to generate README.md: %v", err)
 	}
 
-	docPath := filepath.Join("docs", project.Version, "summary.md")
+	// Build the list of paths to commit, including newly archived files.
+	commitPaths := []string{
+		filepath.Join("docs", project.Version, "summary.md"),
+		filepath.Join("docs", project.Version, "version-meta.json"),
+		"README.md",
+	}
+	for _, stage := range archiveStages {
+		commitPaths = append(commitPaths, filepath.Join("docs", project.Version, string(stage), "chat-history.json"))
+	}
+	commitPaths = append(commitPaths, filepath.Join("docs", project.Version, "build", "beads-graph.json"))
+
 	commitMsg := fmt.Sprintf("docs(v%s): approve iteration summary", project.Version)
-	if err := h.git.AddAndCommit(project.HostDir, []string{docPath, "README.md"}, commitMsg); err != nil {
+	if err := h.git.AddAndCommit(project.HostDir, commitPaths, commitMsg); err != nil {
 		log.Printf("git commit approved summary failed: %v", err)
 	}
 

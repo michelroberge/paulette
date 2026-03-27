@@ -7,7 +7,7 @@ Paulette is a structured five-stage AI-assisted product development pipeline (Vi
 
 ## Key UX Decisions
 
-- **"Configure Paulette" button** is placed prominently on the home page alongside "New Project" and "Import Project" — not buried in a settings menu — because first-time provider setup is a common onboarding path.
+- **"Configure Paulette" button** is placed prominently on the home page in the top right title card — not buried in a settings menu — because first-time provider setup is a common onboarding path.
 - **Two-tab Configure page** (`/configure`): "Connections" tab for CRUD on named connection records; "Stage Defaults" tab for assigning connections to each of the five pipeline stages globally.
 - **Per-project stage overrides** are accessible via a ⚙ gear icon in the project header, opening a slide-over panel with per-stage "Inherit" toggles. Stage pips with project-level overrides show a `ring-2 ring-yellow-400` accent.
 - **Provider-type-driven form fields**: selecting a provider type in the Connection Form instantly shows/hides relevant fields (Base URL, API Key, Org/Project ID) with no round-trip — pure React controlled-component pattern. Hidden fields are cleared from state.
