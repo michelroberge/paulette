@@ -63,8 +63,9 @@ func main() {
 
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
 	httpServer := &http.Server{
-		Addr:    addr,
-		Handler: srv.Router(),
+		Addr:              addr,
+		Handler:           srv.Router(),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Start server in a goroutine
@@ -89,8 +90,8 @@ func main() {
 	srv.Runs().CancelAll()
 	log.Println("cancelled all active agent runs")
 
-	// Gracefully shut down the HTTP server (5s deadline for in-flight requests)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Gracefully shut down the HTTP server (90s deadline for in-flight requests)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
 		log.Printf("HTTP shutdown error: %v", err)

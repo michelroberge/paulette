@@ -10,6 +10,27 @@ function stripArtifact(text: string) {
   return text.replace(ARTIFACT_RE, '').trim();
 }
 
+const THINKING_PHRASES = [
+  'Thinking...', 'Inferring...', 'Contemplating...', 'Pondering...', 'Ruminating...',
+  'Hypothesizing...', 'Deliberating...', 'Extrapolating...', 'Synthesizing...', 'Cogitating...',
+  'Deducing...', 'Reasoning...', 'Envisioning...', 'Speculating...', 'Calculating...',
+  'Mulling it over...', 'Connecting dots...', 'Brewing ideas...', 'Processing...', 'Manifesting...',
+  'Brewing coffe...', 'Taking a nap...', 'Enjoying the sun...'
+];
+
+function useThinkingPhrase(active: boolean) {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    setIndex(Math.floor(Math.random() * THINKING_PHRASES.length));
+    const id = setInterval(() => {
+      setIndex(i => (i + 1) % THINKING_PHRASES.length);
+    }, 2500);
+    return () => clearInterval(id);
+  }, [active]);
+  return THINKING_PHRASES[index];
+}
+
 interface Props {
   messages: Message[];
   streaming: boolean;
@@ -41,6 +62,7 @@ interface Props {
 export function ChatPanel({ messages, streaming, streamingContent, onSend, onStop, connectionError, onOpenProjectSettings, onRetry }: Props) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const thinkingPhrase = useThinkingPhrase(streaming);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -85,9 +107,7 @@ export function ChatPanel({ messages, streaming, streamingContent, onSend, onSto
           <div className="message assistant streaming">
             <div className="message-role">
               Agent
-              <span className="thinking-label">
-                <span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" />
-              </span>
+              <span className="thinking-label">{thinkingPhrase}</span>
             </div>
             <div className="message-content">
               {stripArtifact(streamingContent) || '\u00A0'}
