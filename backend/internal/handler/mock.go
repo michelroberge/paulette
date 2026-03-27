@@ -241,6 +241,7 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 			// Drain the event stream: forward chunk/token events to the run and
 			// capture the full response from the "done" event for HTML validation.
 			var fullResponse string
+			var accumulated strings.Builder
 			var hadError bool
 			for event := range events {
 				switch event.Type {
@@ -249,12 +250,20 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 					fmt.Sscanf(event.Content, "%d", &n)
 					stageTokensAccum += n
 				case "done":
-					// "done" Content is the full accumulated response text.
+					// "done" Content is the full accumulated response text for some
+					// providers (e.g. Claude CLI). Others (e.g. Ollama) emit "done"
+					// with empty Content - fall back to the accumulated chunks.
 					fullResponse = event.Content
+					if fullResponse == "" {
+						fullResponse = accumulated.String()
+					}
 				case "error":
 					run.Emit(event)
 					hadError = true
 				default:
+					if event.Type == "chunk" {
+						accumulated.WriteString(event.Content)
+					}
 					// Forward chunk (and any other) events so the client sees
 					// streaming text in real time.
 					run.Emit(event)

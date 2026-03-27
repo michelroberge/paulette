@@ -284,6 +284,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 		defer clearActivity(h.activityRepo, project.HostDir, stage)
 
 		var stageTokensAccum int
+		var accumulated strings.Builder
 		runStart := time.Now()
 		defer func() {
 			if stageTokensAccum > 0 {
@@ -300,7 +301,11 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 				stageTokensAccum += n
 			}
 			if event.Type == "done" {
-				if artifact, found := agent.ExtractArtifact(event.Content); found {
+				fullContent := event.Content
+				if fullContent == "" {
+					fullContent = accumulated.String()
+				}
+				if artifact, found := agent.ExtractArtifact(fullContent); found {
 					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
@@ -308,7 +313,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 					}
 				}
 
-				chatContent := agent.StripArtifact(event.Content)
+				chatContent := agent.StripArtifact(fullContent)
 				assistantMsg := model.Message{
 					Role:      model.RoleAssistant,
 					Content:   chatContent,
@@ -318,6 +323,9 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 
 				run.Emit(agent.StreamEvent{Type: "done", Content: chatContent})
 			} else {
+				if event.Type == "chunk" {
+					accumulated.WriteString(event.Content)
+				}
 				run.Emit(event)
 			}
 		}
@@ -423,6 +431,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		defer clearActivity(h.activityRepo, project.HostDir, stage)
 
 		var stageTokensAccum int
+		var accumulated strings.Builder
 		runStart := time.Now()
 		defer func() {
 			if stageTokensAccum > 0 {
@@ -439,8 +448,12 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 				stageTokensAccum += n
 			}
 			if event.Type == "done" {
+				fullContent := event.Content
+				if fullContent == "" {
+					fullContent = accumulated.String()
+				}
 				// Extract and save artifact if present
-				if artifact, found := agent.ExtractArtifact(event.Content); found {
+				if artifact, found := agent.ExtractArtifact(fullContent); found {
 					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
@@ -449,7 +462,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 				}
 
 				// Save assistant response without artifact block
-				chatContent := agent.StripArtifact(event.Content)
+				chatContent := agent.StripArtifact(fullContent)
 				assistantMsg := model.Message{
 					Role:      model.RoleAssistant,
 					Content:   chatContent,
@@ -459,6 +472,9 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 
 				run.Emit(agent.StreamEvent{Type: "done", Content: chatContent})
 			} else {
+				if event.Type == "chunk" {
+					accumulated.WriteString(event.Content)
+				}
 				run.Emit(event)
 			}
 		}
