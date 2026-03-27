@@ -726,7 +726,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						shortFindings = shortFindings[:77] + "..."
 					}
 					corrTitle := fmt.Sprintf("Fix review findings: %s", shortFindings)
-					corrDesc := fmt.Sprintf("Devil's advocate found issues with '%s':\n\n%s", currentBead.Title, findings)
+					corrDesc := fmt.Sprintf("Devil's advocate found issues with [%s] '%s':\n\n%s", currentBead.ID, currentBead.Title, findings)
 					corrID, err := bdCreate(ctx, project.HostDir, corrTitle, corrDesc, string(model.BeadTypeTask), currentBead.Priority)
 					if err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] correction bead create failed: %v", currentBead.ID, err)})
@@ -737,6 +737,15 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] correction claim failed: %v", corrID, err)})
 						return
 					}
+					// Persist journey/arch/file refs and epic membership so the correction bead
+					// carries full traceability context from the source bead.
+					fsrepo.WriteBeadMeta(ctx, project.HostDir, corrID, &fsrepo.BeadMeta{ //nolint:errcheck
+						Tags:        currentBead.Tags,
+						TargetFiles: currentBead.TargetFiles,
+						JourneyRefs: currentBead.JourneyRefs,
+						ArchRefs:    currentBead.ArchRefs,
+						EpicID:      currentBead.EpicID,
+					})
 
 					corrBead := model.Bead{
 						ID:          corrID,
@@ -746,6 +755,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						Status:      model.BeadStatusInProgress,
 						Priority:    currentBead.Priority,
 						Deps:        []string{},
+						EpicID:      currentBead.EpicID,
 						Tags:        currentBead.Tags,
 						TargetFiles: currentBead.TargetFiles,
 						JourneyRefs: currentBead.JourneyRefs,
