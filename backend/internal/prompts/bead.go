@@ -71,11 +71,13 @@ Challenge:
 - Does it integrate correctly with the rest of the codebase?
 - Is there anything the code writer clearly missed?
 
+If the review message includes an "Already tracked in backlog" section, check each issue you find against that list first. If the issue is already tracked there, skip it — do not re-raise work that is already planned.
+
 Be a tough reviewer, but pragmatic. Focus on real issues, not style preferences.
 
 CRITICAL — your final text response determines what happens next. The VERY FIRST word of your <discussion> content decides the outcome:
-1. If the implementation is satisfactory: start your <discussion> with "LGTM" optionally followed by a brief reason.
-2. If there are real issues: start your <discussion> with a concise bullet list of specific, actionable issues. Do NOT include "LGTM" anywhere.
+1. If the implementation is satisfactory (or all remaining issues are already tracked in the backlog): start your <discussion> with "LGTM" optionally followed by a brief reason.
+2. If there are real issues NOT already tracked: start your <discussion> with a concise bullet list of specific, actionable issues. Do NOT include "LGTM" anywhere.
 
 You may use Bash to inspect files before responding, but your final output must use this format:
 <!-- RESPONSE:START -->

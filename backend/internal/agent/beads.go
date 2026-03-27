@@ -136,39 +136,11 @@ func ParseBuildPlan(ctx context.Context, buildMdContent, archContent string) (<-
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-
-			var event claudeEvent
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				continue
-			}
-
-			switch event.Type {
-			case "assistant":
-				if event.Message != nil {
-					for _, c := range event.Message.Content {
-						if c.Type == "text" && c.Text != "" {
-							fullResponse.WriteString(c.Text)
-							ch <- StreamEvent{Type: "chunk", Content: c.Text}
-						}
-					}
-				}
-			case "result":
-				if event.IsError {
-					ch <- StreamEvent{Type: "plan_limit", Content: "Claude plan limit reached"}
-					return
-				}
-				if fullResponse.Len() == 0 && event.Result != "" {
-					fullResponse.WriteString(event.Result)
-					ch <- StreamEvent{Type: "chunk", Content: event.Result}
-				}
-			}
+		if !processStreamEvents(scanner, &fullResponse, ch, streamOptions{
+			planLimitMsg: "Claude plan limit reached",
+		}) {
+			return
 		}
-
 		ch <- StreamEvent{Type: "done", Content: fullResponse.String()}
 	}()
 
@@ -214,19 +186,9 @@ type MatchedSkill struct {
 
 func ExecuteBead(ctx context.Context, projectDir string, bead model.Bead, artifacts map[model.StageName]string, enhancement ...*EnhancementContext) (<-chan StreamEvent, error) {
 	var systemPrompt strings.Builder
-	var artifactContext strings.Builder
 
-	relevantStages := model.RelevantStages(bead.Tags)
-	for _, stage := range relevantStages {
-		if content, ok := artifacts[stage]; ok && content != "" {
-			artifactContext.WriteString(strings.ToUpper(string(stage)))
-			artifactContext.WriteString(":\n---\n")
-			artifactContext.WriteString(content)
-			artifactContext.WriteString("\n---\n\n")
-		}
-	}
-
-	systemPrompt.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactContext.String()))
+	artifactCtx := buildArtifactContext(model.RelevantStages(bead.Tags), artifacts)
+	systemPrompt.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactCtx))
 	systemPrompt.WriteString(fmt.Sprintf("\n\nProject root: `%s`\nALWAYS use relative paths for file operations — never hardcode absolute paths.", projectDir))
 
 	// Inject enhancement context for code writer when iterating on existing code
@@ -265,30 +227,11 @@ Your approach MUST be:
 		systemPrompt.WriteString("--- END SKILL TEMPLATES ---\n")
 	}
 
-	var userMsg strings.Builder
-	userMsg.WriteString(fmt.Sprintf("Task: %s\n\n", bead.Title))
-	if bead.Description != "" {
-		userMsg.WriteString(fmt.Sprintf("Description: %s\n\n", bead.Description))
+	var enh *EnhancementContext
+	if len(enhancement) > 0 {
+		enh = enhancement[0]
 	}
-	if len(bead.TargetFiles) > 0 {
-		userMsg.WriteString("Target files/directories:\n")
-		for _, f := range bead.TargetFiles {
-			userMsg.WriteString(fmt.Sprintf("- %s\n", f))
-		}
-		userMsg.WriteString("\nFocus your implementation on these locations.\n\n")
-	}
-	if len(bead.JourneyRefs) > 0 {
-		userMsg.WriteString(fmt.Sprintf("User journeys served by this task: %s\n", strings.Join(bead.JourneyRefs, ", ")))
-		userMsg.WriteString("Ensure the implementation correctly supports the UX flows for these journeys.\n\n")
-	}
-	if len(bead.ArchRefs) > 0 {
-		userMsg.WriteString(fmt.Sprintf("Architectural elements to implement: %s\n", strings.Join(bead.ArchRefs, ", ")))
-		userMsg.WriteString("Refer to the architecture document for the specification of these elements.\n\n")
-	}
-	userMsg.WriteString("Implement this task completely. Write all necessary code and files.")
-	if len(enhancement) > 0 && enhancement[0] != nil {
-		userMsg.WriteString("\n\nREMEMBER: This project has existing code from a prior iteration. Read existing files before modifying them. Use Edit for changes to existing files, Write only for new files.")
-	}
+	userMsg := buildExecuteUserMsg(bead, enh)
 
 	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
@@ -300,7 +243,7 @@ Your approach MUST be:
 		"--permission-mode", "acceptEdits",
 		"--system-prompt", systemPrompt.String(),
 	)
-	cmd.Stdin = strings.NewReader(userMsg.String())
+	cmd.Stdin = strings.NewReader(userMsg)
 	cmd.Dir = projectDir
 
 	stdout, err := cmd.StdoutPipe()
@@ -321,43 +264,12 @@ Your approach MUST be:
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-
-			var event claudeEvent
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				continue
-			}
-
-			switch event.Type {
-			case "assistant":
-				if event.Message != nil {
-					for _, c := range event.Message.Content {
-						if c.Type == "text" && c.Text != "" {
-							fullResponse.WriteString(c.Text)
-							ch <- StreamEvent{Type: "chunk", Content: c.Text}
-						}
-					}
-				}
-			case "result":
-				if event.IsError {
-					ch <- StreamEvent{Type: "plan_limit", Content: "Claude plan limit reached"}
-					return
-				}
-				if event.Usage != nil {
-					total := event.Usage.InputTokens + event.Usage.OutputTokens
-					ch <- StreamEvent{Type: "tokens", Tokens: total}
-				}
-				if fullResponse.Len() == 0 && event.Result != "" {
-					fullResponse.WriteString(event.Result)
-					ch <- StreamEvent{Type: "chunk", Content: event.Result}
-				}
-			}
+		if !processStreamEvents(scanner, &fullResponse, ch, streamOptions{
+			planLimitMsg: "Claude plan limit reached",
+			tokenField:   "tokens",
+		}) {
+			return
 		}
-
 		ch <- StreamEvent{Type: "done", Content: fullResponse.String()}
 	}()
 
@@ -369,50 +281,16 @@ Your approach MUST be:
 // Also returns the token count consumed by the review.
 // All artifacts are provided regardless of bead tags so the reviewer has full context.
 // siblings contains the other tasks in the same epic for integration awareness.
-func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifacts map[model.StageName]string, siblings []model.Bead, enhancement ...*EnhancementContext) (string, int, error) {
+// openBeads is the project-wide list of open/blocked beads so the reviewer can skip already-tracked issues.
+func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifacts map[model.StageName]string, siblings []model.Bead, openBeads []model.Bead, enhancement ...*EnhancementContext) (string, int, error) {
 	// Devil's advocate always gets all artifacts — it needs the full picture to spot integration gaps.
-	var artifactContext strings.Builder
-	for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
-		if content, ok := artifacts[stage]; ok && content != "" {
-			artifactContext.WriteString(strings.ToUpper(string(stage)))
-			artifactContext.WriteString(":\n---\n")
-			artifactContext.WriteString(content)
-			artifactContext.WriteString("\n---\n\n")
-		}
+	allStages := []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild}
+	artifactCtx := buildArtifactContext(allStages, artifacts)
+	var reviewEnh *EnhancementContext
+	if len(enhancement) > 0 {
+		reviewEnh = enhancement[0]
 	}
-
-	var userMsg strings.Builder
-	userMsg.WriteString(fmt.Sprintf("Review the implementation of this task:\n\nTask: %s\n", bead.Title))
-	if bead.Description != "" {
-		userMsg.WriteString(fmt.Sprintf("Description: %s\n", bead.Description))
-	}
-	if len(bead.TargetFiles) > 0 {
-		userMsg.WriteString("\nTarget files to inspect:\n")
-		for _, f := range bead.TargetFiles {
-			userMsg.WriteString(fmt.Sprintf("- %s\n", f))
-		}
-	}
-	if len(siblings) > 0 {
-		userMsg.WriteString("\nSibling tasks in the same epic (for integration context):\n")
-		for _, s := range siblings {
-			tags := ""
-			if len(s.Tags) > 0 {
-				tags = " [" + strings.Join(s.Tags, ", ") + "]"
-			}
-			userMsg.WriteString(fmt.Sprintf("- [%s]%s %s: %s\n", strings.ToUpper(string(s.Status)), tags, s.Title, s.Description))
-		}
-		userMsg.WriteString("\nCheck that this task integrates correctly with completed siblings and leaves the right hooks for pending ones.\n")
-	}
-	userMsg.WriteString("\nProject context:\n")
-	userMsg.WriteString(artifactContext.String())
-	if len(enhancement) > 0 && enhancement[0] != nil {
-		userMsg.WriteString("\nENHANCEMENT CONTEXT: This is an enhancement iteration. Existing code from a prior iteration should have been preserved. Check that:\n")
-		userMsg.WriteString("- Existing files were modified (Edit), not overwritten (Write) unless a full rewrite was needed\n")
-		userMsg.WriteString("- New functionality was added without breaking existing features\n")
-		userMsg.WriteString("- The implementation is incremental, not a from-scratch rewrite\n")
-	}
-	userMsg.WriteString(fmt.Sprintf("\nProject root: `%s`\nUse relative paths in all Bash commands.\n", projectDir))
-	userMsg.WriteString("\nUse Bash to inspect the project files, then assess whether this task was implemented correctly and completely.")
+	userMsg := buildReviewUserMsg(projectDir, bead, artifactCtx, siblings, openBeads, reviewEnh)
 
 	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
@@ -424,7 +302,7 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 		"--permission-mode", "acceptEdits",
 		"--system-prompt", devilAdvocateSystemPrompt,
 	)
-	cmd.Stdin = strings.NewReader(userMsg.String())
+	cmd.Stdin = strings.NewReader(userMsg)
 	cmd.Dir = projectDir
 
 	stdout, err := cmd.StdoutPipe()
@@ -498,19 +376,9 @@ func BuildExecuteBeadRequest(
 	enhancement *EnhancementContext,
 ) (systemPrompt, userMsg string) {
 	var sp strings.Builder
-	var artifactContext strings.Builder
 
-	relevantStages := model.RelevantStages(bead.Tags)
-	for _, stage := range relevantStages {
-		if content, ok := artifacts[stage]; ok && content != "" {
-			artifactContext.WriteString(strings.ToUpper(string(stage)))
-			artifactContext.WriteString(":\n---\n")
-			artifactContext.WriteString(content)
-			artifactContext.WriteString("\n---\n\n")
-		}
-	}
-
-	sp.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactContext.String()))
+	artifactCtx := buildArtifactContext(model.RelevantStages(bead.Tags), artifacts)
+	sp.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactCtx))
 	sp.WriteString(fmt.Sprintf("\n\nProject root: `%s`\nALWAYS use relative paths for file operations — never hardcode absolute paths.", projectDir))
 
 	if enhancement != nil {
@@ -546,32 +414,7 @@ Your approach MUST be:
 		sp.WriteString("--- END SKILL TEMPLATES ---\n")
 	}
 
-	var um strings.Builder
-	um.WriteString(fmt.Sprintf("Task: %s\n\n", bead.Title))
-	if bead.Description != "" {
-		um.WriteString(fmt.Sprintf("Description: %s\n\n", bead.Description))
-	}
-	if len(bead.TargetFiles) > 0 {
-		um.WriteString("Target files/directories:\n")
-		for _, f := range bead.TargetFiles {
-			um.WriteString(fmt.Sprintf("- %s\n", f))
-		}
-		um.WriteString("\nFocus your implementation on these locations.\n\n")
-	}
-	if len(bead.JourneyRefs) > 0 {
-		um.WriteString(fmt.Sprintf("User journeys served by this task: %s\n", strings.Join(bead.JourneyRefs, ", ")))
-		um.WriteString("Ensure the implementation correctly supports the UX flows for these journeys.\n\n")
-	}
-	if len(bead.ArchRefs) > 0 {
-		um.WriteString(fmt.Sprintf("Architectural elements to implement: %s\n", strings.Join(bead.ArchRefs, ", ")))
-		um.WriteString("Refer to the architecture document for the specification of these elements.\n\n")
-	}
-	um.WriteString("Implement this task completely. Write all necessary code and files.")
-	if enhancement != nil {
-		um.WriteString("\n\nREMEMBER: This project has existing code from a prior iteration. Read existing files before modifying them. Use Edit for changes to existing files, Write only for new files.")
-	}
-
-	return sp.String(), um.String()
+	return sp.String(), buildExecuteUserMsg(bead, enhancement)
 }
 
 // BuildReviewBeadRequest builds the system prompt and user message for a devil's-advocate
@@ -581,52 +424,12 @@ func BuildReviewBeadRequest(
 	bead model.Bead,
 	artifacts map[model.StageName]string,
 	siblings []model.Bead,
+	openBeads []model.Bead,
 	enhancement *EnhancementContext,
 ) (systemPrompt, userMsg string) {
-	var artifactContext strings.Builder
-	for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
-		if content, ok := artifacts[stage]; ok && content != "" {
-			artifactContext.WriteString(strings.ToUpper(string(stage)))
-			artifactContext.WriteString(":\n---\n")
-			artifactContext.WriteString(content)
-			artifactContext.WriteString("\n---\n\n")
-		}
-	}
-
-	var um strings.Builder
-	um.WriteString(fmt.Sprintf("Review the implementation of this task:\n\nTask: %s\n", bead.Title))
-	if bead.Description != "" {
-		um.WriteString(fmt.Sprintf("Description: %s\n", bead.Description))
-	}
-	if len(bead.TargetFiles) > 0 {
-		um.WriteString("\nTarget files to inspect:\n")
-		for _, f := range bead.TargetFiles {
-			um.WriteString(fmt.Sprintf("- %s\n", f))
-		}
-	}
-	if len(siblings) > 0 {
-		um.WriteString("\nSibling tasks in the same epic (for integration context):\n")
-		for _, s := range siblings {
-			tags := ""
-			if len(s.Tags) > 0 {
-				tags = " [" + strings.Join(s.Tags, ", ") + "]"
-			}
-			um.WriteString(fmt.Sprintf("- [%s]%s %s: %s\n", strings.ToUpper(string(s.Status)), tags, s.Title, s.Description))
-		}
-		um.WriteString("\nCheck that this task integrates correctly with completed siblings and leaves the right hooks for pending ones.\n")
-	}
-	um.WriteString("\nProject context:\n")
-	um.WriteString(artifactContext.String())
-	if enhancement != nil {
-		um.WriteString("\nENHANCEMENT CONTEXT: This is an enhancement iteration. Existing code from a prior iteration should have been preserved. Check that:\n")
-		um.WriteString("- Existing files were modified (Edit), not overwritten (Write) unless a full rewrite was needed\n")
-		um.WriteString("- New functionality was added without breaking existing features\n")
-		um.WriteString("- The implementation is incremental, not a from-scratch rewrite\n")
-	}
-	um.WriteString(fmt.Sprintf("\nProject root: `%s`\nUse relative paths in all Bash commands.\n", projectDir))
-	um.WriteString("\nUse Bash to inspect the project files, then assess whether this task was implemented correctly and completely.")
-
-	return devilAdvocateSystemPrompt, um.String()
+	allStages := []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild}
+	artifactCtx := buildArtifactContext(allStages, artifacts)
+	return devilAdvocateSystemPrompt, buildReviewUserMsg(projectDir, bead, artifactCtx, siblings, openBeads, enhancement)
 }
 
 // isLGTM checks whether the devil's advocate response is an approval.
