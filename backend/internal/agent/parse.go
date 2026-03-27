@@ -1,6 +1,9 @@
 package agent
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // XML envelope tag names used in all Claude responses.
 const (
@@ -23,15 +26,71 @@ type ParsedResponse struct {
 	JSON       []byte // <jsonplan> content as bytes
 }
 
-// ParseResponse extracts all sections from a <response>...</response> XML envelope.
-// Tolerant of missing sections and partial documents.
+// ParseResponse extracts all sections from a model response.
+// It tries the XML envelope format first (<discussion>, <artifact>, etc.).
+// If no XML tags are found it falls back to the plain "## Discussion / ## Artifact"
+// section-header format used by non-XML-friendly Ollama models.
 func ParseResponse(raw string) ParsedResponse {
+	if strings.Contains(raw, "<"+TagDiscussion+">") || strings.Contains(raw, "<"+TagArtifact+">") {
+		return parseXMLEnvelope(raw)
+	}
+	if strings.Contains(raw, "## Discussion") || strings.Contains(raw, "## Artifact") {
+		return parsePlainSections(raw)
+	}
+	// No known structure — return everything as discussion.
+	return ParsedResponse{Discussion: strings.TrimSpace(raw)}
+}
+
+// parseXMLEnvelope extracts sections from the XML envelope format.
+func parseXMLEnvelope(raw string) ParsedResponse {
 	return ParsedResponse{
 		Discussion: extractBetween(raw, "<"+TagDiscussion+">", "</"+TagDiscussion+">"),
 		Artifact:   extractBetween(raw, "<"+TagArtifact+">", "</"+TagArtifact+">"),
 		HTML:       extractCDATA(extractBetween(raw, "<"+TagHTML+">", "</"+TagHTML+">")),
 		JSON:       extractJSONPlan(raw),
 	}
+}
+
+// parsePlainSections extracts Discussion and Artifact from the plain section-header
+// format ("## Discussion\n...\n## Artifact\n...") used by non-XML-friendly models.
+func parsePlainSections(raw string) ParsedResponse {
+	return ParsedResponse{
+		Discussion: extractPlainSection(raw, "## Discussion"),
+		Artifact:   extractPlainSection(raw, "## Artifact"),
+	}
+}
+
+// extractPlainSection returns the content after the given "## Heading" marker up to
+// the next "## " heading or end of string. Uses the last occurrence of the heading
+// so a preamble before the real content is skipped.
+func extractPlainSection(raw, heading string) string {
+	idx := strings.LastIndex(raw, heading)
+	if idx < 0 {
+		return ""
+	}
+	content := raw[idx+len(heading):]
+	// Strip the newline immediately after the heading.
+	content = strings.TrimLeft(content, "\r\n")
+	// Stop at the next "## " heading if present.
+	if next := strings.Index(content, "\n## "); next >= 0 {
+		content = content[:next]
+	}
+	return strings.TrimSpace(content)
+}
+
+func extractBetweenMarkers(s, start, end string) string {
+	si := strings.Index(s, start)
+	if si < 0 {
+		return ""
+	}
+	si += len(start)
+
+	ei := strings.LastIndex(s, end)
+	if ei <= si {
+		return ""
+	}
+
+	return strings.TrimSpace(s[si:ei])
 }
 
 // extractBetween returns trimmed content between open and close tags.
@@ -65,7 +124,7 @@ func extractJSONPlan(s string) []byte {
 	if content == "" {
 		return nil
 	}
-	return []byte(content)
+	return repairJSON([]byte(content))
 }
 
 // streamFilterState tracks which section of the XML envelope is being streamed.
@@ -73,7 +132,7 @@ type streamFilterState int
 
 const (
 	sfBeforeRoot   streamFilterState = iota
-	sfInRoot                         // inside <response>, between tags
+	sfInRoot                         // inside <!-- RESPONSE:START -->, between tags
 	sfInDiscussion                   // inside <discussion> — streamable
 	sfInArtifact                     // inside <artifact> — streamable
 	sfInHTML                         // inside <htmlcontent> — not streamed to UI
@@ -171,4 +230,35 @@ func (f *StreamFilter) transition(tag string) (streamFilterState, bool) {
 		return sfInRoot, true
 	}
 	return 0, false
+}
+
+func repairJSON(input []byte) []byte {
+	s := string(input)
+
+	// 1. Trim obvious junk before/after JSON
+	start := strings.IndexAny(s, "{[")
+	end := strings.LastIndexAny(s, "}]")
+	if start >= 0 && end > start {
+		s = s[start : end+1]
+	}
+
+	// 2. Remove trailing commas
+	s = regexp.MustCompile(`,(\s*[}\]])`).ReplaceAllString(s, "$1")
+
+	// 3. Attempt to close braces/brackets
+	openBraces := strings.Count(s, "{")
+	closeBraces := strings.Count(s, "}")
+	for closeBraces < openBraces {
+		s += "}"
+		closeBraces++
+	}
+
+	openBrackets := strings.Count(s, "[")
+	closeBrackets := strings.Count(s, "]")
+	for closeBrackets < openBrackets {
+		s += "]"
+		closeBrackets++
+	}
+
+	return []byte(s)
 }
