@@ -5,4 +5,18 @@ find /home/paulette/repos -name 'dolt-server.*' -exec chmod 666 {} \; 2>/dev/nul
 find /home/paulette/repos -name 'dolt' -type d -exec chmod 755 {} \; 2>/dev/null || true
 chown -R paulette:paulette /home/paulette/repos 2>/dev/null || true
 
+# Ensure ~/.claude/settings.json exists (volume mount may hide the image copy)
+if [ ! -f /home/paulette/.claude/settings.json ]; then
+  mkdir -p /home/paulette/.claude
+  printf '%s' \
+    '{"permissions":{"allow":[' \
+    '"Write(/home/paulette/repos/**)",' \
+    '"Edit(/home/paulette/repos/**)",' \
+    '"Bash(*)",' \
+    '"Read(/home/paulette/repos/**)"' \
+    ']}}' \
+    > /home/paulette/.claude/settings.json
+fi
+chown -R paulette:paulette /home/paulette/.claude 2>/dev/null || true
+
 exec gosu paulette /usr/local/bin/paulette "$@"
