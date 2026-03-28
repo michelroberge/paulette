@@ -3,7 +3,6 @@ package agent
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -18,12 +17,12 @@ You will receive the approved artifacts from all pipeline stages (Vision, UX, Ar
 
 Produce a concise summary document that captures the essential decisions and outcomes. This summary will be used as context for future enhancement iterations, so focus on what a future AI agent would need to understand to build upon this work.
 
-OUTPUT FORMAT: Wrap your entire response in <response>...</response> and put all content in <discussion>...</discussion>:
-<response>
+OUTPUT FORMAT: Wrap your entire response in <!-- RESPONSE:START -->...<!-- RESPONSE:END --> and put all content in <discussion>...</discussion>:
+<!-- RESPONSE:START -->
 <discussion>
 ...summary here...
 </discussion>
-</response>
+<!-- RESPONSE:END -->
 
 Output the summary inside the XML envelope:
 
@@ -51,6 +50,30 @@ Aim for 3-5 suggestions. Think about: missing features from the vision, UX gaps,
 Items explicitly deferred or flagged as current limitations.
 
 Be concise — aim for a document that can be quickly scanned. Avoid repeating full artifact contents; summarize the decisions and rationale.`
+
+// BuildStreamSummaryRequest returns the system prompt and user message for summary generation.
+// Used by non-CLI providers that call provider.Chat directly.
+func BuildStreamSummaryRequest(artifacts map[model.StageName]string, projectName, version string) (systemPrompt, userMsg string) {
+	var prompt strings.Builder
+	prompt.WriteString(fmt.Sprintf("Project: %s, Version: %s\n\n", projectName, version))
+	stages := []struct {
+		name  model.StageName
+		label string
+	}{
+		{model.StageVision, "Vision"},
+		{model.StageUX, "UX Design"},
+		{model.StageArchitecture, "Architecture"},
+		{model.StageBuild, "Build Plan"},
+	}
+	for _, s := range stages {
+		content := artifacts[s.name]
+		if content == "" {
+			continue
+		}
+		prompt.WriteString(fmt.Sprintf("## %s Artifact\n---\n%s\n---\n\n", s.label, content))
+	}
+	return summarySystemPrompt, prompt.String()
+}
 
 // StreamSummary calls Claude to produce a concise summary of all approved artifacts,
 // streaming chunks as StreamEvents. The channel is closed when generation finishes.
@@ -108,36 +131,7 @@ func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, pr
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-			var event claudeEvent
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				continue
-			}
-			switch event.Type {
-			case "assistant":
-				if event.Message != nil {
-					for _, c := range event.Message.Content {
-						if c.Type == "text" && c.Text != "" {
-							fullText.WriteString(c.Text)
-							ch <- StreamEvent{Type: "chunk", Content: c.Text}
-						}
-					}
-				}
-			case "result":
-				if event.Usage != nil {
-					total := event.Usage.InputTokens + event.Usage.OutputTokens
-					ch <- StreamEvent{Type: "tokens", Content: fmt.Sprintf("%d", total)}
-				}
-				if fullText.Len() == 0 && event.Result != "" {
-					fullText.WriteString(event.Result)
-					ch <- StreamEvent{Type: "chunk", Content: event.Result}
-				}
-			}
-		}
+		processStreamEvents(scanner, &fullText, ch, streamOptions{tokenField: "content"})
 
 		summary := ParseResponse(fullText.String()).Discussion
 		if summary == "" {

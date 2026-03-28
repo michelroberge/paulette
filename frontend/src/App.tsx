@@ -9,11 +9,14 @@ import { ChatPanel } from './components/chat/ChatPanel';
 import { ArtifactPreview } from './components/artifact/ArtifactPreview';
 import { UxPanel } from './components/ux/UxPanel';
 import { BuildPanel } from './components/build/BuildPanel';
+import { BuildWizardView } from './components/build/BuildWizardView';
 import { SkillAnalysisPanel } from './components/build/SkillAnalysisPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
 import { VersionHistoryModal } from './components/git/VersionHistoryModal';
 import { ProfileModal } from './components/git/ProfileModal';
+import { VersionSelectorDropdown } from './components/layout/VersionSelectorDropdown';
+import { VersionHistoryView } from './components/layout/VersionHistoryView';
 import { ConfigurePage } from './components/configure/ConfigurePage';
 import { ProjectStageSettings } from './components/configure/ProjectStageSettings';
 import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
@@ -57,13 +60,13 @@ function getTabsForStage(stage: StageName | null): StageTab[] {
     { id: 'mock', label: 'Mock Preview' },
   ];
   if (stage === 'build') {
-    const tabs: StageTab[] = [
+    return [
       { id: 'chat', label: 'Chat' },
       { id: 'artifact', label: 'Build Plan' },
       { id: 'skills', label: 'Skills' },
+      { id: 'generate', label: 'Generate Beads' },
+      { id: 'execute', label: 'Implement' },
     ];
-    tabs.push({ id: 'execute', label: 'Execute' });
-    return tabs;
   }
   return [
     { id: 'chat', label: 'Chat' },
@@ -97,6 +100,8 @@ function ProjectDetailPage() {
   const [activeTab, setActiveTab] = useState<string>('chat');
   const [stageTokens, setStageTokens] = useState<Partial<Record<StageName, number>>>({});
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [versionSelectorOpen, setVersionSelectorOpen] = useState(false);
+  const [viewingVersion, setViewingVersion] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [showStageSettings, setShowStageSettings] = useState(false);
   const [stagesWithOverrides, setStagesWithOverrides] = useState<Set<StageName>>(new Set());
@@ -104,6 +109,7 @@ function ProjectDetailPage() {
   const [mockGenerated, setMockGenerated] = useState(false);
   const [buildComplete, setBuildComplete] = useState(false);
   const [hasBeads, setHasBeads] = useState(false);
+  const [hasBuildArtifact, setHasBuildArtifact] = useState(false);
   const [activeRuns, setActiveRuns] = useState<ActiveRun[]>([]);
   const [btwInput, setBtwInput] = useState('');
   const [btwSending, setBtwSending] = useState(false);
@@ -218,6 +224,7 @@ function ProjectDetailPage() {
     setMockGenerated(false);
     setBuildComplete(false);
     setHasBeads(false);
+    setHasBuildArtifact(false);
 
     (async () => {
       try {
@@ -229,6 +236,7 @@ function ProjectDetailPage() {
           if (mock.exists) { setActiveTab('mock'); setMockGenerated(true); }
           else setActiveTab('artifact');
         } else if (selectedStage === 'build') {
+          setHasBuildArtifact(true);
           const graph = await getBeadGraph(project.id);
           if (graph?.beads?.length) {
             setHasBeads(true);
@@ -245,6 +253,13 @@ function ProjectDetailPage() {
       }
     })();
   }, [selectedStage]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When a build artifact is produced mid-session, unblock the wizard Next button
+  useEffect(() => {
+    if (selectedStage === 'build' && artifactUpdated > 0) {
+      setHasBuildArtifact(true);
+    }
+  }, [artifactUpdated, selectedStage]);
 
   // Poll for summaryReady when at Complete stage
   useEffect(() => {
@@ -377,29 +392,49 @@ function ProjectDetailPage() {
 
   return (
     <div className="app-shell">
-      <ProjectHeader
-        project={project}
-        onBack={() => navigate('/')}
-        totalTokens={grandTotal}
-        onShowHistory={() => setShowVersionHistory(true)}
-        onShowProfile={() => setShowProfile(true)}
-        onShowStageSettings={() => setShowStageSettings(true)}
-        autonomous={!!project.autonomous}
-        onToggleAutonomous={handleToggleAutonomous}
-      />
+      <div style={{ position: 'relative' }}>
+        <ProjectHeader
+          project={project}
+          onBack={() => navigate('/')}
+          totalTokens={grandTotal}
+          onShowHistory={() => setShowVersionHistory(true)}
+          onShowProfile={() => setShowProfile(true)}
+          onShowStageSettings={() => setShowStageSettings(true)}
+          autonomous={!!project.autonomous}
+          onToggleAutonomous={handleToggleAutonomous}
+          onVersionClick={() => setVersionSelectorOpen(v => !v)}
+          viewingVersion={viewingVersion}
+        />
+        {versionSelectorOpen && (
+          <VersionSelectorDropdown
+            projectId={project.id}
+            currentVersion={project.version}
+            onSelect={v => { setViewingVersion(v); setVersionSelectorOpen(false); }}
+            onClose={() => setVersionSelectorOpen(false)}
+          />
+        )}
+      </div>
 
       <div className="app-body">
-        <StagesSidebar
-          pipeline={pipeline}
-          selectedStage={selectedStage}
-          onSelectStage={setSelectedStage}
-          onReset={handleReset}
-          stageTokens={stageTokens}
-          stagesWithOverrides={stagesWithOverrides}
-        />
+        {!viewingVersion && (
+          <StagesSidebar
+            pipeline={pipeline}
+            selectedStage={selectedStage}
+            onSelectStage={setSelectedStage}
+            onReset={handleReset}
+            stageTokens={stageTokens}
+            stagesWithOverrides={stagesWithOverrides}
+          />
+        )}
 
         <main className="main-content">
-          {showImportProgress ? (
+          {viewingVersion ? (
+            <VersionHistoryView
+              project={project}
+              version={viewingVersion}
+              onClose={() => setViewingVersion(null)}
+            />
+          ) : showImportProgress ? (
             <ImportProgressView
               project={project}
               onComplete={() => {
@@ -443,6 +478,53 @@ function ProjectDetailPage() {
                   onBtwSubmit={handleBtwSend}
                   btwPendingCount={pipeline?.stages.find(s => s.name === agentStage)?.activity?.pendingBtw?.length ?? 0}
                 />
+              ) : selectedStage === 'build' ? (
+              <BuildWizardView
+                activeStep={activeTab}
+                onStepChange={setActiveTab}
+                canAdvance={{
+                  chat:     hasBuildArtifact,
+                  artifact: true,
+                  skills:   true,
+                  generate: hasBeads,
+                  execute:  true,
+                }}
+              >
+                {activeTab === 'chat' && (
+                  <ChatPanel
+                    messages={messages}
+                    streaming={streaming}
+                    streamingContent={streamingContent}
+                    onSend={send}
+                    onStop={stop}
+                    connectionError={connectionError}
+                    onOpenProjectSettings={() => setShowStageSettings(true)}
+                    onRetry={resume}
+                  />
+                )}
+
+                {activeTab === 'skills' && (
+                  <SkillAnalysisPanel projectId={project.id} />
+                )}
+
+                {activeTab !== 'chat' && activeTab !== 'skills' && (
+                  <BuildPanel
+                    projectId={project.id}
+                    refreshTrigger={artifactUpdated}
+                    mode={activeTab === 'execute' || activeTab === 'generate' ? 'execute' : 'artifact'}
+                    onRequestExecuteTab={() => setActiveTab('generate')}
+                    hidden={false}
+                    onBeadTokens={(n) => addTokens('build', n)}
+                    onExecutionComplete={() => setBuildComplete(true)}
+                    onBuildDone={() => setBuildComplete(true)}
+                    onHasBeads={setHasBeads}
+                    agentActive={agentActive}
+                    agentOperation={agentOperation}
+                    agentStreamingText={agentStreamingText}
+                    hideGenerateButton={activeTab === 'artifact'}
+                  />
+                )}
+              </BuildWizardView>
               ) : (
               <StageView tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab}>
                 {activeTab === 'chat' && (
@@ -476,27 +558,6 @@ function ProjectDetailPage() {
                     onMockTokens={(n) => addTokens('ux', n)}
                     onMockComplete={() => setMockGenerated(true)}
                     onMockLoaded={() => setMockGenerated(true)}
-                  />
-                )}
-
-                {selectedStage === 'build' && activeTab === 'skills' && (
-                  <SkillAnalysisPanel projectId={project.id} />
-                )}
-
-                {selectedStage === 'build' && activeTab !== 'skills' && (
-                  <BuildPanel
-                    projectId={project.id}
-                    refreshTrigger={artifactUpdated}
-                    mode={activeTab === 'execute' ? 'execute' : 'artifact'}
-                    onRequestExecuteTab={() => setActiveTab('execute')}
-                    hidden={activeTab === 'chat'}
-                    onBeadTokens={(n) => addTokens('build', n)}
-                    onExecutionComplete={() => setBuildComplete(true)}
-                    onBuildDone={() => setBuildComplete(true)}
-                    onHasBeads={setHasBeads}
-                    agentActive={agentActive}
-                    agentOperation={agentOperation}
-                    agentStreamingText={agentStreamingText}
                   />
                 )}
               </StageView>

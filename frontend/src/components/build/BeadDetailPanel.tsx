@@ -23,8 +23,9 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
     detail, loading,
     chatStreaming, chatStreamingContent,
     instructStreaming, instructStreamingContent, instructionProposal, applyingProposal,
+    beadStreaming,
     loadDetail, saveDetail, sendChat, stopChat, sendInstruct, applyProposal, dismissProposal,
-    control,
+    control, startBead,
   } = useBeadDetail(projectId);
 
   const [description, setDescription] = useState(bead.description ?? '');
@@ -68,9 +69,29 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
   const isClosed = currentStatus === 'closed';
   const isInProgress = currentStatus === 'in_progress' || currentStatus === 'reviewing';
 
-  const handleControl = async (action: 'pause' | 'restart' | 'close') => {
+  const handleControl = async (action: 'pause' | 'restart' | 'close' | 'cancel') => {
     await control(beadId, action);
     onBeadControlled?.();
+  };
+
+  const handleStart = async () => {
+    if (notesDirty) await handleSave();
+    await startBead(beadId);
+    onBeadControlled?.();
+  };
+
+  const handleCancel = async () => {
+    const prefixed = notes.trim() ? `Cancelled by user. ${notes}` : 'Cancelled by user.';
+    setNotes(prefixed);
+    await saveDetail(beadId, { notes: prefixed });
+    await handleControl('cancel');
+  };
+
+  const handleCloseVerified = async () => {
+    const prefixed = notes.trim() ? `Closed by user. ${notes}` : 'Closed by user.';
+    setNotes(prefixed);
+    await saveDetail(beadId, { notes: prefixed });
+    await handleControl('close');
   };
 
   const handleSave = async () => {
@@ -116,7 +137,7 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
     blocked: '#475569',
   };
 
-  const anyStreaming = chatStreaming || instructStreaming;
+  const anyStreaming = chatStreaming || instructStreaming || beadStreaming;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -220,13 +241,34 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
                           Save &amp; Restart
                         </button>
                       )}
-                      <button
-                        className="close-verified-button"
-                        onClick={() => handleControl('close')}
-                        title="Mark this bead as verified and close it"
-                      >
-                        ✓ Close (Verified)
-                      </button>
+                      {!isInProgress && (
+                        <>
+                          <button
+                            className="generate-mock-button"
+                            onClick={handleStart}
+                            disabled={beadStreaming}
+                            title="Start an agent to work on this bead"
+                          >
+                            ▶ Start
+                          </button>
+                          <button
+                            className="stop-button"
+                            onClick={handleCancel}
+                            disabled={beadStreaming}
+                            title="Cancel this bead"
+                          >
+                            ✕ Cancel
+                          </button>
+                          <button
+                            className="close-verified-button"
+                            onClick={handleCloseVerified}
+                            disabled={beadStreaming}
+                            title="Mark this bead as done without running the agent"
+                          >
+                            ✓ Close
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
 

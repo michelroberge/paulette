@@ -231,6 +231,77 @@ func writeCommandSection(b *strings.Builder, title string, cmds []string) {
 	b.WriteString("```\n")
 }
 
+// WriteVersionMeta writes version metadata to docs/{version}/version-meta.json.
+func WriteVersionMeta(hostDir, version string, meta model.VersionMeta) error {
+	p := filepath.Join(hostDir, "docs", version, "version-meta.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("create docs version dir: %w", err)
+	}
+	b, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal version meta: %w", err)
+	}
+	return os.WriteFile(p, b, 0644)
+}
+
+// ReadVersionMeta reads version metadata from docs/{version}/version-meta.json.
+// Returns nil, nil if the file does not exist.
+func ReadVersionMeta(hostDir, version string) (*model.VersionMeta, error) {
+	p := filepath.Join(hostDir, "docs", version, "version-meta.json")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read version meta: %w", err)
+	}
+	var meta model.VersionMeta
+	if err := json.Unmarshal(b, &meta); err != nil {
+		return nil, fmt.Errorf("parse version meta: %w", err)
+	}
+	return &meta, nil
+}
+
+// WriteStageChatHistory archives a stage's chat history to docs/{version}/{stage}/chat-history.json.
+func WriteStageChatHistory(hostDir, version string, stage model.StageName, history model.ChatHistory) error {
+	p := filepath.Join(hostDir, "docs", version, string(stage), "chat-history.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("create docs stage chat dir: %w", err)
+	}
+	b, err := json.MarshalIndent(history, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal stage chat history: %w", err)
+	}
+	return os.WriteFile(p, b, 0644)
+}
+
+// ReadStageChatHistory reads archived chat history from docs/{version}/{stage}/chat-history.json.
+// Returns nil, nil if the file does not exist.
+func ReadStageChatHistory(hostDir, version string, stage model.StageName) (*model.ChatHistory, error) {
+	p := filepath.Join(hostDir, "docs", version, string(stage), "chat-history.json")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read stage chat history: %w", err)
+	}
+	var history model.ChatHistory
+	if err := json.Unmarshal(b, &history); err != nil {
+		return nil, fmt.Errorf("parse stage chat history: %w", err)
+	}
+	return &history, nil
+}
+
+// WriteBeadsGraphSnapshot saves a raw JSON snapshot of the bead graph to docs/{version}/build/beads-graph.json.
+func WriteBeadsGraphSnapshot(hostDir, version string, data []byte) error {
+	p := filepath.Join(hostDir, "docs", version, "build", "beads-graph.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("create docs build dir: %w", err)
+	}
+	return os.WriteFile(p, data, 0644)
+}
+
 // AppendBeadChatMessage appends a message to per-bead chat history.
 func AppendBeadChatMessage(hostDir, version, beadID string, msg model.Message) error {
 	msgs, _ := ReadBeadChatHistory(hostDir, version, beadID)

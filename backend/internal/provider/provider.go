@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
@@ -17,10 +16,27 @@ import (
 // does not expose a model enumeration endpoint.
 var ErrModelListUnsupported = errors.New("model listing not supported by this provider")
 
-// StreamEvent is re-exported from the agent package so callers can use
-// provider.StreamEvent without importing agent directly.
-// Event types: "chunk", "artifact", "done", "error", "tokens".
-type StreamEvent = agent.StreamEvent
+// StreamEvent is re-exported from the model package so callers can use
+// provider.StreamEvent without importing model directly.
+// Event types: "chunk", "artifact", "done", "error", "tokens", "plan_limit", "log".
+type StreamEvent = model.StreamEvent
+
+// AgentTool describes a tool the LLM may call during agentic execution.
+type AgentTool struct {
+	Name        string
+	Description string
+	InputSchema map[string]any // JSON Schema object
+}
+
+// AgentRequest is the payload for tool-use (agentic) LLM calls.
+// Unlike ChatRequest, it has no History — agentic bead execution is single-turn.
+type AgentRequest struct {
+	Model        string
+	SystemPrompt string
+	UserMessage  string
+	ProjectDir   string
+	Tools        []AgentTool
+}
 
 // ModelInfo describes a single model available on a provider.
 type ModelInfo struct {
@@ -40,7 +56,7 @@ type ChatRequest struct {
 	Model string
 
 	// SystemPrompt is the stage-specific instruction prompt prepended to every
-	// conversation. The XML envelope format (<response><artifact>…</artifact></response>)
+	// conversation. The XML envelope format (<!-- RESPONSE:START --><artifact>…</artifact><!-- RESPONSE:END -->)
 	// must be preserved across all providers so the backend parser continues to work.
 	SystemPrompt string
 
@@ -63,6 +79,10 @@ type Provider interface {
 	// returned channel. The channel is closed after a "done" or "error" event.
 	// The caller must drain the channel; failing to do so will leak the goroutine.
 	Chat(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error)
+
+	// ExecuteAgent runs an agentic tool-use loop and streams events back on the
+	// returned channel. The channel is closed after a "done" or "error" event.
+	ExecuteAgent(ctx context.Context, req AgentRequest) (<-chan StreamEvent, error)
 
 	// TestConnection sends a minimal probe request and returns nil on success.
 	// Implementations should use a 30-second timeout.
@@ -156,7 +176,10 @@ func (r *Registry) providerForConnection(conn *Connection) (Provider, error) {
 		return NewGeminiProvider(conn.BaseURL, conn.APIKey), nil
 
 	case ProviderGitHubCopilot:
-		return nil, fmt.Errorf("GitHub Copilot provider is planned for v0.3.0 and is not yet available")
+		if conn.APIKey == "" {
+			return nil, fmt.Errorf("github copilot: no OAuth token configured; complete device auth first")
+		}
+		return NewGitHubCopilotProvider(conn.APIKey), nil
 
 	default:
 		return nil, fmt.Errorf("unknown provider type: %q", conn.ProviderType)

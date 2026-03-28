@@ -19,29 +19,45 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
 
 type PipelineHandler struct {
-	registry     repository.RegistryRepo
-	projectRepo  repository.ProjectRepo
-	artifactRepo repository.ArtifactRepo
-	activityRepo repository.ActivityRepo
-	runs         *stream.Manager
-	git          *git.Service
+	registry         repository.RegistryRepo
+	projectRepo      repository.ProjectRepo
+	artifactRepo     repository.ArtifactRepo
+	activityRepo     repository.ActivityRepo
+	chatRepo         repository.ChatRepo
+	runs             *stream.Manager
+	git              *git.Service
+	providerRegistry *provider.Registry
+	stageConfig      *provider.StageConfigStore
 }
 
-func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, gitSvc *git.Service) *PipelineHandler {
+func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, chatRepo repository.ChatRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore) *PipelineHandler {
 	return &PipelineHandler{
-		registry:     registry,
-		projectRepo:  projectRepo,
-		artifactRepo: artifactRepo,
-		activityRepo: activityRepo,
-		runs:         runs,
-		git:          gitSvc,
+		registry:         registry,
+		projectRepo:      projectRepo,
+		artifactRepo:     artifactRepo,
+		activityRepo:     activityRepo,
+		chatRepo:         chatRepo,
+		runs:             runs,
+		git:              gitSvc,
+		providerRegistry: providerRegistry,
+		stageConfig:      stageConfig,
 	}
+}
+
+// resolveProvider returns the Provider and model ID to use for the given stage,
+// falling back to ClaudeCLI when no registry is configured.
+func (h *PipelineHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
 }
 
 func (h *PipelineHandler) GetPipeline(w http.ResponseWriter, r *http.Request) {
@@ -246,23 +262,41 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 	}
 	writeActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary")
 
+	// Collect artifacts before entering the goroutine.
+	artifacts := make(map[model.StageName]string)
+	for _, s := range pipeline.StageOrder {
+		if s == model.StageComplete {
+			break
+		}
+		content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, s)
+		if content != "" {
+			artifacts[s] = content
+		}
+	}
+
+	// Resolve provider before entering the goroutine.
+	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageComplete)
+	if provErr != nil {
+		failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", provErr.Error())
+		run.Emit(agent.StreamEvent{Type: "error", Content: provErr.Error()})
+		clearActivity(h.activityRepo, project.HostDir, model.StageComplete)
+		run.Finish(h.runs)
+		return
+	}
+
+	systemPrompt, userMsg := agent.BuildStreamSummaryRequest(artifacts, project.Name, project.Version)
+
 	go func() {
 		// LIFO defer: clearActivity runs first, then run.Finish (so watcher sees clean state)
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageComplete)
 
-		artifacts := make(map[model.StageName]string)
-		for _, s := range pipeline.StageOrder {
-			if s == model.StageComplete {
-				break
-			}
-			content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, s)
-			if content != "" {
-				artifacts[s] = content
-			}
-		}
-
-		events, err := agent.StreamSummary(run.Context(), artifacts, project.Name, project.Version)
+		events, err := prov.Chat(run.Context(), provider.ChatRequest{
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  userMsg,
+			ProjectDir:   project.HostDir,
+		})
 		if err != nil {
 			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", err.Error())
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
@@ -432,13 +466,61 @@ func (h *PipelineHandler) ApproveSummary(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Archive stage chat histories into the versioned docs directory.
+	archiveStages := []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild}
+	for _, stage := range archiveStages {
+		msgs, err := h.chatRepo.GetHistory(project.HostDir, stage)
+		if err != nil {
+			log.Printf("failed to read chat history for stage %s: %v", stage, err)
+			continue
+		}
+		if len(msgs) == 0 {
+			continue
+		}
+		history := model.ChatHistory{Messages: msgs}
+		if err := fsrepo.WriteStageChatHistory(project.HostDir, project.Version, stage, history); err != nil {
+			log.Printf("failed to archive chat history for stage %s: %v", stage, err)
+		}
+	}
+
+	// Snapshot the beads graph if present.
+	beadGraphBytes, err := os.ReadFile(fsrepo.BeadGraphPath(project.HostDir))
+	if err == nil && len(beadGraphBytes) > 0 {
+		if err := fsrepo.WriteBeadsGraphSnapshot(project.HostDir, project.Version, beadGraphBytes); err != nil {
+			log.Printf("failed to snapshot beads graph: %v", err)
+		}
+	}
+
+	// Write version-meta.json linking this approval to its git commit.
+	commitHash := h.git.CurrentHash(project.HostDir)
+	meta := model.VersionMeta{
+		Version:    project.Version,
+		Iteration:  project.Iteration,
+		CommitHash: commitHash,
+		TagName:    "v" + project.Version,
+		ApprovedAt: time.Now(),
+	}
+	if err := fsrepo.WriteVersionMeta(project.HostDir, project.Version, meta); err != nil {
+		log.Printf("failed to write version meta: %v", err)
+	}
+
 	if err := fsrepo.WriteReadme(project); err != nil {
 		log.Printf("failed to generate README.md: %v", err)
 	}
 
-	docPath := filepath.Join("docs", project.Version, "summary.md")
+	// Build the list of paths to commit, including newly archived files.
+	commitPaths := []string{
+		filepath.Join("docs", project.Version, "summary.md"),
+		filepath.Join("docs", project.Version, "version-meta.json"),
+		"README.md",
+	}
+	for _, stage := range archiveStages {
+		commitPaths = append(commitPaths, filepath.Join("docs", project.Version, string(stage), "chat-history.json"))
+	}
+	commitPaths = append(commitPaths, filepath.Join("docs", project.Version, "build", "beads-graph.json"))
+
 	commitMsg := fmt.Sprintf("docs(v%s): approve iteration summary", project.Version)
-	if err := h.git.AddAndCommit(project.HostDir, []string{docPath, "README.md"}, commitMsg); err != nil {
+	if err := h.git.AddAndCommit(project.HostDir, commitPaths, commitMsg); err != nil {
 		log.Printf("git commit approved summary failed: %v", err)
 	}
 

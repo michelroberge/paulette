@@ -3,7 +3,6 @@ package agent
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -11,6 +10,9 @@ import (
 
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
+
+// StreamEvent is an alias to model.StreamEvent so existing callers are unaffected.
+type StreamEvent = model.StreamEvent
 
 // ErrPlanLimit is the sentinel error for Claude usage/plan limit.
 var ErrPlanLimit = errors.New("claude plan limit reached")
@@ -47,13 +49,6 @@ func SetClaudePath(path string) {
 // package-level variable on every call.
 func GetClaudeBin() string {
 	return claudeBin
-}
-
-// StreamEvent represents an event sent to the client via SSE.
-type StreamEvent struct {
-	Type    string `json:"type"`             // "chunk", "artifact", "done", "error", "tokens"
-	Content string `json:"content"`          // text content for chunk, path for artifact, message for error
-	Tokens  int    `json:"tokens,omitempty"` // token count for "tokens" events
 }
 
 // claudeEvent represents a line from claude --output-format stream-json --verbose
@@ -132,52 +127,13 @@ func ChatWithBin(ctx context.Context, bin string, modelID string, systemPrompt s
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-
-			var event claudeEvent
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				continue
-			}
-
-			switch event.Type {
-			case "assistant":
-				if event.Message != nil {
-					for _, c := range event.Message.Content {
-						if c.Type == "text" && c.Text != "" {
-							fullResponse.WriteString(c.Text)
-							if visible := filter.Feed(c.Text); visible != "" {
-								ch <- StreamEvent{Type: "chunk", Content: visible}
-							}
-						}
-					}
-				}
-			case "result":
-				if event.IsError {
-					msg := event.Result
-					if msg == "" {
-						msg = "Claude plan limit reached"
-					}
-					ch <- StreamEvent{Type: "plan_limit", Content: msg}
-					return
-				}
-				if event.Usage != nil {
-					total := event.Usage.InputTokens + event.Usage.OutputTokens
-					ch <- StreamEvent{Type: "tokens", Content: fmt.Sprintf("%d", total)}
-				}
-				// result is the final event; use it if assistant produced nothing
-				if fullResponse.Len() == 0 && event.Result != "" {
-					fullResponse.WriteString(event.Result)
-					if visible := filter.Feed(event.Result); visible != "" {
-						ch <- StreamEvent{Type: "chunk", Content: visible}
-					}
-				}
-			}
+		if !processStreamEvents(scanner, &fullResponse, ch, streamOptions{
+			filter:       &filter,
+			planLimitMsg: dynamicPlanLimitMsg,
+			tokenField:   "content",
+		}) {
+			return
 		}
-
 		ch <- StreamEvent{Type: "done", Content: fullResponse.String()}
 	}()
 

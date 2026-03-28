@@ -99,7 +99,7 @@ func (s *Server) Router() http.Handler {
 	skillRepo := fsrepo.NewSkillRepo(s.cfg.RegistryPath)
 
 	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
-	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, gitSvc)
+	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.chatRepo, s.runs, gitSvc, s.providerRegistry, s.stageConfig)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
@@ -112,7 +112,8 @@ func (s *Server) Router() http.Handler {
 	ggh := handler.NewGitGlobalHandler(gitSvc, s.gitIdentity)
 	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath, s.gitIdentity)
 	sh := handler.NewSessionHandler(s.registry)
-	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs)
+	vh := handler.NewVersionHandler(s.registry)
+	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs, s.providerRegistry, s.stageConfig)
 
 	// Wire orchestrator (created once, reused across Router calls)
 	if s.orchestrator == nil {
@@ -183,6 +184,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/stages/build/beads/{beadId}", bh.GetDetail)
 		r.Patch("/{id}/stages/build/beads/{beadId}", bh.UpdateBead)
 		r.Post("/{id}/stages/build/beads/{beadId}/control", bh.ControlBead)
+		r.Post("/{id}/stages/build/beads/{beadId}/execute", bh.ExecuteSingleBead)
 		r.Post("/{id}/stages/build/beads/{beadId}/chat", bh.BeadChat)
 		r.Get("/{id}/stages/build/beads/{beadId}/files", bh.GetBeadFiles)
 		r.Get("/{id}/stages/build/beads/{beadId}/diff", bh.GetBeadDiff)
@@ -223,6 +225,12 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/config/stages", scfgH.GetProjectOverrides)
 		r.Put("/{id}/config/stages/{stage}", scfgH.SetProjectStageOverride)
 		r.Post("/{id}/config/stages/reset", scfgH.ResetProjectOverrides)
+
+		// Version history (read-only).
+		r.Get("/{id}/versions", vh.ListVersions)
+		r.Get("/{id}/versions/{version}", vh.GetVersionSnapshot)
+		r.Get("/{id}/versions/{version}/beads/{beadId}", vh.GetVersionBeadExecution)
+		r.Get("/{id}/versions/{version}/mock", vh.GetVersionMock)
 	})
 
 	r.Route("/api/skills", func(r chi.Router) {

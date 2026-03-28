@@ -331,7 +331,7 @@ Milestone 6 (Integration Testing)
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| **XML envelope compliance** — Smaller models (Ollama, Gemini) may not reliably follow the `<response><artifact>...</artifact></response>` format that `agent/parse.go` depends on | Pipeline may fail to extract artifacts from non-Claude providers | Document as user responsibility per vision; consider adding a lenient parser fallback in a future iteration |
+| **XML envelope compliance** — Smaller models (Ollama, Gemini) may not reliably follow the `<!-- RESPONSE:START --><artifact>...</artifact><!-- RESPONSE:END -->` format that `agent/parse.go` depends on | Pipeline may fail to extract artifacts from non-Claude providers | Document as user responsibility per vision; consider adding a lenient parser fallback in a future iteration |
 | **Streaming format variance** — Each provider has a different streaming protocol (NDJSON, SSE, typed SSE, JSON arrays) | Bugs in stream parsing could cause hangs or data loss | Each provider gets dedicated streaming tests; Ollama (NDJSON) and OpenAI (SSE) are the two distinct patterns to validate first |
 | **Anthropic API rate limits** — Direct API calls may hit rate limits that the CLI abstracted away | User sees errors during heavy usage | Surface clear error messages; rate limiting/retry is explicitly out of scope for v0.2.0 |
 | **React Router migration** — Adding routing to an app that currently uses state-only navigation is a significant refactor | Could break existing navigation patterns, especially mobile sidebar and tab state | Carefully preserve all existing state management; routes map 1:1 to existing views; test mobile layout |

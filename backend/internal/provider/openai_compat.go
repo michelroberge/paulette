@@ -327,3 +327,204 @@ func openAICompatTestConnection(
 	}
 	return nil
 }
+
+// ── Agentic (tool-use) loop ───────────────────────────────────────────────────
+
+// openAIAgentNonStreamingRequest is the request body for non-streaming tool rounds.
+// Messages is []json.RawMessage to accommodate heterogeneous shapes (plain text,
+// tool_calls, tool results) in a single slice.
+type openAIAgentNonStreamingRequest struct {
+	Model    string             `json:"model"`
+	Messages []json.RawMessage  `json:"messages"`
+	Tools    []map[string]any   `json:"tools,omitempty"`
+	Stream   bool               `json:"stream"`
+}
+
+// openAIToolCall is a single tool call returned in a non-streaming assistant message.
+type openAIToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+// openAINonStreamingChoice is one choice in a non-streaming response.
+type openAINonStreamingChoice struct {
+	Message struct {
+		Role      string           `json:"role"`
+		Content   string           `json:"content"`
+		ToolCalls []openAIToolCall `json:"tool_calls"`
+	} `json:"message"`
+	FinishReason string `json:"finish_reason"`
+}
+
+// openAINonStreamingResponse is the non-streaming POST /v1/chat/completions response.
+type openAINonStreamingResponse struct {
+	Choices []openAINonStreamingChoice `json:"choices"`
+	Error   *openAIError               `json:"error,omitempty"`
+}
+
+const maxAgentIterations = 20
+
+// openAICompatExecuteAgent runs an agentic tool-use loop against an
+// OpenAI-compatible /v1/chat/completions endpoint and streams results.
+// Tool rounds are non-streaming; the final answer is emitted as chunk+done.
+func openAICompatExecuteAgent(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	extraHeaders map[string]string,
+	req AgentRequest,
+) (<-chan StreamEvent, error) {
+	if req.Model == "" {
+		return nil, fmt.Errorf("openai-compat execute-agent: model must not be empty")
+	}
+	ch := make(chan StreamEvent, 64)
+	go func() {
+		defer close(ch)
+		runOpenAIAgentLoop(ctx, client, baseURL, extraHeaders, req, ch)
+	}()
+	return ch, nil
+}
+
+// rawMsg is a helper that JSON-encodes a map into a json.RawMessage.
+func rawMsg(m map[string]any) json.RawMessage {
+	b, _ := json.Marshal(m)
+	return b
+}
+
+// runOpenAIAgentLoop is the agentic loop body extracted to reduce nesting.
+func runOpenAIAgentLoop(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	extraHeaders map[string]string,
+	req AgentRequest,
+	ch chan<- StreamEvent,
+) {
+	executor := &ToolExecutor{ProjectDir: req.ProjectDir}
+
+	var toolSchemas []map[string]any
+	for _, t := range req.Tools {
+		toolSchemas = append(toolSchemas, ToolSchemaForLLM(t))
+	}
+
+	// Use []json.RawMessage to hold heterogeneous message shapes.
+	msgs := []json.RawMessage{
+		rawMsg(map[string]any{"role": "system", "content": req.SystemPrompt}),
+		rawMsg(map[string]any{"role": "user", "content": req.UserMessage}),
+	}
+
+	apiURL := strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
+
+	for iter := 0; iter < maxAgentIterations; iter++ {
+		if ctx.Err() != nil {
+			ch <- StreamEvent{Type: "error", Content: ctx.Err().Error()}
+			return
+		}
+
+		choice, err := doOpenAIRound(ctx, client, apiURL, extraHeaders, req.Model, msgs, toolSchemas)
+		if err != nil {
+			ch <- StreamEvent{Type: "error", Content: err.Error()}
+			return
+		}
+
+		if choice.FinishReason == "tool_calls" && len(choice.Message.ToolCalls) > 0 {
+			msgs = runOpenAIToolCalls(ctx, executor, choice, msgs, ch)
+			continue
+		}
+
+		if choice.Message.Content != "" {
+			ch <- StreamEvent{Type: "chunk", Content: choice.Message.Content}
+		}
+		ch <- StreamEvent{Type: "done", Content: choice.Message.Content}
+		return
+	}
+	ch <- StreamEvent{Type: "error", Content: "openai-compat execute-agent: max iterations reached"}
+}
+
+// doOpenAIRound sends one non-streaming POST /v1/chat/completions request.
+func doOpenAIRound(
+	ctx context.Context,
+	client *http.Client,
+	apiURL string,
+	extraHeaders map[string]string,
+	model string,
+	msgs []json.RawMessage,
+	toolSchemas []map[string]any,
+) (*openAINonStreamingChoice, error) {
+	body := openAIAgentNonStreamingRequest{
+		Model:    model,
+		Messages: msgs,
+		Tools:    toolSchemas,
+		Stream:   false,
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("openai-compat execute-agent: marshal: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("openai-compat execute-agent: create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	for k, v := range extraHeaders {
+		httpReq.Header.Set(k, v)
+	}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("openai-compat execute-agent: request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("openai-compat execute-agent: HTTP %d: %s", resp.StatusCode, string(errBody))
+	}
+	var apiResp openAINonStreamingResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, fmt.Errorf("openai-compat execute-agent: decode: %w", err)
+	}
+	if apiResp.Error != nil && apiResp.Error.Message != "" {
+		return nil, fmt.Errorf("openai-compat execute-agent: %s", apiResp.Error.Message)
+	}
+	if len(apiResp.Choices) == 0 {
+		return nil, fmt.Errorf("openai-compat execute-agent: empty choices")
+	}
+	return &apiResp.Choices[0], nil
+}
+
+// runOpenAIToolCalls executes tool calls from an assistant message, appends
+// results to msgs, and emits log events on ch.
+func runOpenAIToolCalls(
+	ctx context.Context,
+	executor *ToolExecutor,
+	choice *openAINonStreamingChoice,
+	msgs []json.RawMessage,
+	ch chan<- StreamEvent,
+) []json.RawMessage {
+	msgs = append(msgs, rawMsg(map[string]any{
+		"role":       "assistant",
+		"content":    choice.Message.Content,
+		"tool_calls": choice.Message.ToolCalls,
+	}))
+	for _, tc := range choice.Message.ToolCalls {
+		ch <- StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] executing...", tc.Function.Name)}
+		var toolInput map[string]any
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &toolInput); err != nil {
+			toolInput = map[string]any{}
+		}
+		toolOutput, toolErr := executor.Execute(ctx, tc.Function.Name, toolInput)
+		if toolErr != nil {
+			toolOutput = fmt.Sprintf("error: %v\n%s", toolErr, toolOutput)
+		}
+		ch <- StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] done", tc.Function.Name)}
+		msgs = append(msgs, rawMsg(map[string]any{
+			"role":         "tool",
+			"tool_call_id": tc.ID,
+			"content":      toolOutput,
+		}))
+	}
+	return msgs
+}

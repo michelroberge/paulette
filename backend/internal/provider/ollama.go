@@ -151,18 +151,78 @@ func (p *OllamaProvider) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	return models, nil
 }
 
+// ── System prompt adaptation ──────────────────────────────────────────────────
+
+// xmlEnvelopeMarker is a substring present in any prompt that uses the
+// <!-- RESPONSE:START --> envelope convention. Used to detect whether wrapping is needed.
+const xmlEnvelopeMarker = "<!-- RESPONSE:START -->"
+
+// ollamaWrapSystemPrompt adapts the base system prompt for models that are not
+// XML-friendly. For XMLFriendly models the prompt is returned unchanged.
+//
+// Non-XML-friendly models receive the XML envelope instruction replaced with a
+// simpler "## Discussion / ## Artifact" section-header format that those models
+// follow more reliably. If the prompt does not contain the XML envelope marker,
+// it is returned unchanged regardless of capability.
+func ollamaWrapSystemPrompt(basePrompt string, caps OllamaModelCaps) string {
+	if caps.XMLFriendly {
+		return basePrompt
+	}
+	if !strings.Contains(basePrompt, xmlEnvelopeMarker) {
+		return basePrompt
+	}
+
+	// Replace the XML output format block with a plain-section equivalent.
+	// Stage prompts always contain an "OUTPUT FORMAT:" heading followed by the
+	// <!-- RESPONSE:START --> envelope instruction. We locate the sentinel
+	// instruction line and replace the surrounding paragraph.
+	const xmlInstruction = "Wrap your entire response in <!-- RESPONSE:START -->...<!-- RESPONSE:END --> tags"
+	if !strings.Contains(basePrompt, xmlInstruction) {
+		// Prompt uses XML but not the standard instruction — leave unchanged to
+		// avoid breaking custom prompts.
+		return basePrompt
+	}
+
+	plainFormat := `Structure your response using these plain sections:
+
+## Discussion
+Your explanation, reasoning, analysis or questions go here.
+
+## Artifact
+The complete document, code, or deliverable goes here.
+
+Always include both sections. Do not use XML tags.`
+
+	// Find the paragraph that contains the XML instruction and replace it.
+	// Split on double-newline to find paragraph boundaries.
+	paragraphs := strings.Split(basePrompt, "\n\n")
+	for i, p := range paragraphs {
+		if strings.Contains(p, xmlInstruction) {
+			paragraphs[i] = plainFormat
+			return strings.Join(paragraphs, "\n\n")
+		}
+	}
+
+	// Fallback: append the plain format note if paragraph split didn't find it.
+	return basePrompt + "\n\n" + plainFormat
+}
+
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 // buildChatRequest converts a ChatRequest into the Ollama /api/chat JSON body.
+// The system prompt is adapted for the model's XML capability before use.
 // If a system prompt is provided it is prepended as a message with role "system".
 // History messages are appended in order, followed by the new user message.
 func (p *OllamaProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
+	caps := ollamaModelCaps(req.Model)
+	systemPrompt := ollamaWrapSystemPrompt(req.SystemPrompt, caps)
+
 	msgs := make([]ollamaMessage, 0, len(req.History)+2)
 
 	// Ollama supports an explicit "system" role message. Prepend it so the
-	// model receives the XML-envelope instruction before any conversation turns.
-	if req.SystemPrompt != "" {
-		msgs = append(msgs, ollamaMessage{Role: "system", Content: req.SystemPrompt})
+	// model receives the output format instruction before any conversation turns.
+	if systemPrompt != "" {
+		msgs = append(msgs, ollamaMessage{Role: "system", Content: systemPrompt})
 	}
 
 	for _, m := range req.History {
@@ -251,6 +311,330 @@ func (p *OllamaProvider) streamResponse(ctx context.Context, body io.Reader, ch 
 
 	// Fallback done sentinel in case the stream ended without a done:true line.
 	ch <- StreamEvent{Type: "done"}
+}
+
+// ExecuteAgent runs an agentic tool-use loop via the Ollama /api/chat endpoint.
+// Models with NativeTools support use the structured "tools" API field.
+// Models without native tool support use the pseudo-tool text loop, where the
+// model emits <tool_call> markers and the backend executes them.
+func (p *OllamaProvider) ExecuteAgent(ctx context.Context, req AgentRequest) (<-chan StreamEvent, error) {
+	if req.Model == "" {
+		return nil, fmt.Errorf("ollama execute-agent: model must not be empty")
+	}
+	ch := make(chan StreamEvent, 64)
+	go func() {
+		defer close(ch)
+		runOllamaAgentLoop(ctx, p, req, ch)
+	}()
+	return ch, nil
+}
+
+// ollamaAgentToolCall is a tool call entry in an Ollama agentic response.
+type ollamaAgentToolCall struct {
+	Function struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	} `json:"function"`
+}
+
+// ollamaAgentMsg is a message in the Ollama agentic conversation.
+type ollamaAgentMsg struct {
+	Role      string                `json:"role"`
+	Content   string                `json:"content"`
+	ToolCalls []ollamaAgentToolCall `json:"tool_calls,omitempty"`
+}
+
+// ollamaAgentResp is the non-streaming response from POST /api/chat.
+type ollamaAgentResp struct {
+	Message ollamaAgentMsg `json:"message"`
+	Done    bool           `json:"done"`
+	Error   string         `json:"error,omitempty"`
+}
+
+// runOllamaAgentLoop is the Ollama agentic loop.
+// It branches on model capabilities: models with NativeTools use the structured
+// tool_calls API; all others use the pseudo-tool text fallback.
+func runOllamaAgentLoop(ctx context.Context, p *OllamaProvider, req AgentRequest, ch chan<- StreamEvent) {
+	caps := ollamaModelCaps(req.Model)
+	executor := &ToolExecutor{ProjectDir: req.ProjectDir}
+	msgs := ollamaInitMessages(req, caps)
+	toolSchemas := ollamaBuildToolSchemas(req.Tools, caps)
+	apiURL := fmt.Sprintf("%s/api/chat", p.baseURL)
+
+	usePseudoTools := !caps.NativeTools && len(req.Tools) > 0
+	var cont bool
+	var err error
+
+	for iter := 0; iter < maxAgentIterations; iter++ {
+		if ctx.Err() != nil {
+			ch <- StreamEvent{Type: "error", Content: ctx.Err().Error()}
+			return
+		}
+
+		var apiResp ollamaAgentResp
+		apiResp, err = p.ollamaAgentPost(ctx, apiURL, req.Model, msgs, toolSchemas)
+		if err != nil {
+			ch <- StreamEvent{Type: "error", Content: err.Error()}
+			return
+		}
+
+		msgs, cont, err = ollamaDispatchTools(ctx, executor, usePseudoTools, msgs, apiResp, toolSchemas, ch)
+		if err != nil {
+			ch <- StreamEvent{Type: "error", Content: err.Error()}
+			return
+		}
+		if cont {
+			continue
+		}
+
+		if apiResp.Message.Content != "" {
+			ch <- StreamEvent{Type: "chunk", Content: apiResp.Message.Content}
+		}
+		ch <- StreamEvent{Type: "done", Content: apiResp.Message.Content}
+		return
+	}
+	ch <- StreamEvent{Type: "error", Content: "ollama execute-agent: max iterations reached"}
+}
+
+// ollamaDispatchTools routes a model response to the native-tool or pseudo-tool
+// handler and returns the updated message history and whether the loop should continue.
+func ollamaDispatchTools(ctx context.Context, executor *ToolExecutor, usePseudoTools bool, msgs []ollamaAgentMsg, apiResp ollamaAgentResp, toolSchemas []map[string]any, ch chan<- StreamEvent) ([]ollamaAgentMsg, bool, error) {
+	if len(toolSchemas) > 0 {
+		return runNativeToolCalls(ctx, executor, msgs, apiResp, toolSchemas, ch)
+	}
+	if usePseudoTools {
+		updated, found := runPseudoToolCall(ctx, executor, msgs, apiResp.Message.Content, ch)
+		return updated, found, nil
+	}
+	return msgs, false, nil
+}
+
+// ollamaInitMessages builds the initial message slice for the agent loop,
+// applying prompt wrapping and pseudo-tool augmentation as needed.
+func ollamaInitMessages(req AgentRequest, caps OllamaModelCaps) []ollamaAgentMsg {
+	systemPrompt := ollamaWrapSystemPrompt(req.SystemPrompt, caps)
+	if !caps.NativeTools && len(req.Tools) > 0 {
+		systemPrompt = buildPseudoToolSystemPrompt(systemPrompt, req.Tools)
+	}
+	return []ollamaAgentMsg{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: req.UserMessage},
+	}
+}
+
+// ollamaBuildToolSchemas converts the tool list to LLM schemas for native-tool models.
+// Returns nil for pseudo-tool models so the "tools" key is omitted from the request.
+func ollamaBuildToolSchemas(tools []AgentTool, caps OllamaModelCaps) []map[string]any {
+	if !caps.NativeTools {
+		return nil
+	}
+	schemas := make([]map[string]any, len(tools))
+	for i, t := range tools {
+		schemas[i] = ToolSchemaForLLM(t)
+	}
+	return schemas
+}
+
+// ollamaAgentPost sends one non-streaming request to /api/chat and returns the decoded response.
+func (p *OllamaProvider) ollamaAgentPost(ctx context.Context, apiURL, model string, msgs []ollamaAgentMsg, toolSchemas []map[string]any) (ollamaAgentResp, error) {
+	body := map[string]any{
+		"model":    model,
+		"messages": msgs,
+		"stream":   false,
+	}
+	if len(toolSchemas) > 0 {
+		body["tools"] = toolSchemas
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return ollamaAgentResp{}, fmt.Errorf("ollama execute-agent: marshal: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return ollamaAgentResp{}, fmt.Errorf("ollama execute-agent: create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.httpClient.Do(httpReq)
+	if err != nil {
+		return ollamaAgentResp{}, fmt.Errorf("ollama execute-agent: request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return ollamaAgentResp{}, fmt.Errorf("ollama execute-agent: HTTP %d: %s", resp.StatusCode, string(errBody))
+	}
+
+	var apiResp ollamaAgentResp
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return ollamaAgentResp{}, fmt.Errorf("ollama execute-agent: decode: %w", err)
+	}
+	if apiResp.Error != "" {
+		return ollamaAgentResp{}, fmt.Errorf("ollama execute-agent: %s", apiResp.Error)
+	}
+	return apiResp, nil
+}
+
+// runNativeToolCalls handles tool_calls from a native-tool model response.
+// Returns the updated message slice, whether the loop should continue, and any error.
+func runNativeToolCalls(ctx context.Context, executor *ToolExecutor, msgs []ollamaAgentMsg, apiResp ollamaAgentResp, toolSchemas []map[string]any, ch chan<- StreamEvent) ([]ollamaAgentMsg, bool, error) {
+	if len(apiResp.Message.ToolCalls) == 0 {
+		if len(toolSchemas) > 0 && apiResp.Message.Content == "" {
+			return msgs, false, fmt.Errorf("ollama: model does not support tool use; switch to a tool-capable model")
+		}
+		return msgs, false, nil
+	}
+
+	msgs = append(msgs, apiResp.Message)
+	for _, tc := range apiResp.Message.ToolCalls {
+		name := tc.Function.Name
+		ch <- StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] executing...", name)}
+		output := executeTool(ctx, executor, name, tc.Function.Arguments)
+		ch <- StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] done", name)}
+		msgs = append(msgs, ollamaAgentMsg{Role: "tool", Content: output})
+	}
+	return msgs, true, nil
+}
+
+// runPseudoToolCall checks for a <tool_call> marker in content, executes it, and
+// injects the result as a user message. Returns updated msgs and whether a call was found.
+func runPseudoToolCall(ctx context.Context, executor *ToolExecutor, msgs []ollamaAgentMsg, content string, ch chan<- StreamEvent) ([]ollamaAgentMsg, bool) {
+	name, args, found := parsePseudoToolCall(content)
+	if !found {
+		return msgs, false
+	}
+	ch <- StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] executing...", name)}
+	output := executeTool(ctx, executor, name, args)
+	ch <- StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] done", name)}
+	msgs = append(msgs, ollamaAgentMsg{Role: "assistant", Content: content})
+	result := fmt.Sprintf("<tool_result tool=%q>\n%s\n</tool_result>", name, output)
+	msgs = append(msgs, ollamaAgentMsg{Role: "user", Content: result})
+	return msgs, true
+}
+
+// executeTool runs a single tool and merges any error into the output string.
+func executeTool(ctx context.Context, executor *ToolExecutor, name string, args map[string]any) string {
+	output, err := executor.Execute(ctx, name, args)
+	if err != nil {
+		return fmt.Sprintf("error: %v\n%s", err, output)
+	}
+	return output
+}
+
+// ── Pseudo-tool helpers ───────────────────────────────────────────────────────
+
+// pseudoToolCallOpen and Close are the markers used in the text-based tool protocol.
+const (
+	pseudoToolCallOpen  = "<tool_call>"
+	pseudoToolCallClose = "</tool_call>"
+)
+
+// parsePseudoToolCall searches text for the first <tool_call>...</tool_call>
+// marker and parses the JSON payload within it.
+// Returns the tool name, args map, and whether a valid call was found.
+// Malformed JSON inside a marker is treated as "not found" to prevent infinite loops.
+func parsePseudoToolCall(text string) (name string, args map[string]any, found bool) {
+	start := strings.Index(text, pseudoToolCallOpen)
+	if start < 0 {
+		return "", nil, false
+	}
+	inner := text[start+len(pseudoToolCallOpen):]
+	end := strings.Index(inner, pseudoToolCallClose)
+	if end < 0 {
+		return "", nil, false
+	}
+	payload := strings.TrimSpace(inner[:end])
+
+	var call struct {
+		Tool string         `json:"tool"`
+		Args map[string]any `json:"args"`
+	}
+	if err := json.Unmarshal([]byte(payload), &call); err != nil {
+		return "", nil, false
+	}
+	if call.Tool == "" {
+		return "", nil, false
+	}
+	return call.Tool, call.Args, true
+}
+
+// buildPseudoToolSystemPrompt appends a plain-text tool manifest to basePrompt.
+// This is called for models that do not support the native "tools" API field.
+// The manifest teaches the model how to express tool calls in text form.
+func buildPseudoToolSystemPrompt(basePrompt string, tools []AgentTool) string {
+	var sb strings.Builder
+	sb.WriteString(basePrompt)
+	sb.WriteString("\n\n## Available Tools\n\n")
+	sb.WriteString("You may invoke tools by writing a tool_call block in your response.\n")
+	sb.WriteString("Use this exact format (one block per tool call, on its own line):\n\n")
+	sb.WriteString("<tool_call>{\"tool\": \"ToolName\", \"args\": {\"param\": \"value\"}}</tool_call>\n\n")
+	sb.WriteString("Rules:\n")
+	sb.WriteString("- Emit exactly one <tool_call> block per invocation.\n")
+	sb.WriteString("- Wait for the <tool_result> before calling the next tool.\n")
+	sb.WriteString("- When you have all the information you need, respond normally without any <tool_call> block.\n")
+	sb.WriteString("- Only use the tools listed below. Unknown tool names will return an error.\n\n")
+	sb.WriteString("### Tool Reference\n\n")
+	for _, t := range tools {
+		sb.WriteString(pseudoToolDescription(t))
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// pseudoToolDescription renders a single tool as a compact plain-text description
+// for inclusion in the pseudo-tool system prompt.
+func pseudoToolDescription(t AgentTool) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("**%s** — %s\n", t.Name, t.Description))
+	props, ok := t.InputSchema["properties"].(map[string]any)
+	if !ok {
+		return sb.String()
+	}
+	required := extractRequiredSet(t.InputSchema)
+	for name, def := range props {
+		sb.WriteString(renderPropLine(name, def, required[name]))
+	}
+	return sb.String()
+}
+
+// extractRequiredSet returns the set of required property names from a JSON Schema object.
+// Handles both []string and []any (the latter from JSON unmarshalling into map[string]any).
+func extractRequiredSet(schema map[string]any) map[string]bool {
+	required := map[string]bool{}
+	switch v := schema["required"].(type) {
+	case []string:
+		for _, r := range v {
+			required[r] = true
+		}
+	case []any:
+		for _, r := range v {
+			if s, ok := r.(string); ok {
+				required[s] = true
+			}
+		}
+	}
+	return required
+}
+
+// renderPropLine formats one property entry for the pseudo-tool manifest.
+func renderPropLine(name string, def any, isRequired bool) string {
+	propMap, ok := def.(map[string]any)
+	if !ok {
+		return ""
+	}
+	typ, _ := propMap["type"].(string)
+	desc, _ := propMap["description"].(string)
+	req := ""
+	if isRequired {
+		req = " (required)"
+	}
+	if desc != "" {
+		return fmt.Sprintf("  - %s: %s%s — %s\n", name, typ, req, desc)
+	}
+	return fmt.Sprintf("  - %s: %s%s\n", name, typ, req)
 }
 
 // fetchModels calls GET /api/tags and returns the list of locally available

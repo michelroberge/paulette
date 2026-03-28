@@ -353,7 +353,7 @@ Analyze the codebase and produce a System Architecture document describing what 
 %s
 
 When ready, produce the architecture document using this format:
-<response>
+<!-- RESPONSE:START -->
 <artifact>
 # System Architecture: {Product Name}
 
@@ -372,7 +372,7 @@ Describe the data structures and their relationships.
 ## Infrastructure
 Note any deployment, CI/CD, or infrastructure patterns observed.
 </artifact>
-</response>
+<!-- RESPONSE:END -->
 
 Always wrap the document in exactly those tags. Be thorough — document what actually exists, not what should exist.`, digest, buildArchIDNote(version))
 }
@@ -395,7 +395,7 @@ Analyze the codebase (especially routes, pages, screens, UI components) and prod
 %s
 
 When ready, produce the UX document using this format:
-<response>
+<!-- RESPONSE:START -->
 <artifact>
 # UX Design: {Product Name}
 
@@ -411,7 +411,7 @@ How do users navigate between screens?
 ## Interaction Patterns
 What UI patterns and interactions are used?
 </artifact>
-</response>
+<!-- RESPONSE:END -->
 
 Always wrap the document in exactly those tags. Document what actually exists in the code.`, digest, archContent, buildJourneyIDNote(version))
 }
@@ -434,11 +434,11 @@ Update the architecture document to add journey cross-references (JRN-v%s-NNN) t
 %s
 
 Produce the COMPLETE updated architecture document using this format:
-<response>
+<!-- RESPONSE:START -->
 <artifact>
 {complete updated architecture document with journey cross-references}
 </artifact>
-</response>
+<!-- RESPONSE:END -->
 
 Always wrap the document in exactly those tags.`, archContent, uxContent, version, buildArchIDNote(version))
 }
@@ -459,7 +459,7 @@ Here is the UX analysis:
 Based on these analyses, synthesize a Product Vision document that captures what this product is, who it's for, and what it does.
 
 When ready, produce the vision document using this format:
-<response>
+<!-- RESPONSE:START -->
 <artifact>
 # Product Vision: %s
 
@@ -484,7 +484,7 @@ Technical, business, or other constraints observed.
 ## Out of Scope (V1)
 What is explicitly not included in the current version.
 </artifact>
-</response>
+<!-- RESPONSE:END -->
 
 Always wrap the document in exactly those tags. Infer the vision from what the code actually does.`, archContent, uxContent, projectName)
 }

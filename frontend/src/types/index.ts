@@ -233,3 +233,38 @@ export interface SkillSuggestion {
 export interface SkillSuggestions {
   suggestions: SkillSuggestion[];
 }
+
+export interface VersionListEntry {
+  version: string;
+  iteration?: number;
+  commitHash?: string;
+  tagName?: string;
+  approvedAt?: string;
+  hasMeta: boolean;
+}
+
+export interface VersionStageSnapshot {
+  artifact: string;
+  chatHistory?: ChatHistory | null;
+  mockHtml?: string;
+  beadsGraph?: BeadGraph | null;
+}
+
+export interface VersionSnapshot {
+  version: string;
+  meta?: {
+    version: string;
+    iteration: number;
+    commitHash: string;
+    tagName: string;
+    approvedAt: string;
+  } | null;
+  summary: string;
+  stages: Partial<Record<StageName, VersionStageSnapshot>>;
+}
+
+export interface VersionBeadDetail {
+  beadId: string;
+  executionContent: string;
+  chatMessages: Message[];
+}

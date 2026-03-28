@@ -95,3 +95,12 @@ func (p *LMStudioProvider) ListModels(ctx context.Context) ([]ModelInfo, error) 
 	}
 	return models, nil
 }
+
+// ExecuteAgent runs an agentic tool-use loop via the LM Studio Chat Completions API.
+func (p *LMStudioProvider) ExecuteAgent(ctx context.Context, req AgentRequest) (<-chan StreamEvent, error) {
+	ch, err := openAICompatExecuteAgent(ctx, p.httpClient, p.baseURL, nil, req)
+	if err != nil {
+		return nil, fmt.Errorf("lmstudio: %w", err)
+	}
+	return ch, nil
+}

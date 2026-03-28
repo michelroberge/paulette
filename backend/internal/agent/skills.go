@@ -12,6 +12,24 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
+const (
+	existingSkillsHeader = "## Existing Skills\n"
+	existingSkillsNone   = "(none)\n"
+	existingSkillsFmt    = "- %s (%s): %s [tags: %s]\n"
+)
+
+// writeExistingSkills appends the "## Existing Skills" block to b.
+func writeExistingSkills(b *strings.Builder, skills []model.Skill) {
+	b.WriteString(existingSkillsHeader)
+	if len(skills) == 0 {
+		b.WriteString(existingSkillsNone)
+		return
+	}
+	for _, s := range skills {
+		fmt.Fprintf(b, existingSkillsFmt, s.Name, s.Category, s.Description, strings.Join(s.Tags, ", "))
+	}
+}
+
 const skillAnalysisSystemPrompt = `You are a senior software architect analyzing a build plan and architecture to identify reusable patterns that can become "skills" — parameterized prompt templates for code generation.
 
 A skill is a repeatable pattern that appears across multiple tasks in this build plan, or that is commonly needed across software projects. Examples:
@@ -77,6 +95,22 @@ OUTPUT FORMAT: Return a JSON array wrapped in delimiters:
 <!-- SKILLS:END -->`
 
 // AnalyzeSkills calls Claude to analyze a build plan for reusable skill patterns.
+// BuildAnalyzeSkillsRequest returns the system prompt and user message for skill analysis.
+// Used by non-CLI providers that call provider.Chat directly.
+func BuildAnalyzeSkillsRequest(buildPlan, archContent string, existingSkills []model.Skill) (systemPrompt, userMsg string) {
+	var prompt strings.Builder
+	prompt.WriteString("## Build Plan\n---\n")
+	prompt.WriteString(buildPlan)
+	prompt.WriteString("\n---\n\n")
+	if archContent != "" {
+		prompt.WriteString("## Architecture\n---\n")
+		prompt.WriteString(archContent)
+		prompt.WriteString("\n---\n\n")
+	}
+	writeExistingSkills(&prompt, existingSkills)
+	return skillAnalysisSystemPrompt, prompt.String()
+}
+
 func AnalyzeSkills(ctx context.Context, buildPlan, archContent string, existingSkills []model.Skill) (<-chan StreamEvent, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 
@@ -91,16 +125,29 @@ func AnalyzeSkills(ctx context.Context, buildPlan, archContent string, existingS
 		prompt.WriteString("\n---\n\n")
 	}
 
-	prompt.WriteString("## Existing Skills\n")
-	if len(existingSkills) == 0 {
-		prompt.WriteString("(none)\n")
-	} else {
-		for _, s := range existingSkills {
-			prompt.WriteString(fmt.Sprintf("- %s (%s): %s [tags: %s]\n", s.Name, s.Category, s.Description, strings.Join(s.Tags, ", ")))
-		}
-	}
+	writeExistingSkills(&prompt, existingSkills)
 
 	return runSkillAgent(ctx, cancel, skillAnalysisSystemPrompt, prompt.String())
+}
+
+// BuildObserveBeadsRequest returns the system prompt and user message for bead observer analysis.
+// Used by non-CLI providers that call provider.Chat directly.
+func BuildObserveBeadsRequest(beads []ObservedBead, existingSkills []model.Skill) (systemPrompt, userMsg string) {
+	var prompt strings.Builder
+	prompt.WriteString("## Completed Bead Outputs\n\n")
+	for _, b := range beads {
+		prompt.WriteString(fmt.Sprintf("### Bead: %s (ID: %s)\n", b.Title, b.ID))
+		prompt.WriteString(fmt.Sprintf("Tags: %s\n", strings.Join(b.Tags, ", ")))
+		if b.PromptUsed != "" {
+			prompt.WriteString(fmt.Sprintf("Prompt used:\n```\n%s\n```\n", truncate(b.PromptUsed, 1000)))
+		}
+		if b.CodeOutput != "" {
+			prompt.WriteString(fmt.Sprintf("Generated code (summary):\n```\n%s\n```\n", truncate(b.CodeOutput, 2000)))
+		}
+		prompt.WriteString("\n")
+	}
+	writeExistingSkills(&prompt, existingSkills)
+	return skillObserverSystemPrompt, prompt.String()
 }
 
 // ObserveBeads calls Claude to analyze completed bead outputs for emergent patterns.
@@ -121,14 +168,7 @@ func ObserveBeads(ctx context.Context, beads []ObservedBead, existingSkills []mo
 		prompt.WriteString("\n")
 	}
 
-	prompt.WriteString("## Existing Skills\n")
-	if len(existingSkills) == 0 {
-		prompt.WriteString("(none)\n")
-	} else {
-		for _, s := range existingSkills {
-			prompt.WriteString(fmt.Sprintf("- %s (%s): %s [tags: %s]\n", s.Name, s.Category, s.Description, strings.Join(s.Tags, ", ")))
-		}
-	}
+	writeExistingSkills(&prompt, existingSkills)
 
 	return runSkillAgent(ctx, cancel, skillObserverSystemPrompt, prompt.String())
 }
@@ -174,44 +214,32 @@ func runSkillAgent(ctx context.Context, cancel context.CancelFunc, systemPrompt,
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line == "" {
-				continue
-			}
-			var event claudeEvent
-			if err := json.Unmarshal([]byte(line), &event); err != nil {
-				continue
-			}
-			switch event.Type {
-			case "assistant":
-				if event.Message != nil {
-					for _, c := range event.Message.Content {
-						if c.Type == "text" && c.Text != "" {
-							fullText.WriteString(c.Text)
-							ch <- StreamEvent{Type: "chunk", Content: c.Text}
-						}
-					}
-				}
-			case "result":
-				if event.Usage != nil {
-					total := event.Usage.InputTokens + event.Usage.OutputTokens
-					ch <- StreamEvent{Type: "tokens", Content: fmt.Sprintf("%d", total)}
-				}
-				if fullText.Len() == 0 && event.Result != "" {
-					fullText.WriteString(event.Result)
-					ch <- StreamEvent{Type: "chunk", Content: event.Result}
-				}
-			}
-		}
-
+		processStreamEvents(scanner, &fullText, ch, streamOptions{tokenField: "content"})
 		ch <- StreamEvent{Type: "done", Content: fullText.String()}
 	}()
 
 	return ch, nil
 }
 
+// skillSuggestionSchema is the JSON Schema for []model.SkillSuggestion.
+var skillSuggestionSchema = []byte(`{
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["name", "description", "promptTemplate"],
+    "properties": {
+      "name":           {"type": "string"},
+      "description":    {"type": "string"},
+      "category":       {"type": "string"},
+      "tags":           {"type": "array"},
+      "parameters":     {"type": "array"},
+      "promptTemplate": {"type": "string"}
+    }
+  }
+}`)
+
 // ExtractSkillSuggestions parses the <!-- SKILLS:START -->...<!-- SKILLS:END --> JSON block.
+// Applies repairJSON and schema validation before unmarshalling; returns nil, false on any failure.
 func ExtractSkillSuggestions(text string) ([]model.SkillSuggestion, bool) {
 	const start = "<!-- SKILLS:START -->"
 	const end = "<!-- SKILLS:END -->"
@@ -222,9 +250,14 @@ func ExtractSkillSuggestions(text string) ([]model.SkillSuggestion, bool) {
 		return nil, false
 	}
 
-	jsonStr := strings.TrimSpace(text[si+len(start) : ei])
+	raw := []byte(strings.TrimSpace(text[si+len(start) : ei]))
+	raw = repairJSON(raw)
+	if validateJSON(raw, skillSuggestionSchema) != nil {
+		return nil, false
+	}
+
 	var suggestions []model.SkillSuggestion
-	if err := json.Unmarshal([]byte(jsonStr), &suggestions); err != nil {
+	if err := json.Unmarshal(raw, &suggestions); err != nil {
 		return nil, false
 	}
 	return suggestions, true

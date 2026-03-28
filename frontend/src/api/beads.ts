@@ -147,11 +147,25 @@ export function updateBead(projectId: string, beadId: string, updates: { descrip
   });
 }
 
-export function controlBead(projectId: string, beadId: string, action: 'pause' | 'restart' | 'close'): Promise<void> {
+export function controlBead(projectId: string, beadId: string, action: 'pause' | 'restart' | 'close' | 'cancel'): Promise<void> {
   return apiFetch(`/projects/${projectId}/stages/build/beads/${beadId}/control`, {
     method: 'POST',
     body: JSON.stringify({ action }),
   });
+}
+
+export function executeSingleBead(
+  projectId: string,
+  beadId: string,
+  onEvent: (event: BuildStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return streamBeads(
+    apiStreamUrl(`/projects/${projectId}/stages/build/beads/${beadId}/execute`),
+    {},
+    onEvent,
+    signal,
+  );
 }
 
 export function sendBeadChat(
