@@ -329,9 +329,11 @@ func (h *AuthHandler) exchangeToken(sess *pkceSession, code string) error {
 	form.Set("code_verifier", sess.codeVerifier)
 	form.Set("redirect_uri", claudeRedirectURI)
 
+	formEncoded := form.Encode()
 	fmt.Printf("[auth] exchangeToken: POST %s code=%q\n", claudeTokenURL, code)
+	fmt.Printf("[auth] exchangeToken: content-type=application/x-www-form-urlencoded body=%s\n", formEncoded)
 
-	req, err := http.NewRequest(http.MethodPost, claudeTokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, claudeTokenURL, strings.NewReader(formEncoded))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
