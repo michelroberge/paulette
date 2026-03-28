@@ -322,20 +322,25 @@ func (h *AuthHandler) LoginInput(w http.ResponseWriter, r *http.Request) {
 // exchangeToken POSTs to the Claude OAuth token endpoint and writes the
 // resulting credentials to ~/.claude/.credentials.json.
 func (h *AuthHandler) exchangeToken(sess *pkceSession, code string) error {
-	form := url.Values{}
-	form.Set("grant_type", "authorization_code")
-	form.Set("client_id", claudeClientID)
-	form.Set("code", code)
-	form.Set("code_verifier", sess.codeVerifier)
-	form.Set("redirect_uri", claudeRedirectURI)
+	payload := map[string]string{
+		"grant_type":    "authorization_code",
+		"client_id":     claudeClientID,
+		"code":          code,
+		"code_verifier": sess.codeVerifier,
+		"redirect_uri":  claudeRedirectURI,
+	}
+	bodyBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
 
 	fmt.Printf("[auth] exchangeToken: POST %s code=%q\n", claudeTokenURL, code)
 
-	req, err := http.NewRequest(http.MethodPost, claudeTokenURL, strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, claudeTokenURL, strings.NewReader(string(bodyBytes)))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set(headerContentType, "application/x-www-form-urlencoded")
+	req.Header.Set(headerContentType, contentTypeJSON)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
