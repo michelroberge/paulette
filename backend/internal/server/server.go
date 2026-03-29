@@ -2,6 +2,7 @@ package server
 
 import (
 	"io/fs"
+	"log"
 	"net/http"
 	"strings"
 
@@ -78,6 +79,11 @@ func (s *Server) Router() http.Handler {
 	r.Use(func(next http.Handler) http.Handler {
 		logger := middleware.Logger(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Log mutating requests immediately on arrival so streaming
+			// endpoints (SSE) show up in logs before the response completes.
+			if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+				log.Printf("[%s] %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+			}
 			if r.URL.Path == "/api/projects/activity" {
 				next.ServeHTTP(w, r)
 				return

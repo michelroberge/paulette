@@ -970,7 +970,13 @@ func ensureBdInitRun(ctx context.Context, hostDir string, run *stream.Run) error
 	}
 	out, err := runBd(ctx, hostDir, "status")
 	if err != nil {
-		return fmt.Errorf("bd status: %w\n%s", err, out)
+		run.Emit(agent.StreamEvent{Type: "log", Content: "bd status failed, re-initializing: " + strings.TrimSpace(out)})
+		out2, err2 := runBd(ctx, hostDir, "init", "--force")
+		if err2 != nil {
+			return fmt.Errorf("bd init (recovery): %w\n%s", err2, out2)
+		}
+		run.Emit(agent.StreamEvent{Type: "log", Content: "bd re-initialized: " + strings.TrimSpace(out2)})
+		return nil
 	}
 	run.Emit(agent.StreamEvent{Type: "log", Content: "bd ready: " + strings.TrimSpace(out)})
 	return nil
