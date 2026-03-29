@@ -22,10 +22,10 @@ const (
 	contentTypeSSE    = "text/event-stream"
 
 	claudeClientID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	claudeTokenURL    = "https://platform.claude.com/v1/oauth/token"
-	claudeRedirectURI = "https://platform.claude.com/oauth/code/callback"
+	claudeTokenURL    = "https://console.anthropic.com/v1/oauth/token"
+	claudeRedirectURI = "https://console.anthropic.com/oauth/code/callback"
 	claudeAuthBase    = "https://claude.ai/oauth/authorize"
-	claudeScope       = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+	claudeScope       = "org:create_api_key user:profile user:inference"
 )
 
 // pkceSession holds an in-progress OAuth PKCE login flow.
@@ -47,26 +47,23 @@ func newPKCESession() (*pkceSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	state, err := randomBase64URL(32)
-	if err != nil {
-		return nil, err
-	}
 	challenge := pkceChallenge(verifier)
 
+	// Per Anthropic's OAuth flow the PKCE verifier is passed as the state
+	// parameter so it can be recovered from the callback.
 	params := url.Values{}
-	params.Set("code", "true") // signals headless / manual-redirect flow
-	params.Set("client_id", claudeClientID)
 	params.Set("response_type", "code")
+	params.Set("client_id", claudeClientID)
 	params.Set("redirect_uri", claudeRedirectURI)
 	params.Set("scope", claudeScope)
 	params.Set("code_challenge", challenge)
 	params.Set("code_challenge_method", "S256")
-	params.Set("state", state)
+	params.Set("state", verifier)
 
 	return &pkceSession{
 		authURL:      claudeAuthBase + "?" + params.Encode(),
 		codeVerifier: verifier,
-		state:        state,
+		state:        verifier, // state == verifier in this flow
 		ch:           make(chan struct{}),
 	}, nil
 }
