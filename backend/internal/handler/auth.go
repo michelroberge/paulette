@@ -192,6 +192,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.mu.Lock()
+	if h.session != nil {
+		h.session.mu.Lock()
+		finished := h.session.done
+		h.session.mu.Unlock()
+		if finished {
+			h.session = nil // discard finished session so a fresh one is created
+			fmt.Printf("[auth] discarding finished session\n")
+		}
+	}
 	if h.session == nil {
 		sess, err := newPKCESession()
 		if err != nil {
