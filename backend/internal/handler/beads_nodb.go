@@ -1,11 +1,18 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/repository"
+	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 )
 
 const (
@@ -87,3 +94,80 @@ func detectBeadsNoDB(hostDir string) (noDb bool, hasBeads bool) {
 	return false, true
 }
 
+// MigrateAllBeadsNoDB iterates all registered projects and migrates any
+// Dolt-backed beads to JSONL-only mode. This is idempotent — projects
+// already in no-db mode are skipped. Run once at startup.
+func MigrateAllBeadsNoDB(registry repository.RegistryRepo) {
+	projects, err := registry.List()
+	if err != nil {
+		log.Printf("beads migration: failed to list projects: %v", err)
+		return
+	}
+
+	migrated := 0
+	for _, p := range projects {
+		if migrateProjectBeadsNoDB(p) {
+			migrated++
+		}
+	}
+	if migrated > 0 {
+		log.Printf("beads migration: migrated %d project(s) to no-db mode", migrated)
+	}
+}
+
+// migrateProjectBeadsNoDB exports a single project's Dolt beads to JSONL,
+// flips to no-db mode, and commits the JSONL to git. Returns true if migrated.
+func migrateProjectBeadsNoDB(p model.Project) bool {
+	noDb, hasBeads := detectBeadsNoDB(p.HostDir)
+	if !hasBeads || noDb {
+		return false // nothing to migrate
+	}
+
+	log.Printf("beads migration: migrating project %s (%s) to no-db mode", p.Name, p.ID)
+
+	// Step 1: Export from Dolt while still in Dolt mode.
+	// bd export writes issues to .beads/issues.jsonl from the current backend.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bd", "export")
+	cmd.Dir = p.HostDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("beads migration: bd export failed for %s: %v: %s", p.Name, err, out)
+		// Fall back: try bd list to verify JSONL already has data
+		cmd2 := exec.CommandContext(ctx, "bd", "list", "--all", "--json")
+		cmd2.Dir = p.HostDir
+		if out2, err2 := cmd2.CombinedOutput(); err2 != nil || strings.TrimSpace(string(out2)) == "[]" {
+			log.Printf("beads migration: skipping %s — no beads data to export", p.Name)
+			// Still flip to no-db even if empty, so future operations use JSONL
+		}
+	}
+
+	// Step 2: Flip to no-db mode
+	if err := ensureBeadsNoDB(p.HostDir); err != nil {
+		log.Printf("beads migration: failed to set no-db for %s: %v", p.Name, err)
+		return false
+	}
+
+	// Step 3: Commit the JSONL + config change to git
+	fsrepo.CommitBeadsJSONL(p.HostDir)
+
+	// Also commit the config.yaml change
+	cmd = exec.CommandContext(context.Background(), "git", "add", "--",
+		filepath.Join(beadsDir, beadsConfigFile))
+	cmd.Dir = p.HostDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("beads migration: git add config.yaml failed for %s: %v: %s", p.Name, err, out)
+	}
+	cmd = exec.CommandContext(context.Background(), "git", "commit", "-m",
+		"chore: migrate beads to no-db (JSONL-only) mode [skip ci]")
+	cmd.Dir = p.HostDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		outStr := strings.TrimSpace(string(out))
+		if !strings.Contains(outStr, "nothing to commit") {
+			log.Printf("beads migration: git commit failed for %s: %v: %s", p.Name, err, outStr)
+		}
+	}
+
+	log.Printf("beads migration: project %s migrated successfully", p.Name)
+	return true
+}

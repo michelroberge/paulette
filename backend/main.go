@@ -15,6 +15,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/cli"
 	"github.com/michelroberge/paulette/backend/internal/config"
+	"github.com/michelroberge/paulette/backend/internal/handler"
 	"github.com/michelroberge/paulette/backend/internal/provider"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/server"
@@ -75,6 +76,9 @@ func main() {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
+
+	// Migrate existing projects from Dolt-backed beads to JSONL-only mode
+	go handler.MigrateAllBeadsNoDB(registry)
 
 	// Resume autonomous pipelines for any projects that were running before restart
 	go srv.Orchestrator().StartAll()
