@@ -42,7 +42,9 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh && \
     useradd -m -s /bin/bash paulette && \
     mkdir -p /home/paulette/.paulette /home/paulette/repos \
-             /home/paulette/.claude && \
+             /home/paulette/.claude \
+             /home/paulette/.config/bd && \
+    printf 'no-db: true\n' > /home/paulette/.config/bd/config.yaml && \
     printf '%s' \
         '{"permissions":{"allow":[' \
         '"Write(/home/paulette/repos/**)",' \
@@ -53,7 +55,8 @@ RUN chmod +x /entrypoint.sh && \
         > /home/paulette/.claude/settings.json && \
     chown -R paulette:paulette /home/paulette/.paulette \
                                /home/paulette/repos \
-                               /home/paulette/.claude && \
+                               /home/paulette/.claude \
+                               /home/paulette/.config && \
     # Trust all directories (needed for volume-mounted repos from the host OS)
     su paulette -c "git config --global --add safe.directory '*'"
 

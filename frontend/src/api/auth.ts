@@ -1,5 +1,23 @@
 import { apiFetch, apiStreamUrl } from './client';
 
+export interface OIDCUser {
+  sub: string;
+  email: string;
+  name: string;
+}
+
+export function getOIDCUser(): Promise<OIDCUser> {
+  return apiFetch<OIDCUser>('/auth/oidc/me');
+}
+
+export function oidcLogout(): void {
+  globalThis.location.href = '/api/auth/oidc/logout';
+}
+
+export function redirectToOIDCLogin(): void {
+  globalThis.location.href = '/api/auth/oidc/login';
+}
+
 export interface AuthStatus {
   authenticated: boolean;
   account?: string;

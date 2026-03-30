@@ -9,6 +9,7 @@ import type { Project, StageName, VersionSnapshot, VersionBeadDetail, Bead } fro
 const STAGE_LABELS: Record<StageName, string> = {
   vision: 'Vision',
   ux: 'UX Design',
+  ui: 'UI Framework',
   architecture: 'Architecture',
   build: 'Build',
   complete: 'Complete',

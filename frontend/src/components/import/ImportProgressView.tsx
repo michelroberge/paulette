@@ -11,6 +11,7 @@ interface ImportStreamEvent {
 const STEPS = [
   { key: 'architecture', label: 'Architecture' },
   { key: 'ux', label: 'UX Design' },
+  { key: 'ui', label: 'UI Framework' },
   { key: 'crossref', label: 'Cross-references' },
   { key: 'vision', label: 'Vision' },
   { key: 'build', label: 'Build Plan' },

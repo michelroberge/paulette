@@ -4,8 +4,8 @@ import { listProjects, createProject, deleteProject } from '../../api/projects';
 import { importProject } from '../../api/import';
 import { getConfig } from '../../api/config';
 import { getProjectsActivity } from '../../api/activity';
-import { getAuthStatus, startLogin, logout, sendLoginCode } from '../../api/auth';
-import type { AuthStatus } from '../../api/auth';
+import { getAuthStatus, startLogin, logout, sendLoginCode, getOIDCUser, oidcLogout } from '../../api/auth';
+import type { AuthStatus, OIDCUser } from '../../api/auth';
 import { getGlobalIdentity } from '../../api/git';
 import type { GlobalGitIdentity } from '../../api/git';
 import { StageRobot } from '../layout/StageRobot';
@@ -76,6 +76,8 @@ export function ProjectList({ onSelect, onConfigure }: Props) {
   const [appAuthor, setAppAuthor] = useState('');
   const [activityCounts, setActivityCounts] = useState<Record<string, number>>({});
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [oidcEnabled, setOidcEnabled] = useState(false);
+  const [oidcUser, setOidcUser] = useState<OIDCUser | null>(null);
   const [gitIdentity, setGitIdentity] = useState<GlobalGitIdentity | null>(null);
   const [gitIdentityLoaded, setGitIdentityLoaded] = useState(false);
   const [showLoginPanel, setShowLoginPanel] = useState(false);
@@ -92,6 +94,10 @@ export function ProjectList({ onSelect, onConfigure }: Props) {
       setReposPath(c.reposPath);
       setAppVersion(c.version);
       setAppAuthor(c.author);
+      if (c.oidcEnabled) {
+        setOidcEnabled(true);
+        getOIDCUser().then(setOidcUser).catch(() => { /* not logged in — login page will show */ });
+      }
     }).catch(console.error);
     getAuthStatus().then(setAuthStatus).catch(console.error);
     getGlobalIdentity().then(id => { setGitIdentity(id); setGitIdentityLoaded(true); }).catch(() => setGitIdentityLoaded(true));
@@ -211,6 +217,53 @@ export function ProjectList({ onSelect, onConfigure }: Props) {
     handleLogout().then(handleStartLogin);
   };
 
+  // Show a login page when OIDC is enabled but user is not authenticated.
+  if (oidcEnabled && !oidcUser) {
+    return (
+      <div className="project-list">
+        <div className="paulette-banner">
+          <pre className="paulette-ascii">
+{"        ♥\n"}
+{"       ╱│╲\n"}
+{"    ┌──────────┐\n"}
+{"    │  ◠    ◠  │\n"}
+{"    │    ▽     │\n"}
+{"    │  ╰────╯  │\n"}
+{"    └─────┬────┘\n"}
+{"     "}
+<span className="bead bead-pink">●</span>
+<span className="bead bead-cyan">◉</span>
+<span className="bead bead-amber">●</span>
+<span className="bead bead-purple">◉</span>
+<span className="bead bead-green">●</span>
+<span className="bead bead-pink">◉</span>
+<span className="bead bead-cyan">●</span>
+<span className="bead bead-amber">◉</span>
+<span className="bead bead-purple">●</span>
+{"\n"}
+{"    ┌─────┴────┐\n"}
+{"    │  ░▓░▓░▓  │\n"}
+{"    │  ▓░▓░▓░  │\n"}
+{"    └──┬────┬──┘\n"}
+{"       │    │\n"}
+{"      ═╧═  ═╧═"}
+          </pre>
+          <div className="paulette-title-block">
+            <h1>paulette</h1>
+            <span className="paulette-subtitle">Claude's wannabe assistant</span>
+            <span className="paulette-version">{appVersion ? `v${appVersion}` : ''}</span>
+          </div>
+        </div>
+        <div className="oidc-login-prompt">
+          <p>Sign in to continue</p>
+          <button onClick={() => { globalThis.location.href = '/api/auth/oidc/login'; }}>
+            Sign in with SSO
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="project-list">
       <div className="paulette-banner">
@@ -254,6 +307,14 @@ export function ProjectList({ onSelect, onConfigure }: Props) {
           <span className="paulette-version">{appVersion ? `v${appVersion}` : ''}</span>
         </div>
       </div>
+
+      {oidcEnabled && oidcUser && (
+        <div className="auth-banner auth-ok">
+          <span className="auth-dot">●</span>
+          <span>OIDC: Signed in as {oidcUser.name || oidcUser.email}</span>
+          <button className="auth-action" onClick={() => oidcLogout()}>Sign Out</button>
+        </div>
+      )}
 
       {authStatus && (
         <div className={`auth-banner ${authStatus.authenticated ? 'auth-ok' : 'auth-warn'}`}>

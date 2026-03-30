@@ -21,11 +21,14 @@ const (
 	contentTypeJSON   = "application/json"
 	contentTypeSSE    = "text/event-stream"
 
-	claudeClientID    = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	claudeTokenURL    = "https://console.anthropic.com/v1/oauth/token"
-	claudeRedirectURI = "https://console.anthropic.com/oauth/code/callback"
+	claudeClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	claudeTokenURL = "https://console.anthropic.com/v1/oauth/token"
+	// claudeRedirectURI = "https://console.anthropic.com/oauth/code/callback"
+	// To do : read port from config and use it here
+	claudeRedirectURI = "http://localhost:8080/callback"
 	claudeAuthBase    = "https://claude.ai/oauth/authorize"
-	claudeScope       = "org:create_api_key user:profile user:inference"
+	// claudeScope       = "org:create_api_key user:profile user:inference"
+	claudeScope = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 )
 
 // pkceSession holds an in-progress OAuth PKCE login flow.
@@ -458,4 +461,83 @@ func randomBase64URL(n int) (string, error) {
 func pkceChallenge(verifier string) string {
 	h := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(h[:])
+}
+
+func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	errParam := r.URL.Query().Get("error")
+
+	fmt.Printf("[auth] Callback: code=%q state=%q error=%q\n", code, state, errParam)
+
+	h.mu.Lock()
+	sess := h.session
+	h.mu.Unlock()
+
+	if sess == nil {
+		http.Error(w, "no active login session", http.StatusBadRequest)
+		return
+	}
+
+	// Handle OAuth error from provider
+	if errParam != "" {
+		desc := r.URL.Query().Get("error_description")
+		msg := errParam
+		if desc != "" {
+			msg += ": " + desc
+		}
+		sess.finish(msg)
+		http.Error(w, msg, http.StatusBadRequest)
+		return
+	}
+
+	if code == "" {
+		http.Error(w, "missing code", http.StatusBadRequest)
+		return
+	}
+
+	// Validate state
+	sess.mu.Lock()
+	expectedState := sess.state
+	sess.mu.Unlock()
+
+	if state != expectedState {
+		fmt.Printf("[auth] Callback: state mismatch got=%q want=%q\n", state, expectedState)
+		sess.finish("state mismatch — please restart login")
+		http.Error(w, "state mismatch", http.StatusBadRequest)
+		return
+	}
+
+	// Exchange token asynchronously (same pattern as LoginInput)
+	go func() {
+		if err := h.exchangeToken(sess, code); err != nil {
+			fmt.Printf("[auth] token exchange failed: %v\n", err)
+			sess.finish(err.Error())
+		} else {
+			h.mu.Lock()
+			if h.session == sess {
+				h.session = nil
+			}
+			h.mu.Unlock()
+			sess.finish("")
+		}
+	}()
+
+	// Respond to browser with a simple success page
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprint(w, `
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Authentication Complete</title>
+</head>
+<body>
+	<h2>✅ Authentication successful</h2>
+	<p>You can return to the application.</p>
+	<script>
+		window.close();
+	</script>
+</body>
+</html>
+`)
 }

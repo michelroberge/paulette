@@ -979,6 +979,11 @@ func ensureBdInitRun(ctx context.Context, hostDir string, run *stream.Run) error
 		return nil
 	}
 	run.Emit(agent.StreamEvent{Type: "log", Content: "bd ready: " + strings.TrimSpace(out)})
+
+	// Ensure JSONL-only mode for cross-machine portability
+	if err := ensureBeadsNoDB(hostDir); err != nil {
+		run.Emit(agent.StreamEvent{Type: "log", Content: "beads: ensureNoDB: " + err.Error()})
+	}
 	return nil
 }
 
@@ -1006,6 +1011,7 @@ func bdCreate(ctx context.Context, hostDir, title, description, beadType string,
 		after := strings.TrimSpace(line[idx+len("Created issue:"):])
 		parts := strings.Fields(after)
 		if len(parts) > 0 {
+			fsrepo.CommitBeadsJSONL(hostDir)
 			return parts[0], nil
 		}
 	}
@@ -1072,6 +1078,9 @@ func bdClaim(ctx context.Context, hostDir, id string) error {
 
 func bdClose(ctx context.Context, hostDir, id string) error {
 	_, err := runBd(ctx, hostDir, "close", id)
+	if err == nil {
+		fsrepo.CommitBeadsJSONL(hostDir)
+	}
 	return err
 }
 

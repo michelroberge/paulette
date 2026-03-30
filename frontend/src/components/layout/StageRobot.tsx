@@ -111,6 +111,25 @@ const robots: Record<StageName, ReactElement> = {
       <line x1="14" y1="21" x2="14" y2="24" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
     </svg>
   ),
+  ui: (
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+      {/* Palette antenna */}
+      <line x1="12" y1="2" x2="12" y2="5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+      <circle cx="12" cy="1.5" r="1" fill="currentColor"/>
+      {/* Head */}
+      <rect x="5" y="5" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.5"/>
+      {/* Eyes */}
+      <circle cx="9" cy="9" r="1.5" fill="currentColor"/>
+      <circle cx="15" cy="9" r="1.5" fill="currentColor"/>
+      {/* Smile */}
+      <path d="M9 12 Q12 14 15 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+      {/* Body */}
+      <rect x="8" y="15" width="8" height="6" rx="1" stroke="currentColor" strokeWidth="1.5"/>
+      {/* Legs */}
+      <line x1="10" y1="21" x2="10" y2="24" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+      <line x1="14" y1="21" x2="14" y2="24" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+    </svg>
+  ),
 };
 
 interface Props {

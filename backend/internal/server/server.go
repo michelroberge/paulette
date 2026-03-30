@@ -4,16 +4,18 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/cors"
 
 	"github.com/michelroberge/paulette/backend/internal/autopilot"
 	"github.com/michelroberge/paulette/backend/internal/config"
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/handler"
+	authmw "github.com/michelroberge/paulette/backend/internal/middleware"
 	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
@@ -34,6 +36,7 @@ type Server struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	gitIdentity      *git.GlobalIdentityStore
+	oidcHandler      *handler.OIDCHandler
 }
 
 func New(
@@ -47,7 +50,7 @@ func New(
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
 ) *Server {
-	return &Server{
+	srv := &Server{
 		cfg:              cfg,
 		registry:         registry,
 		projectRepo:      projectRepo,
@@ -61,6 +64,19 @@ func New(
 		stageConfig:      stageConfig,
 		gitIdentity:      git.NewGlobalIdentityStore(cfg.RegistryPath),
 	}
+	if cfg.OIDC.Enabled {
+		oidcH, err := handler.NewOIDCHandler(&cfg.OIDC)
+		if err != nil {
+			log.Printf("WARNING: OIDC enabled but provider init failed: %v — running without OIDC", err)
+			// Mark OIDC as disabled so the config endpoint and middleware
+			// don't advertise/enforce auth that can't actually work.
+			cfg.OIDC.Enabled = false
+		} else {
+			srv.oidcHandler = oidcH
+			log.Println("OIDC authentication enabled")
+		}
+	}
+	return srv
 }
 
 // Runs returns the stream manager so callers can cancel active runs on shutdown.
@@ -77,7 +93,7 @@ func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(func(next http.Handler) http.Handler {
-		logger := middleware.Logger(next)
+		logger := chimiddleware.Logger(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Log mutating requests immediately on arrival so streaming
 			// endpoints (SSE) show up in logs before the response completes.
@@ -91,15 +107,27 @@ func (s *Server) Router() http.Handler {
 			logger.ServeHTTP(w, r)
 		})
 	})
-	r.Use(middleware.Recoverer)
+	r.Use(chimiddleware.Recoverer)
 
+	allowedOrigins := []string{"http://localhost:5173", "http://localhost:8080"}
+	if s.cfg.OIDC.RedirectURI != "" {
+		if u, err := url.Parse(s.cfg.OIDC.RedirectURI); err == nil {
+			origin := u.Scheme + "://" + u.Host
+			allowedOrigins = append(allowedOrigins, origin)
+		}
+	}
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:5173", "http://localhost:8080"},
+		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type"},
 		AllowCredentials: true,
 	})
 	r.Use(c.Handler)
+
+	// Apply OIDC session guard to all /api/* routes when OIDC is enabled.
+	// The middleware skips /api/auth/* and /api/config paths so the login
+	// flow and config discovery are always reachable.
+	r.Use(authmw.OIDCAuth(s.cfg.OIDC.Enabled && s.oidcHandler != nil, s.cfg.OIDC.SessionSecret))
 
 	gitSvc := git.NewService()
 	skillRepo := fsrepo.NewSkillRepo(s.cfg.RegistryPath)
@@ -147,6 +175,13 @@ func (s *Server) Router() http.Handler {
 	r.Get("/api/auth/login", authH.Login)
 	r.Post("/api/auth/login/input", authH.LoginInput)
 	r.Post("/api/auth/logout", authH.Logout)
+
+	if s.oidcHandler != nil {
+		r.Get("/api/auth/oidc/login", s.oidcHandler.Login)
+		r.Get("/api/auth/oidc/callback", s.oidcHandler.Callback)
+		r.Get("/api/auth/oidc/logout", s.oidcHandler.Logout)
+		r.Get("/api/auth/oidc/me", s.oidcHandler.Me)
+	}
 
 	r.Get("/api/git/ssh-key", ggh.SSHKey)
 	r.Get("/api/git/identity", ggh.GetIdentity)
@@ -245,8 +280,14 @@ func (s *Server) Router() http.Handler {
 	})
 
 	// Serve embedded frontend static files with SPA fallback.
+	// Never serve index.html for /api/ paths — return 404 instead so
+	// missing API routes don't silently serve the SPA.
 	if s.staticFS != nil {
 		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				http.NotFound(w, r)
+				return
+			}
 			path := strings.TrimPrefix(r.URL.Path, "/")
 			if path == "" {
 				path = "index.html"

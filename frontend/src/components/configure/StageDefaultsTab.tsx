@@ -36,6 +36,7 @@ const STAGES: StageName[] = ['vision', 'ux', 'architecture', 'build', 'complete'
 const STAGE_LABELS: Record<StageName, string> = {
   vision: 'Vision',
   ux: 'UX Design',
+  ui: 'UI Framework',
   architecture: 'Architecture',
   build: 'Build',
   complete: 'Complete',
@@ -45,6 +46,7 @@ const STAGE_LABELS: Record<StageName, string> = {
 const STAGE_COLORS: Record<StageName, string> = {
   vision: '#3b82f6',
   ux: '#8b5cf6',
+  ui: '#ec4899',
   architecture: '#f59e0b',
   build: '#22c55e',
   complete: '#14b8a6',

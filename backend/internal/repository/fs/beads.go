@@ -59,7 +59,47 @@ func WriteBeadMeta(ctx context.Context, hostDir, beadID string, meta *BeadMeta) 
 		return fmt.Errorf("marshal bead meta: %w", err)
 	}
 	_, err = runBdFS(ctx, hostDir, "update", beadID, "--notes", string(b))
+	if err == nil {
+		CommitBeadsJSONL(hostDir)
+	}
 	return err
+}
+
+// CommitBeadsJSONL stages and commits .beads/issues.jsonl if it has uncommitted changes.
+// Non-fatal: logs errors but never returns them. Exported so handler package can call it.
+func CommitBeadsJSONL(hostDir string) {
+	jsonlPath := filepath.Join(".beads", "issues.jsonl")
+
+	// Check if file has unstaged changes
+	cmd := exec.CommandContext(context.Background(), "git", "diff", "--quiet", "--", jsonlPath)
+	cmd.Dir = hostDir
+	unstaged := cmd.Run() != nil
+
+	// Check if file has staged changes
+	cmd2 := exec.CommandContext(context.Background(), "git", "diff", "--cached", "--quiet", "--", jsonlPath)
+	cmd2.Dir = hostDir
+	staged := cmd2.Run() != nil
+
+	if !unstaged && !staged {
+		return // clean
+	}
+
+	cmd = exec.CommandContext(context.Background(), "git", "add", "--", jsonlPath)
+	cmd.Dir = hostDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Printf("beads: git add issues.jsonl failed: %v: %s\n", err, out)
+		return
+	}
+
+	cmd = exec.CommandContext(context.Background(), "git", "commit", "-m", "chore: sync beads state [skip ci]",
+		"--", jsonlPath)
+	cmd.Dir = hostDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		outStr := strings.TrimSpace(string(out))
+		if !strings.Contains(outStr, "nothing to commit") {
+			fmt.Printf("beads: git commit issues.jsonl failed: %v: %s\n", err, outStr)
+		}
+	}
 }
 
 // bdListEntry is the shape returned by bd list --all --json.

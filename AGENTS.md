@@ -143,9 +143,9 @@ For more details, see README.md and docs/QUICKSTART.md.
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
+   bd sync
+   git push     # pre-push hook auto-commits .beads/issues.jsonl if dirty
+   git status   # MUST show "up to date with origin"
    ```
 5. **Clean up** - Clear stashes, prune remote branches
 6. **Verify** - All changes committed AND pushed

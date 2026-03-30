@@ -22,3 +22,15 @@ if command -v bd >/dev/null 2>&1; then
   if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
 fi
 # --- END BEADS INTEGRATION v0.62.0 ---
+
+# --- BEGIN PAULETTE CUSTOM ---
+# Auto-commit .beads/issues.jsonl before pushing so beads state travels with git.
+# This is deterministic — no prompt/agent dependency.
+_jsonl=".beads/issues.jsonl"
+if [ -f "$_jsonl" ]; then
+  if ! git diff --quiet -- "$_jsonl" 2>/dev/null || ! git diff --cached --quiet -- "$_jsonl" 2>/dev/null; then
+    git add -- "$_jsonl"
+    git commit -m "chore: sync beads state [skip ci]" -- "$_jsonl" 2>/dev/null || true
+  fi
+fi
+# --- END PAULETTE CUSTOM ---

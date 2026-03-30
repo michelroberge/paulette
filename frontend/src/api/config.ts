@@ -4,6 +4,7 @@ export interface AppConfig {
   reposPath: string;
   version: string;
   author: string;
+  oidcEnabled: boolean;
 }
 
 export function getConfig(): Promise<AppConfig> {
