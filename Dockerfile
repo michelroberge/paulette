@@ -31,8 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Claude Code CLI — required for all AI agent calls
     && npm install -g @anthropic-ai/claude-code \
     # beads (bd) — issue tracker CLI; npm primary, curl script fallback
-    && (npm install -g @beads/bd 2>/dev/null || curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash) \
-    && bd --version \
+    && (npm install -g @beads/bd || curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/install.sh | bash) \
+    && (bd --version || echo "bd install skipped (optional)") \
     # rtk — token optimizer (optional, non-fatal if install fails)
     && (curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh || echo "rtk install skipped (optional)")
 
