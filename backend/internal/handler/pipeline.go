@@ -96,9 +96,7 @@ func (h *PipelineHandler) WatchPipeline(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	setSSEHeaders(w)
 
 	emit := func() {
 		p, e := h.registry.Get(id)
@@ -370,9 +368,7 @@ func (h *PipelineHandler) WatchSummary(w http.ResponseWriter, r *http.Request) {
 	run := h.runs.Active(id, "complete", "summary")
 	if run == nil {
 		// No active run — send a done event so the client doesn't hang
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
+		setSSEHeaders(w)
 		fmt.Fprintf(w, "data: {\"type\":\"done\",\"content\":\"\"}\n\n")
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()

@@ -254,6 +254,7 @@ func (s *StageConfigStore) readProjectConfig(hostDir string) ProjectStageConfig 
 	var cfg ProjectStageConfig
 	data, err := os.ReadFile(projectConfigPath(hostDir))
 	if err != nil {
+		cfg.Overrides = make(map[model.StageName]*StageAssignment)
 		return cfg
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {

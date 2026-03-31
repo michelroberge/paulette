@@ -94,6 +94,7 @@ function ProjectDetailPage() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
   const [selectedStage, setSelectedStage] = useState<StageName | null>(null);
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0);
@@ -179,8 +180,12 @@ function ProjectDetailPage() {
 
   useEffect(() => {
     if (project) {
+      setPipelineError(null);
       loadPipeline().then(state => {
         if (state) setSelectedStage(state.currentStage);
+      }).catch(err => {
+        console.error('Failed to load pipeline:', err);
+        setPipelineError(err?.message || 'Failed to load pipeline');
       });
       loadStageOverrides();
     }
@@ -382,6 +387,20 @@ function ProjectDetailPage() {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
         <span style={{ color: '#64748b' }}>Loading…</span>
+      </div>
+    );
+  }
+
+  if (pipelineError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: '1rem' }}>
+        <p style={{ color: '#ef4444' }}>Failed to load pipeline: {pipelineError}</p>
+        <button onClick={() => { setPipelineError(null); loadPipeline().then(state => { if (state) setSelectedStage(state.currentStage); }).catch(err => setPipelineError(err?.message || 'Failed to load pipeline')); }} style={{ color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer' }}>
+          Retry
+        </button>
+        <button onClick={() => navigate('/')} style={{ color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer' }}>
+          ← Back to projects
+        </button>
       </div>
     );
   }

@@ -212,9 +212,7 @@ func (h *ImportHandler) WatchImport(w http.ResponseWriter, r *http.Request) {
 	run := h.runs.Active(id, "import", "import")
 	if run == nil {
 		// No active run — return empty
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
+		setSSEHeaders(w)
 		return
 	}
 	run.StreamTo(w, r, 0)

@@ -304,6 +304,7 @@ func (r *Run) StreamTo(w http.ResponseWriter, req *http.Request, fromIndex int) 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	// Send headers immediately so the client's fetch() resolves right away
 	// and can start reading the stream body, even before the first event arrives.
 	w.WriteHeader(http.StatusOK)
