@@ -1,10 +1,12 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ReactFlow,
   Background,
   Controls,
+  Panel,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   type Node,
   type Edge,
 } from '@xyflow/react';
@@ -275,6 +277,39 @@ function DevilIcon({ delay }: { delay: number }) {
   );
 }
 
+function FindInProgressButton({ nodes }: { nodes: Node[] }) {
+  const { setCenter, getZoom } = useReactFlow();
+  const indexRef = useRef(0);
+
+  const inProgressNodes = useMemo(
+    () => nodes.filter(n => n.className?.includes('bead-node-active')),
+    [nodes],
+  );
+
+  const handleClick = useCallback(() => {
+    if (inProgressNodes.length === 0) return;
+    const idx = indexRef.current % inProgressNodes.length;
+    const node = inProgressNodes[idx];
+    const w = parseFloat(String(node.style?.width ?? NODE_WIDTH_TASK));
+    const h = parseFloat(String(node.style?.height ?? NODE_HEIGHT_TASK));
+    setCenter(node.position.x + w / 2, node.position.y + h / 2, {
+      zoom: getZoom(),
+      duration: 400,
+    });
+    indexRef.current = idx + 1;
+  }, [inProgressNodes, setCenter, getZoom]);
+
+  if (inProgressNodes.length === 0) return null;
+
+  return (
+    <Panel position="top-right">
+      <button className="find-in-progress-btn" onClick={handleClick}>
+        Find in progress
+      </button>
+    </Panel>
+  );
+}
+
 interface Props {
   graph: BeadGraph;
   onBeadClick?: (beadId: string) => void;
@@ -366,6 +401,7 @@ export function BeadGraph({ graph, onBeadClick }: Props) {
         >
           <Background color="#334155" gap={16} />
           <Controls showInteractive={false} />
+          <FindInProgressButton nodes={nodes} />
         </ReactFlow>
       )}
     </div>

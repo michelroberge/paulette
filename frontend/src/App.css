@@ -2032,7 +2032,8 @@ body {
   display: flex;
   flex-direction: column;
   background: #0f172a;
-  height: 55vh;
+  flex: 1;
+  min-height: 0;
 }
 
 .bead-list-view {
@@ -2119,6 +2120,21 @@ body {
   letter-spacing: 0.03em;
   white-space: nowrap;
   align-self: center;
+}
+
+.find-in-progress-btn {
+  background: transparent;
+  color: #3b82f6;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.find-in-progress-btn:hover {
+  background: rgba(59, 130, 246, 0.15);
 }
 
 .bead-graph-empty {
