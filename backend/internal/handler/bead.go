@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -489,6 +490,12 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		maxParallel = 10
 	}
 
+	// Reset stale in_progress beads synchronously before creating the run,
+	// so GetGraph never returns stale in_progress state to the frontend.
+	if err := bdResetStale(context.Background(), project.HostDir); err != nil {
+		log.Printf("beads: reset stale before execute: %v", err)
+	}
+
 	run := h.runs.Start(project.ID, "build", "beads-execute")
 	if run == nil {
 		return nil, nil // race: already started
@@ -510,11 +517,6 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		}()
 
 		ctx := run.Context()
-
-		// Reset any stale in_progress beads from a previous interrupted run.
-		if err := bdResetStale(ctx, project.HostDir); err != nil {
-			run.Emit(agent.StreamEvent{Type: "log", Content: "warn: reset stale: " + err.Error()})
-		}
 
 		// Load all artifacts for context injection
 		artifacts := map[model.StageName]string{}
