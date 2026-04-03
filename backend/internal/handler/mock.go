@@ -297,9 +297,15 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 				userPrompt = fmt.Sprintf(agent.MockRetryPrompt, snippet)
 				run.Emit(agent.StreamEvent{Type: "chunk", Content: "\n\n[Response was not valid HTML — retrying...]\n\n"})
 			} else {
-				// Exhausted retries — emit whatever we got so the client
-				// can see the raw response rather than hanging indefinitely.
+				// Exhausted retries — save and emit whatever we got so the
+				// result persists even without a connected client.
 				html := agent.ExtractHTML(fullResponse)
+				if html != "" {
+					p := filepath.Join(project.HostDir, mockRelPath)
+					if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
+						os.WriteFile(p, []byte(html), 0644)
+					}
+				}
 				run.Emit(agent.StreamEvent{Type: "done", Content: html})
 			}
 		}

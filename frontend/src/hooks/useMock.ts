@@ -11,6 +11,7 @@ export function useMock(projectId: string | null) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const prevGeneratingRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -18,6 +19,16 @@ export function useMock(projectId: string | null) {
     if (res.exists) setHtml(res.html);
     setLoaded(true);
   }, [projectId]);
+
+  // When generation transitions from true → false without html being set,
+  // reload from the server — the backend may have completed the generation
+  // while our SSE stream was interrupted (e.g. user navigated away).
+  useEffect(() => {
+    if (prevGeneratingRef.current && !generating && !html) {
+      load();
+    }
+    prevGeneratingRef.current = generating;
+  }, [generating, html, load]);
 
   // Check for active mock generation and reconnect on mount
   useEffect(() => {
