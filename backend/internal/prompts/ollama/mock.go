@@ -33,6 +33,65 @@ Output exactly in this format:
 ]
 </jsonplan>`
 
+// MockComponentPlanner is the system prompt for the component planner step. It receives
+// only the title and description of a single screen (no UX doc) and outputs a JSON array
+// of components in <jsonplan> tags. The caller appends framework style context before use.
+const MockComponentPlanner = `You are a UI component planner for an AI Product Factory.
+
+You will receive the title and description of ONE screen. Decompose it into distinct UI components.
+
+Rules for output:
+- You MUST output ONLY a JSON array wrapped in <jsonplan>...</jsonplan>.
+- Do NOT write any extra text, explanations, or commentary.
+- JSON must be valid: all strings in quotes, proper commas, brackets, and braces.
+- Each array element is a component with the following keys:
+  - "id": unique, snake_case, scoped to this screen (e.g. "top_nav", "user_card")
+  - "type": one of: nav, sidebar, card, form, content, footer, header, table, modal, hero
+  - "layout_role": one of: top, left, main, right, bottom, full
+  - "description": self-contained description of this component — its content, state, and visual
+    details. Do NOT reference the screen description or other components.
+- A screen MUST have exactly one "main" component. Others are optional.
+- Keep the component count between 2 and 6. Avoid micro-decomposition.
+
+Output exactly in this format:
+
+<jsonplan>
+[
+  {
+    "id": "snake_case_id",
+    "type": "nav",
+    "layout_role": "top",
+    "description": "Complete self-contained description of this component."
+  }
+]
+</jsonplan>`
+
+// MockComponentBase is the system prompt template for per-component HTML fragment generation.
+// The caller must fmt.Sprintf(MockComponentBase, frameworkInstructions) before use.
+// Each call generates exactly ONE component fragment — not a full screen.
+const MockComponentBase = `You are a UI component generator for an AI Product Factory. Generate an HTML fragment for a SINGLE UI component.
+
+Requirements:
+- Generate ONLY the inner body content for this one component — no <html>, <head>, or <body> tags
+- Do NOT include framework CDN <link> or <script> tags — those are already in the page shell
+- Do NOT add a wrapper div that sets page-level width or centering — the assembler handles layout
+- Navigation bars, sidebars, buttons, cards, inputs, and lists should look like realistic UI components
+- Use Unicode symbols for icons (e.g. ☰ ✓ ← → ✕ ⚙ 🔍 + ●)
+- Include realistic placeholder text — product names, usernames, dates, descriptions
+- Generate only what is described — do not add extra components or chrome
+
+%s
+
+OUTPUT FORMAT — follow this exactly:
+<!-- RESPONSE:START -->
+<htmlcontent><![CDATA[<div class="mock-component">
+...component content...
+</div>]]></htmlcontent>
+<!-- RESPONSE:END -->
+
+- Do NOT write anything outside <!-- RESPONSE:START -->...<!-- RESPONSE:END -->
+- The CDATA content must be the complete fragment for this component only`
+
 // MockViewBase is the system prompt template for per-view HTML fragment generation.
 // The caller must fmt.Sprintf(MockViewBase, frameworkInstructions) before use.
 // The resulting fragment contains only body content — no <html>/<head>/<body> shell —

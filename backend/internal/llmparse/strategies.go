@@ -83,6 +83,52 @@ func (l ListStrategy) Parse(input string, target any) error {
 }
 
 // -----------------------------
+// HTML Strategy
+// -----------------------------
+type HTMLStrategy struct{}
+
+func (h HTMLStrategy) Name() string { return "html" }
+
+func (h HTMLStrategy) Detect(input string) float64 {
+	if strings.Contains(input, "<htmlcontent>") {
+		return 0.95
+	}
+	if strings.Contains(input, "```") {
+		return 0.85
+	}
+	s := strings.TrimSpace(input)
+	if strings.HasPrefix(s, "<") {
+		return 0.6
+	}
+	return 0
+}
+
+func (h HTMLStrategy) Parse(input string, target any) error {
+	ptr, ok := target.(*string)
+	if !ok {
+		return ErrTypeMismatch
+	}
+	// 1. Try <htmlcontent><![CDATA[...]]></htmlcontent> envelope
+	if s := extractHTMLEnvelope(input); s != "" {
+		*ptr = s
+		return nil
+	}
+	// 2. Try ``` code fence
+	blocks := extractCodeBlocks(input)
+	if len(blocks) > 0 {
+		*ptr = blocks[0]
+		return nil
+	}
+	// 3. Raw HTML fallback
+	s := strings.TrimSpace(input)
+	if strings.HasPrefix(s, "<") {
+		*ptr = s
+		return nil
+	}
+	return ErrTypeMismatch
+}
+
+// -----------------------------
 // Code Strategy
 // -----------------------------
 type CodeStrategy struct{}

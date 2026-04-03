@@ -24,6 +24,30 @@ func extractJSON(s string) string {
 	return ""
 }
 
+// extractHTMLEnvelope extracts HTML from a <htmlcontent><![CDATA[...]]></htmlcontent> envelope.
+// Returns the trimmed inner content, or "" if the envelope is not present.
+func extractHTMLEnvelope(s string) string {
+	const open = "<htmlcontent>"
+	const close = "</htmlcontent>"
+	si := strings.Index(s, open)
+	if si < 0 {
+		return ""
+	}
+	si += len(open)
+	ei := strings.LastIndex(s, close)
+	if ei <= si {
+		return ""
+	}
+	content := strings.TrimSpace(s[si:ei])
+	// Strip CDATA wrapper if present
+	const cdataStart = "<![CDATA["
+	const cdataEnd = "]]>"
+	if strings.HasPrefix(content, cdataStart) && strings.HasSuffix(content, cdataEnd) {
+		content = content[len(cdataStart) : len(content)-len(cdataEnd)]
+	}
+	return strings.TrimSpace(content)
+}
+
 // extractCodeBlocks extracts text inside ``` code fences
 func extractCodeBlocks(s string) []string {
 	var results []string

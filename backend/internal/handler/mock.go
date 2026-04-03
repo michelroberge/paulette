@@ -34,6 +34,14 @@ type plannerScreen struct {
 	Description string `json:"description"`
 }
 
+// plannerComponent is a single component entry decoded from the component planner's JSON output.
+type plannerComponent struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`        // nav|sidebar|card|form|content|footer|header|table|modal|hero
+	LayoutRole  string `json:"layout_role"` // top|left|main|right|bottom|full
+	Description string `json:"description"`
+}
+
 const mockRelPath = ".paulette/ux/mock.html"
 
 type MockHandler struct {
@@ -386,7 +394,6 @@ func runPlannerCall(
 		switch ev.Type {
 		case "chunk":
 			fullResponse.WriteString(ev.Content)
-			run.Emit(agent.StreamEvent{Type: "chunk", Content: ev.Content})
 		case "tokens":
 			var n int
 			fmt.Sscanf(ev.Content, "%d", &n)
@@ -525,6 +532,240 @@ func runViewCall(
 	return agent.ExtractHTML(userMsg), nil
 }
 
+// runComponentPlannerCall asks the LLM to decompose a single screen into sub-components.
+// It is silent — no chunk events are forwarded to run. Tokens are accumulated into the
+// provided pointer via tokensMu.
+func runComponentPlannerCall(
+	prov provider.Provider,
+	modelID string,
+	run *stream.Run,
+	frameworkCfg *model.FrameworkConfig,
+	screen plannerScreen,
+	tokensAccum *int,
+	tokensMu *sync.Mutex,
+) ([]plannerComponent, error) {
+	userMsg := "Screen: " + screen.Title + "\n\n" + screen.Description
+
+	events, err := prov.Chat(run.Context(), provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: agent.BuildMockComponentPlannerSystemPrompt(frameworkCfg),
+		UserMessage:  userMsg,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var fullResponse strings.Builder
+	for ev := range events {
+		switch ev.Type {
+		case "chunk":
+			fullResponse.WriteString(ev.Content)
+		case "tokens":
+			var n int
+			fmt.Sscanf(ev.Content, "%d", &n)
+			tokensMu.Lock()
+			*tokensAccum += n
+			tokensMu.Unlock()
+		case "error":
+			return nil, fmt.Errorf("component planner: %s", ev.Content)
+		}
+	}
+
+	raw := fullResponse.String()
+
+	// Primary: extract <jsonplan> JSON and unmarshal into []plannerComponent.
+	parsed := agent.ParseResponse(raw)
+	if len(parsed.JSON) > 0 {
+		var components []plannerComponent
+		if err := json.Unmarshal(parsed.JSON, &components); err == nil && len(components) > 0 {
+			return components, nil
+		}
+	}
+
+	// Fallback: use llmparse ListStrategy to handle plain list responses.
+	engine := llmparse.NewEngine([]llmparse.Strategy{llmparse.ListStrategy{}}, nil)
+	var titles []string
+	if err := engine.Parse(raw, &titles); err == nil && len(titles) > 0 {
+		components := make([]plannerComponent, len(titles))
+		for i, title := range titles {
+			components[i] = plannerComponent{
+				ID:          slugifyTitle(title),
+				Type:        "content",
+				LayoutRole:  "full",
+				Description: title,
+			}
+		}
+		return components, nil
+	}
+
+	return nil, fmt.Errorf("component planner returned no parseable component list")
+}
+
+// runComponentCall asks the LLM to generate an HTML fragment for a single component.
+// It is silent — no chunk events are forwarded to run. HTML is extracted via llmparse
+// HTMLStrategy, which handles the XML envelope, code fences, and raw HTML fallback.
+func runComponentCall(
+	prov provider.Provider,
+	modelID string,
+	run *stream.Run,
+	frameworkCfg *model.FrameworkConfig,
+	comp plannerComponent,
+	tokensAccum *int,
+	tokensMu *sync.Mutex,
+) (string, error) {
+	systemPrompt := agent.BuildMockComponentSystemPrompt(frameworkCfg)
+	userMsg := fmt.Sprintf("Component type: %s\nLayout role: %s\n\n%s",
+		comp.Type, comp.LayoutRole, comp.Description)
+
+	htmlEngine := llmparse.NewEngine([]llmparse.Strategy{llmparse.HTMLStrategy{}}, nil)
+
+	for attempt := 0; attempt <= agent.MaxMockRetries; attempt++ {
+		if run.Context().Err() != nil {
+			return "", run.Context().Err()
+		}
+
+		events, err := prov.Chat(run.Context(), provider.ChatRequest{
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  userMsg,
+		})
+		if err != nil {
+			return "", err
+		}
+
+		var fullResponse strings.Builder
+		var hadError bool
+		for ev := range events {
+			switch ev.Type {
+			case "chunk":
+				fullResponse.WriteString(ev.Content)
+			case "tokens":
+				var n int
+				fmt.Sscanf(ev.Content, "%d", &n)
+				tokensMu.Lock()
+				*tokensAccum += n
+				tokensMu.Unlock()
+			case "error":
+				hadError = true
+			}
+		}
+		if hadError {
+			return "", fmt.Errorf("component %q: LLM error", comp.ID)
+		}
+
+		raw := fullResponse.String()
+		var html string
+		if err := htmlEngine.Parse(raw, &html); err == nil && html != "" {
+			return html, nil
+		}
+
+		if attempt < agent.MaxMockRetries {
+			snippet := raw
+			if len(snippet) > 500 {
+				snippet = snippet[:500] + "..."
+			}
+			userMsg = fmt.Sprintf(agent.MockRetryPrompt, snippet)
+		}
+	}
+
+	return "", fmt.Errorf("component %q: retries exhausted", comp.ID)
+}
+
+// assembleScreenFragment combines generated component HTML fragments into a single
+// screen fragment using deterministic layout rules based on each component's layout_role.
+// Inline styles are used so the result is framework-agnostic.
+func assembleScreenFragment(components []plannerComponent, htmlFragments map[string]string) string {
+	if len(components) == 0 {
+		return `<div style="max-width:1024px;margin:0 auto;padding:24px"><p>No components generated.</p></div>`
+	}
+
+	var tops, lefts, mains, rights, bottoms, fulls []plannerComponent
+	for _, c := range components {
+		switch c.LayoutRole {
+		case "top":
+			tops = append(tops, c)
+		case "left":
+			lefts = append(lefts, c)
+		case "main":
+			mains = append(mains, c)
+		case "right":
+			rights = append(rights, c)
+		case "bottom":
+			bottoms = append(bottoms, c)
+		default: // "full" and unknown
+			fulls = append(fulls, c)
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(`<div style="max-width:1024px;margin:0 auto;padding:24px">`)
+
+	// Top components — full width, stacked
+	for _, c := range tops {
+		b.WriteString(`<div style="width:100%">`)
+		b.WriteString(htmlFragments[c.ID])
+		b.WriteString("</div>\n")
+	}
+
+	// Middle row — flex if sidebars present, otherwise full-width
+	hasSidebar := len(lefts) > 0 || len(rights) > 0
+	hasMain := len(mains) > 0
+	if hasSidebar && hasMain {
+		b.WriteString(`<div style="display:flex;gap:0;align-items:stretch">`)
+		for _, c := range lefts {
+			b.WriteString(`<div style="flex:0 0 220px;min-width:180px">`)
+			b.WriteString(htmlFragments[c.ID])
+			b.WriteString("</div>\n")
+		}
+		// First main component in the flex row
+		b.WriteString(`<div style="flex:1;min-width:0">`)
+		b.WriteString(htmlFragments[mains[0].ID])
+		b.WriteString("</div>\n")
+		for _, c := range rights {
+			b.WriteString(`<div style="flex:0 0 220px;min-width:180px">`)
+			b.WriteString(htmlFragments[c.ID])
+			b.WriteString("</div>\n")
+		}
+		b.WriteString("</div>\n")
+		// Extra main components (beyond the first) rendered as full-width after the row
+		for _, c := range mains[1:] {
+			b.WriteString(`<div style="width:100%">`)
+			b.WriteString(htmlFragments[c.ID])
+			b.WriteString("</div>\n")
+		}
+	} else {
+		// No sidebars — render mains and fulls stacked
+		for _, c := range mains {
+			b.WriteString(`<div style="width:100%">`)
+			b.WriteString(htmlFragments[c.ID])
+			b.WriteString("</div>\n")
+		}
+		// Orphaned left/right (no matching main) also rendered stacked
+		for _, c := range append(lefts, rights...) {
+			b.WriteString(`<div style="width:100%">`)
+			b.WriteString(htmlFragments[c.ID])
+			b.WriteString("</div>\n")
+		}
+	}
+
+	// Full-width components (explicit "full" + unknowns)
+	for _, c := range fulls {
+		b.WriteString(`<div style="width:100%">`)
+		b.WriteString(htmlFragments[c.ID])
+		b.WriteString("</div>\n")
+	}
+
+	// Bottom components — full width, stacked
+	for _, c := range bottoms {
+		b.WriteString(`<div style="width:100%">`)
+		b.WriteString(htmlFragments[c.ID])
+		b.WriteString("</div>\n")
+	}
+
+	b.WriteString("</div>")
+	return b.String()
+}
+
 // StartMockRunOrchestrated starts an orchestrated multi-agent mock generation run:
 //  1. Planner call  — decomposes UX artifact into a screen list (JSON)
 //  2. Parallel view calls — one per screen, each generating a small HTML fragment
@@ -593,14 +834,36 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 				sem <- struct{}{}
 				defer func() { <-sem }()
 
-				run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Generating...\n", sc.Title)})
-				html, err := runViewCall(prov, modelID, run, frameworkCfg, sc, &tokensAccum, &tokensMu)
-				if err != nil {
-					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Warning: %s\n", sc.Title, err.Error())})
-					html = "<p style='color:#f87171'>Failed to generate this screen.</p>"
+				// 2a. Component planner
+				run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Launching component planner...\n", sc.Title)})
+				components, compPlanErr := runComponentPlannerCall(prov, modelID, run, frameworkCfg, sc, &tokensAccum, &tokensMu)
+				if compPlanErr != nil {
+					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Component planner failed — using fallback.\n", sc.Title)})
+					components = []plannerComponent{{
+						ID:          sc.ID + "_fallback",
+						Type:        "content",
+						LayoutRole:  "full",
+						Description: sc.Description,
+					}}
 				}
-				views[idx] = agent.MockView{ID: sc.ID, Title: sc.Title, HTML: html}
-				run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Done.\n", sc.Title)})
+
+				// 2b. Component generators (sequential)
+				htmlFragments := make(map[string]string, len(components))
+				for _, comp := range components {
+					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Launching component agent (%s, %s)...\n", sc.Title, comp.ID, comp.Type, comp.LayoutRole)})
+					compHTML, compErr := runComponentCall(prov, modelID, run, frameworkCfg, comp, &tokensAccum, &tokensMu)
+					if compErr != nil {
+						run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Warning: %s\n", sc.Title, comp.ID, compErr.Error())})
+						compHTML = fmt.Sprintf(`<div class="mock-component"><p style="color:#f87171">Component failed: %s</p></div>`, comp.ID)
+					}
+					htmlFragments[comp.ID] = compHTML
+					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Done.\n", sc.Title, comp.ID)})
+				}
+
+				// 2c. Deterministic screen assembly
+				screenHTML := assembleScreenFragment(components, htmlFragments)
+				views[idx] = agent.MockView{ID: sc.ID, Title: sc.Title, HTML: screenHTML}
+				run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Done (%d component(s)).\n", sc.Title, len(components))})
 			}(i, screen)
 		}
 		wg.Wait()
