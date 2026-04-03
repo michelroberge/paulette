@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
+	"github.com/michelroberge/paulette/backend/internal/llmparse"
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
@@ -412,19 +414,47 @@ func runPlannerCall(
 		// silently ignore file write errors
 	}
 
+	// Primary path: extract JSON (handles <jsonplan> tags and raw JSON arrays).
 	parsed := agent.ParseResponse(raw)
-	if len(parsed.JSON) == 0 {
-		return nil, fmt.Errorf("planner returned no JSON screen list - it did go here")
+	if len(parsed.JSON) > 0 {
+		var screens []plannerScreen
+		if err := json.Unmarshal(parsed.JSON, &screens); err == nil && len(screens) > 0 {
+			return screens, nil
+		}
 	}
 
-	var screens []plannerScreen
-	if err := json.Unmarshal(parsed.JSON, &screens); err != nil {
-		return nil, fmt.Errorf("planner JSON parse error: %w", err)
+	// Fallback: use llmparse to handle list-format responses from Ollama.
+	engine := llmparse.NewEngine(
+		[]llmparse.Strategy{llmparse.ListStrategy{}},
+		nil,
+	)
+	var titles []string
+	if err := engine.Parse(raw, &titles); err == nil && len(titles) > 0 {
+		screens := make([]plannerScreen, len(titles))
+		for i, title := range titles {
+			screens[i] = plannerScreen{
+				ID:          slugifyTitle(title),
+				Title:       title,
+				Description: title,
+			}
+		}
+		return screens, nil
 	}
-	if len(screens) == 0 {
-		return nil, fmt.Errorf("planner returned empty screen list")
+
+	return nil, fmt.Errorf("planner returned no parseable screen list")
+}
+
+var slugifyRe = regexp.MustCompile(`[^a-z0-9]+`)
+
+// slugifyTitle converts a screen title into a snake_case id.
+func slugifyTitle(s string) string {
+	s = strings.ToLower(s)
+	s = slugifyRe.ReplaceAllString(s, "_")
+	s = strings.Trim(s, "_")
+	if s == "" {
+		return "screen"
 	}
-	return screens, nil
+	return s
 }
 
 // runViewCall asks the LLM to generate an HTML fragment for a single screen.
