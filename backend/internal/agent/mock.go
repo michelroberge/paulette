@@ -114,27 +114,59 @@ var frameworkViewInstructs = map[model.UXFramework]string{
 	model.FrameworkTailwind: `Framework: Tailwind CSS (CDN already loaded in shell)
 - Use Tailwind utility classes exclusively (bg-slate-900, text-slate-100, rounded-lg, shadow-lg, etc.)
 - Dark mode palette: bg-slate-900, bg-slate-800, bg-slate-700, text-slate-100, text-blue-500
-- Do NOT include <script> CDN tags — Tailwind is already available`,
+- Do NOT include <script> CDN tags — Tailwind is already available
+- FORBIDDEN: Do NOT use Bootstrap class names (btn, card, d-flex, container, row, col-*)
+- FORBIDDEN: Do NOT write <style> blocks — use utility classes directly on elements`,
 
 	model.FrameworkBootstrap: `Framework: Bootstrap 5 (CDN already loaded in shell)
 - Use Bootstrap grid, components (card, navbar, btn, form-control, badge, list-group, etc.)
 - Dark theme is already applied globally; use Bootstrap dark variants where available
-- Do NOT include <link> or <script> CDN tags — Bootstrap is already available`,
+- Do NOT include <link> or <script> CDN tags — Bootstrap is already available
+- FORBIDDEN: Do NOT use Tailwind utility class names (bg-slate-*, text-*, p-4, flex, rounded-lg)
+- Always use Bootstrap layout: container, row, col-*`,
 
 	model.FrameworkMUI: `Framework: Material UI (MUI) design language — plain CSS approximation
 - Color palette: primary #1976d2, background #121212, surface #1e1e1e, on-surface #fff, secondary #90caf9
 - Use box-shadow for elevation (dp2: 0 2px 4px rgba(0,0,0,.4), dp4: 0 4px 8px rgba(0,0,0,.4))
 - Roboto font is already loaded; rounded corners: 4px for components, 8px for cards
-- Inline <style> blocks for component CSS are fine`,
+- Inline <style> blocks for component CSS are fine
+- FORBIDDEN: Do NOT add Tailwind or Bootstrap class names — use only inline style="" attributes or <style> blocks`,
 
 	model.FrameworkShadcn: `Framework: Shadcn/UI design language — plain CSS
 - Use CSS variables already defined in the shell: var(--background), var(--foreground), var(--card), var(--border), var(--primary), var(--muted)
 - Zinc color scale for neutrals, rounded-md (6px) borders, subtle hover states
-- Bordered cards with 1px solid var(--border); inline <style> blocks are fine`,
+- Bordered cards with 1px solid var(--border); inline <style> blocks are fine
+- FORBIDDEN: Do NOT add Tailwind or Bootstrap class names — use only CSS variables and inline style="" attributes`,
 
 	model.FrameworkVanilla: `Framework: Vanilla CSS
 - CSS variables are already defined in the shell: var(--bg), var(--panel), var(--accent), var(--text), var(--border)
-- Use CSS Grid and Flexbox; inline <style> blocks are fine`,
+- Use CSS Grid and Flexbox; inline <style> blocks are fine
+- FORBIDDEN: Do NOT add Tailwind or Bootstrap class names — use only CSS variables and inline style="" attributes`,
+}
+
+// frameworkStylerContracts contains the allowed class/style contracts for each framework,
+// injected into the MockStyler system prompt to constrain the styler's rewriting pass.
+var frameworkStylerContracts = map[model.UXFramework]string{
+	model.FrameworkTailwind: `Framework: Tailwind CSS
+ALLOWED: Only Tailwind utility classes — bg-*, text-*, p-*, m-*, flex, grid, rounded-*, shadow-*, border-*, hover:*, w-*, h-*, gap-*, items-*, justify-*, overflow-*, opacity-*, font-*, leading-*, tracking-*
+FORBIDDEN: Any Bootstrap class names (btn, card, d-flex, container, row, col-*) or MUI/Shadcn names
+FORBIDDEN: Any <style> blocks — move all styling to utility classes`,
+
+	model.FrameworkBootstrap: `Framework: Bootstrap 5
+ALLOWED: Only Bootstrap component classes — btn, btn-*, card, card-body, card-header, navbar, nav, nav-link, container, row, col-*, form-control, badge, list-group, list-group-item, table, alert, modal, d-flex, d-grid, gap-*, justify-content-*, align-items-*
+FORBIDDEN: Any Tailwind utility classes (bg-slate-*, text-*, p-4, rounded-lg, shadow-lg)`,
+
+	model.FrameworkMUI: `Framework: MUI plain CSS approximation
+ALLOWED: Only inline style="" attributes and <style> blocks. No class="" values with framework names.
+Remove any Tailwind or Bootstrap class names from class="" attributes — replace with inline style="" using MUI palette: primary #1976d2, background #121212, surface #1e1e1e`,
+
+	model.FrameworkShadcn: `Framework: Shadcn/UI plain CSS
+ALLOWED: Only CSS variable references in style="" attributes: var(--background), var(--foreground), var(--card), var(--border), var(--primary), var(--muted)
+Remove any Tailwind or Bootstrap class names from class="" attributes — replace with inline style="" using the CSS variables`,
+
+	model.FrameworkVanilla: `Framework: Vanilla CSS
+ALLOWED: Only CSS variable references in style="" attributes: var(--bg), var(--panel), var(--accent), var(--text), var(--border)
+Remove any Tailwind or Bootstrap class names from class="" attributes — replace with inline style="" using the CSS variables`,
 }
 
 // frameworkShellHead returns the <head> snippet for the given framework config.
@@ -176,6 +208,20 @@ func buildMockViewSystemPrompt(cfg *model.FrameworkConfig) string {
 // BuildMockViewSystemPrompt is the exported version of buildMockViewSystemPrompt.
 func BuildMockViewSystemPrompt(cfg *model.FrameworkConfig) string {
 	return buildMockViewSystemPrompt(cfg)
+}
+
+// BuildMockStylerSystemPrompt returns the system prompt for the Styler post-processing
+// step, which rewrites class="" attributes in assembled HTML to use only the correct
+// framework classes. Returns "" for FrameworkOther or nil config (caller should skip).
+func BuildMockStylerSystemPrompt(cfg *model.FrameworkConfig) string {
+	if cfg == nil || cfg.Framework == model.FrameworkOther {
+		return ""
+	}
+	contract, ok := frameworkStylerContracts[cfg.Framework]
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(ollamaprompts.MockStyler, contract)
 }
 
 // BuildMockPlannerSystemPrompt returns the system prompt used by the orchestrated

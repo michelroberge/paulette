@@ -404,22 +404,7 @@ func runPlannerCall(
 	}
 
 	raw := fullResponse.String()
-
-	// Debug: save the planner response to a file for inspection
-	// Always print the raw planner output for debugging
-	fmt.Println("=== PLANNER RAW OUTPUT START ===")
-	fmt.Println(raw)
-	fmt.Println("=== PLANNER RAW OUTPUT END ===")
-
-	// Optionally still try to write to a file, but ignore errors
-	debugFile := fmt.Sprintf("/home/paulette/debug/planner_%d.txt", time.Now().UnixNano())
-	if f, err := os.Create(debugFile); err == nil {
-		defer f.Close()
-		f.WriteString(raw)
-		fmt.Printf("Planner output written to %s\n", debugFile)
-	} else {
-		// silently ignore file write errors
-	}
+	debugLogAgentOutput("screen_planner", raw)
 
 	// Primary path: extract JSON (handles <jsonplan> tags and raw JSON arrays).
 	parsed := agent.ParseResponse(raw)
@@ -449,6 +434,21 @@ func runPlannerCall(
 	}
 
 	return nil, fmt.Errorf("planner returned no parseable screen list")
+}
+
+// debugLogAgentOutput prints the raw LLM response for an agent step to stdout and
+// writes it to /home/paulette/debug/<step>_<timestamp>.txt. The step name
+// (e.g. "screen_planner", "component_planner", "component_gen") is included in
+// both the console header and the filename so outputs can be correlated and reused
+// in unit tests.
+func debugLogAgentOutput(step, raw string) {
+	fmt.Printf("=== %s RAW OUTPUT START ===\n%s\n=== %s RAW OUTPUT END ===\n", step, raw, step)
+	path := fmt.Sprintf("/home/paulette/debug/%s_%d.txt", step, time.Now().UnixNano())
+	if f, err := os.Create(path); err == nil {
+		defer f.Close()
+		f.WriteString(raw)
+		fmt.Printf("%s output written to %s\n", step, path)
+	}
 }
 
 var slugifyRe = regexp.MustCompile(`[^a-z0-9]+`)
@@ -572,6 +572,7 @@ func runComponentPlannerCall(
 	}
 
 	raw := fullResponse.String()
+	debugLogAgentOutput("component_planner", raw)
 
 	// Primary: extract <jsonplan> JSON and unmarshal into []plannerComponent.
 	parsed := agent.ParseResponse(raw)
@@ -654,6 +655,7 @@ func runComponentCall(
 		}
 
 		raw := fullResponse.String()
+		debugLogAgentOutput(fmt.Sprintf("component_gen_%s", comp.ID), raw)
 		var html string
 		if err := htmlEngine.Parse(raw, &html); err == nil && html != "" {
 			return html, nil
@@ -669,6 +671,85 @@ func runComponentCall(
 	}
 
 	return "", fmt.Errorf("component %q: retries exhausted", comp.ID)
+}
+
+// runStylerCall runs the CSS styler post-processing pass on a fully assembled HTML document.
+// It rewrites class="" attributes to use only the target framework's valid classes.
+// This is Ollama-only; non-Ollama providers return assembledHTML unchanged.
+// On failure the original assembledHTML is returned so the step is always best-effort.
+func runStylerCall(
+	prov provider.Provider,
+	modelID string,
+	run *stream.Run,
+	frameworkCfg *model.FrameworkConfig,
+	assembledHTML string,
+	tokensAccum *int,
+	tokensMu *sync.Mutex,
+) (string, error) {
+	// Only run styler for Ollama provider.
+	if _, ok := prov.(*provider.OllamaProvider); !ok {
+		return assembledHTML, nil
+	}
+
+	systemPrompt := agent.BuildMockStylerSystemPrompt(frameworkCfg)
+	if systemPrompt == "" {
+		return assembledHTML, nil
+	}
+
+	htmlEngine := llmparse.NewEngine([]llmparse.Strategy{llmparse.HTMLStrategy{}}, nil)
+	userMsg := assembledHTML
+
+	for attempt := 0; attempt <= agent.MaxMockRetries; attempt++ {
+		if run.Context().Err() != nil {
+			return assembledHTML, run.Context().Err()
+		}
+
+		events, err := prov.Chat(run.Context(), provider.ChatRequest{
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  userMsg,
+		})
+		if err != nil {
+			return assembledHTML, err
+		}
+
+		var fullResponse strings.Builder
+		var hadError bool
+		for ev := range events {
+			switch ev.Type {
+			case "chunk":
+				fullResponse.WriteString(ev.Content)
+			case "tokens":
+				var n int
+				fmt.Sscanf(ev.Content, "%d", &n)
+				tokensMu.Lock()
+				*tokensAccum += n
+				tokensMu.Unlock()
+			case "error":
+				hadError = true
+			}
+		}
+		if hadError {
+			return assembledHTML, fmt.Errorf("styler: LLM error")
+		}
+
+		raw := fullResponse.String()
+		debugLogAgentOutput("styler", raw)
+		var html string
+		if err := htmlEngine.Parse(raw, &html); err == nil && html != "" {
+			return html, nil
+		}
+
+		if attempt < agent.MaxMockRetries {
+			snippet := raw
+			if len(snippet) > 500 {
+				snippet = snippet[:500] + "..."
+			}
+			userMsg = fmt.Sprintf(agent.MockRetryPrompt, snippet)
+		}
+	}
+
+	return assembledHTML, fmt.Errorf("styler: retries exhausted")
 }
 
 // assembleScreenFragment combines generated component HTML fragments into a single
@@ -871,6 +952,15 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		// Step 3: Deterministic assembly
 		run.Emit(agent.StreamEvent{Type: "chunk", Content: "\nAssembling final HTML...\n"})
 		finalHTML := agent.AssembleMockHTML(frameworkCfg, views)
+
+		// Step 4: Styler pass (Ollama-only, best-effort CSS class correction)
+		run.Emit(agent.StreamEvent{Type: "chunk", Content: "Applying CSS styler pass...\n"})
+		styledHTML, stylerErr := runStylerCall(prov, modelID, run, frameworkCfg, finalHTML, &tokensAccum, &tokensMu)
+		if stylerErr != nil {
+			run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[Styler] Warning: %s — using pre-styler output.\n", stylerErr)})
+		} else if styledHTML != "" {
+			finalHTML = styledHTML
+		}
 
 		// Persist + emit done
 		p := filepath.Join(project.HostDir, mockRelPath)

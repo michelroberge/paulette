@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
+	ollamaprompts "github.com/michelroberge/paulette/backend/internal/prompts/ollama"
 )
 
 // ParseBuildPlanSystemPrompt is exported so handlers can pass it to provider.Chat directly.
@@ -364,6 +365,18 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 
 // IsLGTM is the exported form of isLGTM for use by handler dispatch helpers.
 func IsLGTM(response string) bool { return isLGTM(response) }
+
+// BuildCodeFilePlannerSystemPrompt returns the system prompt for the orchestrated
+// code generation file-planning step, used when the provider is Ollama.
+func BuildCodeFilePlannerSystemPrompt() string {
+	return ollamaprompts.CodeFilePlanner
+}
+
+// BuildCodeFileGeneratorSystemPrompt returns the system prompt for the orchestrated
+// code generation per-file step, used when the provider is Ollama.
+func BuildCodeFileGeneratorSystemPrompt() string {
+	return ollamaprompts.CodeFileGenerator
+}
 
 // BuildExecuteBeadRequest builds the system prompt and user message for a code-writer
 // bead execution without actually running Claude. This is used by non-CLI providers

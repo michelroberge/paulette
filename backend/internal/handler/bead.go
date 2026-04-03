@@ -896,6 +896,11 @@ func dispatchExecuteBead(
 	if _, ok := prov.(*provider.ClaudeCLIProvider); ok {
 		return agent.ExecuteBead(ctx, projectDir, bead, artifacts, enhCtx)
 	}
+	// Ollama models lack reliable multi-step tool use; use the multi-level
+	// non-agentic orchestration path (file planner → per-file generator → write).
+	if _, ok := prov.(*provider.OllamaProvider); ok {
+		return dispatchExecuteBeadOrchestrated(ctx, prov, modelID, projectDir, bead, artifacts, enhCtx)
+	}
 	// Build system + user prompts for non-CLI providers.
 	systemPrompt, userMsg := agent.BuildExecuteBeadRequest(ctx, projectDir, bead, artifacts, enhCtx)
 	return prov.ExecuteAgent(ctx, provider.AgentRequest{

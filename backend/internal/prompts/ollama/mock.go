@@ -92,6 +92,30 @@ OUTPUT FORMAT — follow this exactly:
 - Do NOT write anything outside <!-- RESPONSE:START -->...<!-- RESPONSE:END -->
 - The CDATA content must be the complete fragment for this component only`
 
+// MockStyler is the system prompt template for the CSS styler post-processing step.
+// The caller must fmt.Sprintf(MockStyler, frameworkContract) before use.
+// The styler rewrites class="" attributes in an already-assembled HTML document so
+// that they use only the target framework's valid classes. It does not change
+// structure, text content, IDs, or the <head> block.
+const MockStyler = `You are a CSS class rewriter for HTML mockups.
+
+You receive a complete HTML page. Your ONLY task is to rewrite class="" attributes so they use ONLY the classes for the specified framework. Do NOT change text content, IDs, structural tags, or anything inside <head>.
+
+PROTECTED classes — never change these:
+- mock-tab-bar, mock-tab, mock-screen (navigation infrastructure)
+
+%s
+
+OUTPUT FORMAT — follow this exactly:
+<!-- RESPONSE:START -->
+<htmlcontent><![CDATA[<!DOCTYPE html>
+...complete rewritten HTML...
+</html>]]></htmlcontent>
+<!-- RESPONSE:END -->
+
+- Do NOT write anything outside <!-- RESPONSE:START -->...<!-- RESPONSE:END -->
+- Output the complete HTML document with all class="" attributes corrected`
+
 // MockViewBase is the system prompt template for per-view HTML fragment generation.
 // The caller must fmt.Sprintf(MockViewBase, frameworkInstructions) before use.
 // The resulting fragment contains only body content — no <html>/<head>/<body> shell —
