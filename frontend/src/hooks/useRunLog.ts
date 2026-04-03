@@ -12,7 +12,7 @@ export function useRunLog(projectId: string | null) {
   const refresh = useCallback(async () => {
     if (!projectId) return;
     try {
-      const data = await getProjectRunLog(projectId);
+      const data = await getProjectRunLog(projectId!);
       setEntries(data);
     } catch {
       // silently ignore — stale data is fine
@@ -28,20 +28,22 @@ export function useRunLog(projectId: string | null) {
     setLoading(true);
     refresh().finally(() => setLoading(false));
 
+    const pid = projectId; // narrow to string for closure captures
+
     // Poll while any entry is running
     function scheduleNext(data: RunLogEntry[]) {
       if (timerRef.current) clearTimeout(timerRef.current);
       const hasRunning = data.some(e => e.status === 'running');
       if (hasRunning) {
         timerRef.current = setTimeout(async () => {
-          const updated = await getProjectRunLog(projectId).catch(() => data);
+          const updated = await getProjectRunLog(pid).catch(() => data);
           setEntries(updated);
           scheduleNext(updated);
         }, POLL_INTERVAL_MS);
       }
     }
 
-    getProjectRunLog(projectId!).then(data => {
+    getProjectRunLog(pid).then(data => {
       setEntries(data);
       scheduleNext(data);
     }).catch(() => {});
