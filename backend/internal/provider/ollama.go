@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -96,6 +97,17 @@ func (p *OllamaProvider) Chat(ctx context.Context, req ChatRequest) (<-chan Stre
 	if err != nil {
 		return nil, fmt.Errorf("ollama: build request: %w", err)
 	}
+
+	// --- DEBUG: write full prompt to file ---
+	debugFile := fmt.Sprintf("/home/paulette/debug/ollama_prompt_%d.json", time.Now().UnixNano())
+	if f, err := os.Create(debugFile); err == nil {
+		defer f.Close()
+		_, _ = f.Write(body) // ignore errors for simplicity
+		fmt.Printf("Ollama request body written to %s\n", debugFile)
+	} else {
+		fmt.Println("WARNING: failed to write Ollama prompt debug file")
+	}
+	// -----------------------------------------
 
 	url := fmt.Sprintf("%s/api/chat", p.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
