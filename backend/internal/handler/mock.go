@@ -395,6 +395,15 @@ func runPlannerCall(
 	}
 
 	raw := fullResponse.String()
+
+	// Debug: save the planner response to a file for inspection
+	debugFile := fmt.Sprintf("debug_planner_%d.txt", time.Now().UnixNano())
+	if f, err := os.Create(debugFile); err == nil {
+		defer f.Close()
+		f.WriteString(raw)
+		fmt.Printf("Planner output written to %s\n", debugFile)
+	}
+
 	parsed := agent.ParseResponse(raw)
 	if len(parsed.JSON) == 0 {
 		return nil, fmt.Errorf("planner returned no JSON screen list")
