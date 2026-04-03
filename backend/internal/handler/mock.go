@@ -397,11 +397,19 @@ func runPlannerCall(
 	raw := fullResponse.String()
 
 	// Debug: save the planner response to a file for inspection
-	debugFile := fmt.Sprintf("debug_planner_%d.txt", time.Now().UnixNano())
+	// Always print the raw planner output for debugging
+	fmt.Println("=== PLANNER RAW OUTPUT START ===")
+	fmt.Println(raw)
+	fmt.Println("=== PLANNER RAW OUTPUT END ===")
+
+	// Optionally still try to write to a file, but ignore errors
+	debugFile := fmt.Sprintf("/home/paulette/debug/planner_%d.txt", time.Now().UnixNano())
 	if f, err := os.Create(debugFile); err == nil {
 		defer f.Close()
 		f.WriteString(raw)
 		fmt.Printf("Planner output written to %s\n", debugFile)
+	} else {
+		// silently ignore file write errors
 	}
 
 	parsed := agent.ParseResponse(raw)
