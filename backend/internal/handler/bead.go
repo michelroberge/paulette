@@ -255,6 +255,7 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 			SystemPrompt: agent.ParseBuildPlanSystemPrompt,
 			UserMessage:  parseBuildPlanPrompt.String(),
 			ProjectDir:   project.HostDir,
+			Temperature:  provider.TempLow(),
 		})
 		if err != nil {
 			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to start parser: " + err.Error()})
@@ -285,6 +286,7 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 				SystemPrompt: agent.JSONFixSystemPrompt,
 				UserMessage:  agent.BuildJSONFixPrompt(badJSON, schema),
 				ProjectDir:   project.HostDir,
+				Temperature:  provider.TempLow(),
 			})
 			if fixErr != nil {
 				return nil, fixErr
@@ -534,6 +536,20 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 			summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 			if data, err := os.ReadFile(summaryPath); err == nil {
 				enhCtx.Summary = string(data)
+			}
+
+			// Truncate enhancement context for small-context providers (e.g. Ollama)
+			// to avoid exceeding the model's context window.
+			if prov, _, err := h.resolveProvider(project.ID, project.HostDir, model.StageBuild); err == nil {
+				if _, isOllama := prov.(*provider.OllamaProvider); isOllama {
+					const maxEnhChars = 4000
+					if len(enhCtx.Summary) > maxEnhChars {
+						enhCtx.Summary = enhCtx.Summary[:maxEnhChars] + "\n...(truncated for context window)"
+					}
+					if len(enhCtx.Vision) > maxEnhChars {
+						enhCtx.Vision = enhCtx.Vision[:maxEnhChars] + "\n...(truncated for context window)"
+					}
+				}
 			}
 		}
 
@@ -927,6 +943,14 @@ func dispatchReviewBead(
 	if _, ok := prov.(*provider.ClaudeCLIProvider); ok {
 		return agent.ReviewBead(ctx, projectDir, bead, artifacts, siblings, openBeads, enhCtx)
 	}
+
+	// Ollama: use chat-based review with file contents inlined (no tool use).
+	// This avoids the fragile agentic tool loop for a task that rarely needs it.
+	if _, ok := prov.(*provider.OllamaProvider); ok {
+		return dispatchReviewBeadChat(ctx, prov, modelID, projectDir, bead, artifacts, siblings, openBeads, enhCtx)
+	}
+
+	// Other providers: agentic review with Bash-only tools.
 	systemPrompt, userMsg := agent.BuildReviewBeadRequest(projectDir, bead, artifacts, siblings, openBeads, enhCtx)
 	ch, err := prov.ExecuteAgent(ctx, provider.AgentRequest{
 		Model:        modelID,
@@ -938,6 +962,39 @@ func dispatchReviewBead(
 	if err != nil {
 		return "", 0, err
 	}
+	return consumeReviewEvents(ch)
+}
+
+// dispatchReviewBeadChat performs a chat-based (non-agentic) code review.
+// Target file contents are read from disk and inlined into the prompt so
+// the model doesn't need tool access — much more reliable for Ollama.
+func dispatchReviewBeadChat(
+	ctx context.Context,
+	prov provider.Provider,
+	modelID string,
+	projectDir string,
+	bead model.Bead,
+	artifacts map[model.StageName]string,
+	siblings []model.Bead,
+	openBeads []model.Bead,
+	enhCtx *agent.EnhancementContext,
+) (string, int, error) {
+	systemPrompt, userMsg := agent.BuildReviewBeadChatRequest(projectDir, bead, artifacts, siblings, openBeads, enhCtx)
+	ch, err := prov.Chat(ctx, provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: systemPrompt,
+		UserMessage:  userMsg,
+		ProjectDir:   projectDir,
+	})
+	if err != nil {
+		return "", 0, err
+	}
+	return consumeReviewEvents(ch)
+}
+
+// consumeReviewEvents drains a stream of events and returns the review findings
+// (empty string = approved) and token count.
+func consumeReviewEvents(ch <-chan agent.StreamEvent) (string, int, error) {
 	var fullText strings.Builder
 	var tokens int
 	for ev := range ch {

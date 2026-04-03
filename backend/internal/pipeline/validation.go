@@ -118,6 +118,12 @@ func RunValidation(ctx context.Context, projectDir string, cmds ValidationComman
 	return results, allPassed
 }
 
+// RunBuildCommand runs a single build command to completion and returns the result.
+// Convenience wrapper around runToCompletion with BuildTimeout and "build" category.
+func RunBuildCommand(ctx context.Context, projectDir, cmdStr string) ValidationResult {
+	return runToCompletion(ctx, projectDir, cmdStr, CmdBuild, BuildTimeout)
+}
+
 // runToCompletion runs a command to completion and checks exit code.
 func runToCompletion(ctx context.Context, dir, cmdStr, category string, timeout time.Duration) ValidationResult {
 	start := time.Now()

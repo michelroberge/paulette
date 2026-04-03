@@ -11,6 +11,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/llmparse"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/pipeline"
 	"github.com/michelroberge/paulette/backend/internal/provider"
 )
 
@@ -86,7 +87,7 @@ func dispatchExecuteBeadOrchestrated(
 				}
 			}
 
-			content, genTokens, genErr := runCodeFileGeneratorCall(ctx, prov, modelID, bead, fp, existing)
+			content, genTokens, genErr := runCodeFileGeneratorCall(ctx, prov, modelID, bead, fp, existing, generated)
 			if genErr != nil {
 				emitLog(fmt.Sprintf("[%s] warn: generator failed for %s: %v — skipping", bead.ID, fp.Path, genErr))
 				continue
@@ -121,6 +122,61 @@ func dispatchExecuteBeadOrchestrated(
 			written = append(written, fp.Path)
 		}
 
+		// --- Level 4: Post-generation build validation ---
+		// Run build commands from the architecture artifact to catch compile errors
+		// before the review step. On failure, attempt a targeted correction.
+		if arch, ok := artifacts[model.StageArchitecture]; ok && arch != "" {
+			_, buildCmds, _ := pipeline.ParseValidationCommands(arch)
+			if len(buildCmds) > 0 {
+				emitLog(fmt.Sprintf("[%s] Running build validation (%d commands)...", bead.ID, len(buildCmds)))
+				const maxBuildFixes = 2
+				for attempt := 0; attempt < maxBuildFixes; attempt++ {
+					if ctx.Err() != nil {
+						break
+					}
+					allPassed := true
+					var failOutput strings.Builder
+					for _, cmdStr := range buildCmds {
+						result := pipeline.RunBuildCommand(ctx, projectDir, cmdStr)
+						if !result.Success {
+							allPassed = false
+							failOutput.WriteString(fmt.Sprintf("Command `%s` failed (exit %d):\n%s\n\n", result.Command, result.ExitCode, result.Output))
+						}
+					}
+					if allPassed {
+						emitLog(fmt.Sprintf("[%s] Build validation passed", bead.ID))
+						break
+					}
+					if attempt == maxBuildFixes-1 {
+						emitLog(fmt.Sprintf("[%s] Build validation still failing after %d fix attempts — proceeding to review", bead.ID, maxBuildFixes))
+						break
+					}
+					emitLog(fmt.Sprintf("[%s] Build failed, attempting correction (attempt %d/%d)...", bead.ID, attempt+1, maxBuildFixes))
+
+					// Create a correction bead with build errors appended to the description,
+					// then re-generate each file with the current content as "existing".
+					corrBead := bead
+					corrBead.Description = bead.Description + "\n\nBUILD ERRORS — fix these:\n" + failOutput.String()
+					for _, fp := range files {
+						content, ok := generated[fp.Path]
+						if !ok {
+							continue
+						}
+						fixed, fixTokens, fixErr := runCodeFileGeneratorCall(ctx, prov, modelID, corrBead, fp, content, generated)
+						if fixTokens > 0 {
+							emit(agent.StreamEvent{Type: "tokens", Tokens: fixTokens})
+						}
+						if fixErr != nil || fixed == "" {
+							continue
+						}
+						generated[fp.Path] = fixed
+						absPath := filepath.Join(projectDir, fp.Path)
+						os.WriteFile(absPath, []byte(fixed), 0o644) //nolint:errcheck
+					}
+				}
+			}
+		}
+
 		summary := fmt.Sprintf("Orchestrated code generation complete for [%s] '%s'.\n\nFiles written (%d):\n%s",
 			bead.ID, bead.Title, len(written), strings.Join(written, "\n"))
 		emit(agent.StreamEvent{Type: "done", Content: summary})
@@ -153,6 +209,18 @@ func runCodeFilePlannerCall(
 	if arch, ok := artifacts[model.StageArchitecture]; ok && arch != "" {
 		userMsg.WriteString("Architecture:\n---\n")
 		userMsg.WriteString(arch)
+		userMsg.WriteString("\n---\n\n")
+	}
+	// Inject UX context so the planner considers UI requirements when
+	// deciding which files to create (e.g. components, pages, styles).
+	if ux, ok := artifacts[model.StageUX]; ok && ux != "" {
+		const maxUXChars = 2000
+		truncated := ux
+		if len(truncated) > maxUXChars {
+			truncated = truncated[:maxUXChars] + "\n...(truncated)"
+		}
+		userMsg.WriteString("UX Design (for UI-related files):\n---\n")
+		userMsg.WriteString(truncated)
 		userMsg.WriteString("\n---\n\n")
 	}
 	userMsg.WriteString("List all files to create or modify for this task.")
@@ -236,6 +304,9 @@ func runCodeFilePlannerCall(
 
 // runCodeFileGeneratorCall asks the LLM to generate the complete content of one file.
 // existing is the current file content (empty string for new files).
+// priorFiles contains content of files already generated in this bead, keyed by path.
+// Relevant prior files are injected so the model can reference types/interfaces from
+// sibling files in the same bead.
 // Returns generated content (extracted from code fence), token count, and any error.
 func runCodeFileGeneratorCall(
 	ctx context.Context,
@@ -244,6 +315,7 @@ func runCodeFileGeneratorCall(
 	bead model.Bead,
 	fp codeFilePlan,
 	existing string,
+	priorFiles map[string]string,
 ) (string, int, error) {
 	var userMsg strings.Builder
 	userMsg.WriteString(fmt.Sprintf("File: %s\n", fp.Path))
@@ -259,6 +331,23 @@ func runCodeFileGeneratorCall(
 		userMsg.WriteString("\nExisting file content to modify:\n```\n")
 		userMsg.WriteString(existing)
 		userMsg.WriteString("\n```\n")
+	}
+	// Inject relevant prior-generated files so the model can reference
+	// types, interfaces, and imports from sibling files in this bead.
+	if len(priorFiles) > 0 {
+		const maxPriorChars = 6000
+		var priorBuf strings.Builder
+		for path, content := range priorFiles {
+			entry := fmt.Sprintf("\n### %s\n```\n%s\n```\n", path, content)
+			if priorBuf.Len()+len(entry) > maxPriorChars {
+				break
+			}
+			priorBuf.WriteString(entry)
+		}
+		if priorBuf.Len() > 0 {
+			userMsg.WriteString("\nOther files already generated for this task (use for imports/types):\n")
+			userMsg.WriteString(priorBuf.String())
+		}
 	}
 	userMsg.WriteString("\nGenerate the complete file content now.")
 

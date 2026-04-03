@@ -31,6 +31,17 @@ type OllamaProvider struct {
 	httpClient *http.Client
 }
 
+// resolveModelCaps returns the capability profile for the model. If the model
+// is unknown in the static table, it triggers a runtime probe and caches the result.
+func (p *OllamaProvider) resolveModelCaps(model string) OllamaModelCaps {
+	caps := ollamaModelCaps(model)
+	if caps == safeDefault {
+		// Unknown model — try runtime probe.
+		return ProbeOllamaModelCaps(p.baseURL, model)
+	}
+	return caps
+}
+
 // NewOllamaProvider returns an OllamaProvider configured to talk to the
 // Ollama instance at baseURL (e.g. "http://localhost:11434"). Trailing
 // slashes are stripped for consistency.
@@ -301,7 +312,7 @@ func ollamaTemperatureForPrompt(systemPrompt string) float64 {
 // If a system prompt is provided it is prepended as a message with role "system".
 // History messages are appended in order, followed by the new user message.
 func (p *OllamaProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
-	caps := ollamaModelCaps(req.Model)
+	caps := p.resolveModelCaps(req.Model)
 	systemPrompt := ollamaWrapSystemPrompt(req.SystemPrompt, caps)
 
 	msgs := make([]ollamaMessage, 0, len(req.History)+2)
@@ -324,13 +335,19 @@ func (p *OllamaProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
 	// Append the new user turn.
 	msgs = append(msgs, ollamaMessage{Role: "user", Content: req.UserMessage})
 
+	// Use explicit temperature if provided; otherwise fall back to heuristic.
+	temp := ollamaTemperatureForPrompt(systemPrompt)
+	if req.Temperature != nil {
+		temp = *req.Temperature
+	}
+
 	return json.Marshal(ollamaChatRequest{
 		Model:    req.Model,
 		Messages: msgs,
 		Stream:   true,
 		Options: &ollamaChatOptions{
 			NumCtx:      caps.EffectiveNumCtx(),
-			Temperature: ollamaTemperatureForPrompt(systemPrompt),
+			Temperature: temp,
 		},
 	})
 }
@@ -446,7 +463,7 @@ type ollamaAgentResp struct {
 // It branches on model capabilities: models with NativeTools use the structured
 // tool_calls API; all others use the pseudo-tool text fallback.
 func runOllamaAgentLoop(ctx context.Context, p *OllamaProvider, req AgentRequest, ch chan<- StreamEvent) {
-	caps := ollamaModelCaps(req.Model)
+	caps := p.resolveModelCaps(req.Model)
 	executor := &ToolExecutor{ProjectDir: req.ProjectDir}
 	msgs := ollamaInitMessages(req, caps)
 	toolSchemas := ollamaBuildToolSchemas(req.Tools, caps)
@@ -528,7 +545,7 @@ func ollamaBuildToolSchemas(tools []AgentTool, caps OllamaModelCaps) []map[strin
 
 // ollamaAgentPost sends one non-streaming request to /api/chat and returns the decoded response.
 func (p *OllamaProvider) ollamaAgentPost(ctx context.Context, apiURL, model string, msgs []ollamaAgentMsg, toolSchemas []map[string]any) (ollamaAgentResp, error) {
-	caps := ollamaModelCaps(model)
+	caps := p.resolveModelCaps(model)
 	body := map[string]any{
 		"model":    model,
 		"messages": msgs,

@@ -72,7 +72,14 @@ type ChatRequest struct {
 
 	// Stage is an optional label used for debug logging (e.g. "architecture", "ux").
 	Stage string
+
+	// Temperature overrides the provider's default/heuristic temperature.
+	// When nil, the provider uses its own logic (e.g. Ollama's keyword-based heuristic).
+	Temperature *float64
 }
+
+// TempLow returns a pointer to 0.3, suitable for structured output prompts.
+func TempLow() *float64 { v := 0.3; return &v }
 
 // Provider is the interface every LLM backend must implement.
 // Implementations convert their native streaming format (NDJSON, SSE, etc.)
