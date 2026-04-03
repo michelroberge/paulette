@@ -406,7 +406,7 @@ func runPlannerCall(
 
 	parsed := agent.ParseResponse(raw)
 	if len(parsed.JSON) == 0 {
-		return nil, fmt.Errorf("planner returned no JSON screen list")
+		return nil, fmt.Errorf("planner returned no JSON screen list - it did go here")
 	}
 
 	var screens []plannerScreen
