@@ -673,83 +673,85 @@ func runComponentCall(
 	return "", fmt.Errorf("component %q: retries exhausted", comp.ID)
 }
 
-// runStylerCall runs the CSS styler post-processing pass on a fully assembled HTML document.
-// It rewrites class="" attributes to use only the target framework's valid classes.
-// This is Ollama-only; non-Ollama providers return assembledHTML unchanged.
-// On failure the original assembledHTML is returned so the step is always best-effort.
-func runStylerCall(
-	prov provider.Provider,
-	modelID string,
-	run *stream.Run,
-	frameworkCfg *model.FrameworkConfig,
-	assembledHTML string,
-	tokensAccum *int,
-	tokensMu *sync.Mutex,
-) (string, error) {
-	// Only run styler for Ollama provider.
-	if _, ok := prov.(*provider.OllamaProvider); !ok {
-		return assembledHTML, nil
+// sanitizeMockClasses performs a deterministic pass over assembled HTML, stripping
+// CSS class names that belong to the wrong framework. This replaces the LLM-based
+// styler which cannot faithfully reproduce large documents with small models.
+func sanitizeMockClasses(html string, cfg *model.FrameworkConfig) string {
+	if cfg == nil {
+		return html
 	}
-
-	systemPrompt := agent.BuildMockStylerSystemPrompt(frameworkCfg)
-	if systemPrompt == "" {
-		return assembledHTML, nil
+	filter := classForbiddenFilter(cfg.Framework)
+	if filter == nil {
+		return html
 	}
-
-	htmlEngine := llmparse.NewEngine([]llmparse.Strategy{llmparse.HTMLStrategy{}}, nil)
-	userMsg := assembledHTML
-
-	for attempt := 0; attempt <= agent.MaxMockRetries; attempt++ {
-		if run.Context().Err() != nil {
-			return assembledHTML, run.Context().Err()
-		}
-
-		events, err := prov.Chat(run.Context(), provider.ChatRequest{
-			Model:        modelID,
-			SystemPrompt: systemPrompt,
-			UserMessage:  userMsg,
-		})
-		if err != nil {
-			return assembledHTML, err
-		}
-
-		var fullResponse strings.Builder
-		var hadError bool
-		for ev := range events {
-			switch ev.Type {
-			case "chunk":
-				fullResponse.WriteString(ev.Content)
-			case "tokens":
-				var n int
-				fmt.Sscanf(ev.Content, "%d", &n)
-				tokensMu.Lock()
-				*tokensAccum += n
-				tokensMu.Unlock()
-			case "error":
-				hadError = true
+	return classAttrRe.ReplaceAllStringFunc(html, func(match string) string {
+		// Extract the class value between quotes.
+		inner := match[len(`class="`) : len(match)-1]
+		classes := strings.Fields(inner)
+		kept := classes[:0]
+		for _, cls := range classes {
+			if !filter(cls) {
+				kept = append(kept, cls)
 			}
 		}
-		if hadError {
-			return assembledHTML, fmt.Errorf("styler: LLM error")
+		if len(kept) == 0 {
+			return `class=""`
 		}
+		return `class="` + strings.Join(kept, " ") + `"`
+	})
+}
 
-		raw := fullResponse.String()
-		debugLogAgentOutput("styler", raw)
-		var html string
-		if err := htmlEngine.Parse(raw, &html); err == nil && html != "" {
-			return html, nil
-		}
+// classAttrRe matches class="..." attributes (non-greedy, double quotes only).
+var classAttrRe = regexp.MustCompile(`class="[^"]*"`)
 
-		if attempt < agent.MaxMockRetries {
-			snippet := raw
-			if len(snippet) > 500 {
-				snippet = snippet[:500] + "..."
-			}
-			userMsg = fmt.Sprintf(agent.MockRetryPrompt, snippet)
-		}
+// Bootstrap class patterns that should be stripped when targeting Tailwind.
+var bootstrapClassRe = regexp.MustCompile(
+	`^(btn|btn-.+|card|card-.+|container|container-.+|row|col-.+|d-.+|navbar|nav-.+|form-.+|badge|list-group.*|table-.+|alert.*|modal.*|dropdown.*)$`,
+)
+
+// Tailwind utility patterns that should be stripped when targeting Bootstrap.
+var tailwindClassRe = regexp.MustCompile(
+	`^(bg-.+|text-(slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|white|black|transparent).*|rounded-.+|shadow-.+|border-.+|hover:.+|focus:.+|w-.+|h-.+|min-.+|max-.+|gap-.+|items-.+|justify-.+|space-.+|overflow-.+|opacity-.+|font-.+|leading-.+|tracking-.+|flex-.+|grid-.+|grow|shrink|basis-.+|self-.+|place-.+|inset-.+|top-.+|right-.+|left-.+|bottom-.+|z-.+|aspect-.+|transition-.+|duration-.+|ease-.+|animate-.+)$`,
+)
+
+// classForbiddenFilter returns a function that returns true for class names
+// that should be stripped for the given target framework. Returns nil if no
+// sanitization is needed.
+func classForbiddenFilter(fw model.UXFramework) func(string) bool {
+	// Protected: never strip mock-* infrastructure classes.
+	protected := func(cls string) bool {
+		return strings.HasPrefix(cls, "mock-")
 	}
 
-	return assembledHTML, fmt.Errorf("styler: retries exhausted")
+	switch fw {
+	case model.FrameworkTailwind:
+		// Strip Bootstrap class names; keep Tailwind utilities.
+		return func(cls string) bool {
+			if protected(cls) {
+				return false
+			}
+			return bootstrapClassRe.MatchString(cls)
+		}
+	case model.FrameworkBootstrap:
+		// Strip Tailwind utility names; keep Bootstrap components.
+		return func(cls string) bool {
+			if protected(cls) {
+				return false
+			}
+			return tailwindClassRe.MatchString(cls)
+		}
+	case model.FrameworkMUI, model.FrameworkShadcn, model.FrameworkVanilla:
+		// These frameworks use inline styles / CSS variables only.
+		// Strip any Tailwind or Bootstrap class names.
+		return func(cls string) bool {
+			if protected(cls) {
+				return false
+			}
+			return bootstrapClassRe.MatchString(cls) || tailwindClassRe.MatchString(cls)
+		}
+	default:
+		return nil
+	}
 }
 
 // assembleScreenFragment combines generated component HTML fragments into a single
@@ -953,14 +955,8 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		run.Emit(agent.StreamEvent{Type: "chunk", Content: "\nAssembling final HTML...\n"})
 		finalHTML := agent.AssembleMockHTML(frameworkCfg, views)
 
-		// Step 4: Styler pass (Ollama-only, best-effort CSS class correction)
-		run.Emit(agent.StreamEvent{Type: "chunk", Content: "Applying CSS styler pass...\n"})
-		styledHTML, stylerErr := runStylerCall(prov, modelID, run, frameworkCfg, finalHTML, &tokensAccum, &tokensMu)
-		if stylerErr != nil {
-			run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[Styler] Warning: %s — using pre-styler output.\n", stylerErr)})
-		} else if styledHTML != "" {
-			finalHTML = styledHTML
-		}
+		// Step 4: Deterministic CSS class sanitizer — strip wrong-framework classes.
+		finalHTML = sanitizeMockClasses(finalHTML, frameworkCfg)
 
 		// Persist + emit done
 		p := filepath.Join(project.HostDir, mockRelPath)
