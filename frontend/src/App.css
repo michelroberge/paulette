@@ -4401,7 +4401,7 @@ body {
   position: absolute;
   inset: -3px;
   border-radius: 50%;
-  border: 2px solid #3b82f6;
+  border: 2px solid #1d4ed8;
   animation: robot-pulse 1.4s ease-out infinite;
   pointer-events: none;
 }
