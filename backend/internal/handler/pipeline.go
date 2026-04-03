@@ -282,7 +282,9 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		return
 	}
 
-	systemPrompt, userMsg := agent.BuildStreamSummaryRequest(artifacts, project.Name, project.Version)
+	// Pass 0 for maxContextChars (no truncation) — the provider's num_ctx
+	// setting handles context limits. Callers can pass a budget for constrained models.
+	systemPrompt, userMsg := agent.BuildStreamSummaryRequest(artifacts, project.Name, project.Version, 0)
 
 	go func() {
 		// LIFO defer: clearActivity runs first, then run.Finish (so watcher sees clean state)

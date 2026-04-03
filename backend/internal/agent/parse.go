@@ -42,7 +42,8 @@ func ParseResponse(raw string) ParsedResponse {
 	if strings.Contains(raw, "<"+TagDiscussion+">") || strings.Contains(raw, "<"+TagArtifact+">") {
 		return parseXMLEnvelope(raw)
 	}
-	if strings.Contains(raw, "## Discussion") || strings.Contains(raw, "## Artifact") {
+	lower := strings.ToLower(raw)
+	if strings.Contains(lower, "## discussion") || strings.Contains(lower, "## artifact") {
 		return parsePlainSections(raw)
 	}
 	// No known structure — return everything as discussion.
@@ -68,20 +69,41 @@ func parsePlainSections(raw string) ParsedResponse {
 	}
 }
 
-// extractPlainSection returns the content after the given "## Heading" marker up to
-// the next "## " heading or end of string. Uses the last occurrence of the heading
-// so a preamble before the real content is skipped.
+// rePlainHeading matches markdown headings with 1-3 # characters, case-insensitive.
+// Captures: group 1 = heading text (lowercased comparison done by caller).
+var rePlainHeading = regexp.MustCompile(`(?im)^#{1,3}\s+(.+)$`)
+
+// extractPlainSection returns the content after the given heading keyword up to
+// the next markdown heading or end of string. Matching is case-insensitive and
+// supports 1-3 # characters (e.g. "## Discussion", "### discussion", "# ARTIFACT").
+// Uses the last occurrence so a preamble before the real content is skipped.
 func extractPlainSection(raw, heading string) string {
-	idx := strings.LastIndex(raw, heading)
-	if idx < 0 {
+	// Extract just the keyword from the heading pattern (e.g. "## Discussion" → "discussion").
+	keyword := strings.ToLower(strings.TrimLeft(heading, "# "))
+
+	// Find all heading positions and pick the last one matching our keyword.
+	matches := rePlainHeading.FindAllStringIndex(raw, -1)
+	matchIdx := -1
+	matchEnd := 0
+	for _, m := range matches {
+		line := raw[m[0]:m[1]]
+		// Extract heading text after the # characters.
+		text := strings.TrimSpace(strings.TrimLeft(line, "#"))
+		if strings.EqualFold(text, keyword) {
+			matchIdx = m[0]
+			matchEnd = m[1]
+		}
+	}
+	if matchIdx < 0 {
 		return ""
 	}
-	content := raw[idx+len(heading):]
+
+	content := raw[matchEnd:]
 	// Strip the newline immediately after the heading.
 	content = strings.TrimLeft(content, "\r\n")
-	// Stop at the next "## " heading if present.
-	if next := strings.Index(content, "\n## "); next >= 0 {
-		content = content[:next]
+	// Stop at the next markdown heading if present.
+	if next := rePlainHeading.FindStringIndex(content); next != nil {
+		content = content[:next[0]]
 	}
 	return strings.TrimSpace(content)
 }
@@ -111,16 +133,45 @@ func extractCDATA(s string) string {
 	return s
 }
 
+// reCodeFenceJSON matches a ```json ... ``` code fence.
+var reCodeFenceJSON = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.*?)\\n\\s*```")
+
 // extractJSONPlan pulls <jsonplan> content as a byte slice for json.Unmarshal.
-// Falls back to extracting the first top-level JSON object or array found in the
-// string when no <jsonplan> tags are present (e.g. Ollama models that ignore the
-// envelope instruction and return raw JSON).
+// Falls back through multiple strategies for models that ignore envelope instructions:
+// 1. <jsonplan> tags (preferred)
+// 2. ```json code fence
+// 3. First line starting with { or [ through last line ending with } or ]
+// 4. Outermost { ... } or [ ... ] in the raw string (most aggressive)
 func extractJSONPlan(s string) []byte {
+	// Strategy 1: <jsonplan> tags
 	content := extractBetween(s, "<"+TagJSON+">", "</"+TagJSON+">")
 	if content != "" {
 		return repairJSON([]byte(content))
 	}
-	// Fallback: find the outermost { ... } or [ ... ] in the raw string.
+
+	// Strategy 2: ```json code fence
+	if m := reCodeFenceJSON.FindStringSubmatch(s); len(m) > 1 {
+		return repairJSON([]byte(m[1]))
+	}
+
+	// Strategy 3: line-based — find first line starting with {/[ and last ending with }/]
+	lines := strings.Split(s, "\n")
+	startLine, endLine := -1, -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if startLine < 0 && len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+			startLine = i
+		}
+		if len(trimmed) > 0 && (trimmed[len(trimmed)-1] == '}' || trimmed[len(trimmed)-1] == ']') {
+			endLine = i
+		}
+	}
+	if startLine >= 0 && endLine >= startLine {
+		block := strings.Join(lines[startLine:endLine+1], "\n")
+		return repairJSON([]byte(block))
+	}
+
+	// Strategy 4: outermost braces (most aggressive fallback)
 	start := strings.IndexAny(s, "{[")
 	if start < 0 {
 		return nil
@@ -237,6 +288,13 @@ func (f *StreamFilter) transition(tag string) (streamFilterState, bool) {
 	return 0, false
 }
 
+// reInsertCommaAfterValue matches a value (string, number, bool, null, }, ])
+// followed by whitespace/newline then a quote — missing comma before next key.
+var reInsertCommaAfterValue = regexp.MustCompile(`("|true|false|null|\d|[}\]])\s*\n\s*"`)
+
+// reInsertCommaObjects matches adjacent objects in an array: } { → }, {
+var reInsertCommaObjects = regexp.MustCompile(`\}\s*\{`)
+
 func repairJSON(input []byte) []byte {
 	s := string(input)
 
@@ -250,7 +308,22 @@ func repairJSON(input []byte) []byte {
 	// 2. Remove trailing commas
 	s = regexp.MustCompile(`,(\s*[}\]])`).ReplaceAllString(s, "$1")
 
-	// 3. Attempt to close braces/brackets
+	// 3. Insert missing commas between fields.
+	// Handles: "value"\n"key" → "value",\n"key"
+	s = reInsertCommaAfterValue.ReplaceAllStringFunc(s, func(m string) string {
+		// Find the split point: insert comma after the value token.
+		for i := len(m) - 1; i >= 0; i-- {
+			if m[i] == '"' && (i == 0 || m[i-1] != '\\') {
+				return m[:i] + "," + m[i:]
+			}
+		}
+		return m
+	})
+
+	// 4. Insert missing commas between adjacent objects: }{ → },{
+	s = reInsertCommaObjects.ReplaceAllString(s, "},{")
+
+	// 5. Attempt to close braces/brackets
 	openBraces := strings.Count(s, "{")
 	closeBraces := strings.Count(s, "}")
 	for closeBraces < openBraces {
@@ -380,15 +453,18 @@ func checkJSONType(value interface{}, typ string, path string) error {
 // It should invoke an LLM with the invalid JSON and schema, and return the fixed JSON.
 type JSONLLMFixer func(ctx context.Context, invalidJSON []byte, schema []byte) ([]byte, error)
 
+// maxFixerAttempts is the number of times the LLM fixer is called before giving up.
+const maxFixerAttempts = 2
+
 // ParseAndValidateJSON extracts <jsonplan> from raw then runs the full pipeline:
 //  1. repairJSON (already done inside extractJSONPlan)
 //  2. validateJSON against schema
-//  3. IF invalid → fixer(ctx, data, schema)
-//  4. repairJSON again
-//  5. validateJSON again
-//  6. IF still invalid → return error
+//  3. IF invalid → fixer(ctx, data, schema) up to maxFixerAttempts times
+//  4. repairJSON after each fix attempt
+//  5. validateJSON after each fix attempt
+//  6. IF still invalid after all attempts → return error
 //
-// If fixer is nil, steps 3–5 are skipped and the first validation error is returned.
+// If fixer is nil, step 3 is skipped and the first validation error is returned.
 func ParseAndValidateJSON(ctx context.Context, raw string, schema []byte, fixer JSONLLMFixer) ([]byte, error) {
 	data := extractJSONPlan(raw) // includes repairJSON
 	if data == nil {
@@ -401,16 +477,23 @@ func ParseAndValidateJSON(ctx context.Context, raw string, schema []byte, fixer 
 		return nil, err
 	}
 
-	fixed, fixErr := fixer(ctx, data, schema)
-	if fixErr != nil {
-		return nil, fmt.Errorf("LLM fix failed: %w", fixErr)
+	current := data
+	var lastErr error
+	for attempt := 0; attempt < maxFixerAttempts; attempt++ {
+		fixed, fixErr := fixer(ctx, current, schema)
+		if fixErr != nil {
+			return nil, fmt.Errorf("LLM fix attempt %d failed: %w", attempt+1, fixErr)
+		}
+
+		fixed = repairJSON(fixed)
+
+		if err := validateJSON(fixed, schema); err == nil {
+			return fixed, nil
+		} else {
+			lastErr = err
+			current = fixed // feed the partially-fixed result back
+		}
 	}
 
-	fixed = repairJSON(fixed)
-
-	if err := validateJSON(fixed, schema); err != nil {
-		return nil, fmt.Errorf("JSON invalid after LLM fix: %w", err)
-	}
-
-	return fixed, nil
+	return nil, fmt.Errorf("JSON invalid after %d LLM fix attempts: %w", maxFixerAttempts, lastErr)
 }

@@ -53,7 +53,8 @@ Be concise — aim for a document that can be quickly scanned. Avoid repeating f
 
 // BuildStreamSummaryRequest returns the system prompt and user message for summary generation.
 // Used by non-CLI providers that call provider.Chat directly.
-func BuildStreamSummaryRequest(artifacts map[model.StageName]string, projectName, version string) (systemPrompt, userMsg string) {
+// maxContextChars limits the total user message size; 0 means no limit.
+func BuildStreamSummaryRequest(artifacts map[model.StageName]string, projectName, version string, maxContextChars int) (systemPrompt, userMsg string) {
 	var prompt strings.Builder
 	prompt.WriteString(fmt.Sprintf("Project: %s, Version: %s\n\n", projectName, version))
 	stages := []struct {
@@ -65,10 +66,28 @@ func BuildStreamSummaryRequest(artifacts map[model.StageName]string, projectName
 		{model.StageArchitecture, "Architecture"},
 		{model.StageBuild, "Build Plan"},
 	}
+
+	// When a context budget is set, divide it equally among present artifacts.
+	perArtifactBudget := 0
+	if maxContextChars > 0 {
+		count := 0
+		for _, s := range stages {
+			if artifacts[s.name] != "" {
+				count++
+			}
+		}
+		if count > 0 {
+			perArtifactBudget = maxContextChars / count
+		}
+	}
+
 	for _, s := range stages {
 		content := artifacts[s.name]
 		if content == "" {
 			continue
+		}
+		if perArtifactBudget > 0 {
+			content = TruncateArtifact(content, perArtifactBudget, 8)
 		}
 		prompt.WriteString(fmt.Sprintf("## %s Artifact\n---\n%s\n---\n\n", s.label, content))
 	}

@@ -436,18 +436,20 @@ func runPlannerCall(
 	return nil, fmt.Errorf("planner returned no parseable screen list")
 }
 
-// debugLogAgentOutput prints the raw LLM response for an agent step to stdout and
-// writes it to /home/paulette/debug/<step>_<timestamp>.txt. The step name
-// (e.g. "screen_planner", "component_planner", "component_gen") is included in
-// both the console header and the filename so outputs can be correlated and reused
-// in unit tests.
+// debugLogAgentOutput prints the raw LLM response for an agent step to stdout and,
+// when PAULETTE_DEBUG_DIR is set, writes it to <dir>/<step>_<timestamp>.txt.
+// The step name (e.g. "screen_planner", "component_planner", "component_gen") is
+// included in both the console header and the filename so outputs can be correlated
+// and reused in unit tests.
 func debugLogAgentOutput(step, raw string) {
 	fmt.Printf("=== %s RAW OUTPUT START ===\n%s\n=== %s RAW OUTPUT END ===\n", step, raw, step)
-	path := fmt.Sprintf("/home/paulette/debug/%s_%d.txt", step, time.Now().UnixNano())
-	if f, err := os.Create(path); err == nil {
-		defer f.Close()
-		f.WriteString(raw)
-		fmt.Printf("%s output written to %s\n", step, path)
+	if debugDir := os.Getenv("PAULETTE_DEBUG_DIR"); debugDir != "" {
+		path := fmt.Sprintf("%s/%s_%d.txt", debugDir, step, time.Now().UnixNano())
+		if f, err := os.Create(path); err == nil {
+			f.WriteString(raw)
+			_ = f.Close()
+			fmt.Printf("%s output written to %s\n", step, path)
+		}
 	}
 }
 

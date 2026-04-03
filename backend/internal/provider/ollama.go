@@ -54,11 +54,18 @@ type ollamaMessage struct {
 	Content string `json:"content"`
 }
 
+// ollamaChatOptions holds runtime parameters sent in the "options" field.
+type ollamaChatOptions struct {
+	NumCtx      int     `json:"num_ctx,omitempty"`
+	Temperature float64 `json:"temperature,omitempty"`
+}
+
 // ollamaChatRequest is the JSON body sent to POST /api/chat.
 type ollamaChatRequest struct {
-	Model    string          `json:"model"`
-	Messages []ollamaMessage `json:"messages"`
-	Stream   bool            `json:"stream"`
+	Model    string           `json:"model"`
+	Messages []ollamaMessage  `json:"messages"`
+	Stream   bool             `json:"stream"`
+	Options  *ollamaChatOptions `json:"options,omitempty"`
 }
 
 // ollamaStreamChunk is one NDJSON line from the /api/chat stream.
@@ -98,16 +105,15 @@ func (p *OllamaProvider) Chat(ctx context.Context, req ChatRequest) (<-chan Stre
 		return nil, fmt.Errorf("ollama: build request: %w", err)
 	}
 
-	// --- DEBUG: write full prompt to file ---
-	debugFile := fmt.Sprintf("/home/paulette/debug/ollama_prompt_%d.json", time.Now().UnixNano())
-	if f, err := os.Create(debugFile); err == nil {
-		defer f.Close()
-		_, _ = f.Write(body) // ignore errors for simplicity
-		fmt.Printf("Ollama request body written to %s\n", debugFile)
-	} else {
-		fmt.Println("WARNING: failed to write Ollama prompt debug file")
+	// --- DEBUG: write full prompt to file (only when PAULETTE_DEBUG_DIR is set) ---
+	if debugDir := os.Getenv("PAULETTE_DEBUG_DIR"); debugDir != "" {
+		debugFile := fmt.Sprintf("%s/ollama_prompt_%d.json", debugDir, time.Now().UnixNano())
+		if f, err := os.Create(debugFile); err == nil {
+			_, _ = f.Write(body)
+			_ = f.Close()
+			fmt.Printf("Ollama request body written to %s\n", debugFile)
+		}
 	}
-	// -----------------------------------------
 
 	url := fmt.Sprintf("%s/api/chat", p.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -172,10 +178,14 @@ const xmlEnvelopeMarker = "<!-- RESPONSE:START -->"
 // ollamaWrapSystemPrompt adapts the base system prompt for models that are not
 // XML-friendly. For XMLFriendly models the prompt is returned unchanged.
 //
-// Non-XML-friendly models receive the XML envelope instruction replaced with a
-// simpler "## Discussion / ## Artifact" section-header format that those models
-// follow more reliably. If the prompt does not contain the XML envelope marker,
-// it is returned unchanged regardless of capability.
+// Non-XML-friendly models receive XML envelope instructions replaced with
+// simpler alternatives that those models follow more reliably:
+//   - Stage prompts (with discussion/artifact): get "## Discussion / ## Artifact" sections
+//   - HTML generation prompts (with CDATA): get code-fence instructions
+//   - Other prompts with XML markers: get markers stripped
+//
+// If the prompt does not contain the XML envelope marker, it is returned
+// unchanged regardless of capability.
 func ollamaWrapSystemPrompt(basePrompt string, caps OllamaModelCaps) string {
 	if caps.XMLFriendly {
 		return basePrompt
@@ -184,17 +194,26 @@ func ollamaWrapSystemPrompt(basePrompt string, caps OllamaModelCaps) string {
 		return basePrompt
 	}
 
-	// Replace the XML output format block with a plain-section equivalent.
-	// Stage prompts always contain an "OUTPUT FORMAT:" heading followed by the
-	// <!-- RESPONSE:START --> envelope instruction. We locate the sentinel
-	// instruction line and replace the surrounding paragraph.
-	const xmlInstruction = "Wrap your entire response in <!-- RESPONSE:START -->...<!-- RESPONSE:END --> tags"
-	if !strings.Contains(basePrompt, xmlInstruction) {
-		// Prompt uses XML but not the standard instruction — leave unchanged to
-		// avoid breaking custom prompts.
-		return basePrompt
+	// Detect prompt type by content and apply appropriate replacement.
+	hasHTMLContent := strings.Contains(basePrompt, "<htmlcontent>")
+	hasArtifact := strings.Contains(basePrompt, "<artifact>") || strings.Contains(basePrompt, "<discussion>")
+
+	if hasHTMLContent {
+		return ollamaAdaptHTMLPrompt(basePrompt)
+	}
+	if hasArtifact {
+		return ollamaAdaptStagePrompt(basePrompt)
 	}
 
+	// Generic: remove the XML envelope markers and add a plain-output note.
+	result := strings.ReplaceAll(basePrompt, xmlEnvelopeMarker, "")
+	result = strings.ReplaceAll(result, "<!-- RESPONSE:END -->", "")
+	return result + "\n\nOutput your response directly without XML wrapper tags."
+}
+
+// ollamaAdaptStagePrompt replaces XML envelope instructions with plain-section format
+// for stage prompts that use <discussion>/<artifact> structure.
+func ollamaAdaptStagePrompt(basePrompt string) string {
 	plainFormat := `Structure your response using these plain sections:
 
 ## Discussion
@@ -205,18 +224,70 @@ The complete document, code, or deliverable goes here.
 
 Always include both sections. Do not use XML tags.`
 
-	// Find the paragraph that contains the XML instruction and replace it.
-	// Split on double-newline to find paragraph boundaries.
+	// Find the paragraph containing the XML envelope marker and replace it.
 	paragraphs := strings.Split(basePrompt, "\n\n")
+	replaced := false
 	for i, p := range paragraphs {
-		if strings.Contains(p, xmlInstruction) {
+		if strings.Contains(p, xmlEnvelopeMarker) {
 			paragraphs[i] = plainFormat
-			return strings.Join(paragraphs, "\n\n")
+			replaced = true
+			break
+		}
+	}
+	if replaced {
+		return strings.Join(paragraphs, "\n\n")
+	}
+	return basePrompt + "\n\n" + plainFormat
+}
+
+// ollamaAdaptHTMLPrompt replaces XML/CDATA envelope instructions with code-fence
+// format for HTML generation prompts (mock components, styler, views).
+func ollamaAdaptHTMLPrompt(basePrompt string) string {
+	plainFormat := "OUTPUT FORMAT — follow this exactly:\n" +
+		"Return ONLY the HTML content inside a code fence:\n\n" +
+		"```html\n...your HTML here...\n```\n\n" +
+		"Do not write anything outside the code fence."
+
+	// Find the paragraph containing the XML envelope marker and replace it.
+	paragraphs := strings.Split(basePrompt, "\n\n")
+	replaced := false
+	for i, p := range paragraphs {
+		if strings.Contains(p, xmlEnvelopeMarker) {
+			paragraphs[i] = plainFormat
+			replaced = true
+			break
 		}
 	}
 
-	// Fallback: append the plain format note if paragraph split didn't find it.
-	return basePrompt + "\n\n" + plainFormat
+	result := basePrompt
+	if replaced {
+		result = strings.Join(paragraphs, "\n\n")
+	} else {
+		result = basePrompt + "\n\n" + plainFormat
+	}
+
+	// Also strip any remaining CDATA/XML tags from examples in the prompt.
+	result = strings.ReplaceAll(result, "<htmlcontent><![CDATA[", "")
+	result = strings.ReplaceAll(result, "]]></htmlcontent>", "")
+	result = strings.ReplaceAll(result, xmlEnvelopeMarker, "")
+	result = strings.ReplaceAll(result, "<!-- RESPONSE:END -->", "")
+	return result
+}
+
+// ollamaTemperatureForPrompt selects a temperature based on prompt content.
+// Structured output prompts (JSON planning, code generation) use low temperature
+// for predictable formatting; conversational prompts use moderate temperature.
+func ollamaTemperatureForPrompt(systemPrompt string) float64 {
+	lower := strings.ToLower(systemPrompt)
+	// Low temperature for structured output: JSON plans, code generation, summaries
+	if strings.Contains(lower, "<jsonplan>") ||
+		strings.Contains(lower, "json array") ||
+		strings.Contains(lower, "json object") ||
+		strings.Contains(lower, "code fence") ||
+		strings.Contains(lower, "iteration summary") {
+		return 0.3
+	}
+	return 0.7
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -253,6 +324,10 @@ func (p *OllamaProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
 		Model:    req.Model,
 		Messages: msgs,
 		Stream:   true,
+		Options: &ollamaChatOptions{
+			NumCtx:      caps.EffectiveNumCtx(),
+			Temperature: ollamaTemperatureForPrompt(systemPrompt),
+		},
 	})
 }
 
@@ -449,10 +524,15 @@ func ollamaBuildToolSchemas(tools []AgentTool, caps OllamaModelCaps) []map[strin
 
 // ollamaAgentPost sends one non-streaming request to /api/chat and returns the decoded response.
 func (p *OllamaProvider) ollamaAgentPost(ctx context.Context, apiURL, model string, msgs []ollamaAgentMsg, toolSchemas []map[string]any) (ollamaAgentResp, error) {
+	caps := ollamaModelCaps(model)
 	body := map[string]any{
 		"model":    model,
 		"messages": msgs,
 		"stream":   false,
+		"options": map[string]any{
+			"num_ctx":     caps.EffectiveNumCtx(),
+			"temperature": 0.3, // agent/tool-use path benefits from low temperature
+		},
 	}
 	if len(toolSchemas) > 0 {
 		body["tools"] = toolSchemas
