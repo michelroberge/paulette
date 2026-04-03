@@ -69,6 +69,9 @@ type ChatRequest struct {
 	// ProjectDir is the working directory context. Required by the Claude CLI
 	// provider; ignored by HTTP-based providers.
 	ProjectDir string
+
+	// Stage is an optional label used for debug logging (e.g. "architecture", "ux").
+	Stage string
 }
 
 // Provider is the interface every LLM backend must implement.

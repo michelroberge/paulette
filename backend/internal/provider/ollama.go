@@ -107,7 +107,11 @@ func (p *OllamaProvider) Chat(ctx context.Context, req ChatRequest) (<-chan Stre
 
 	// --- DEBUG: write full prompt to file (only when PAULETTE_DEBUG_DIR is set) ---
 	if debugDir := os.Getenv("PAULETTE_DEBUG_DIR"); debugDir != "" {
-		debugFile := fmt.Sprintf("%s/ollama_prompt_%d.json", debugDir, time.Now().UnixNano())
+		label := req.Stage
+		if label == "" {
+			label = "unknown"
+		}
+		debugFile := fmt.Sprintf("%s/%s_prompt_%d.json", debugDir, label, time.Now().UnixNano())
 		if f, err := os.Create(debugFile); err == nil {
 			_, _ = f.Write(body)
 			_ = f.Close()

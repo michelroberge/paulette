@@ -271,6 +271,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 		History:      history,
 		UserMessage:  message,
 		ProjectDir:   project.HostDir,
+		Stage:        string(stage),
 	})
 	if chatErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
@@ -416,6 +417,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		History:      history,
 		UserMessage:  message,
 		ProjectDir:   project.HostDir,
+		Stage:        string(stage),
 	})
 	if chatErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
