@@ -53,11 +53,11 @@ func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository
 
 // resolveProvider returns the Provider and model ID to use for the given stage,
 // falling back to ClaudeCLI when no registry is configured.
-func (h *PipelineHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
+func (h *PipelineHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, *provider.StageAssignment, error) {
 	if h.providerRegistry != nil {
-		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+		return h.providerRegistry.ResolveForStageWithSettings(projectID, stage, h.stageConfig, hostDir)
 	}
-	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
 func (h *PipelineHandler) GetPipeline(w http.ResponseWriter, r *http.Request) {
@@ -273,7 +273,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 	}
 
 	// Resolve provider before entering the goroutine.
-	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageComplete)
+	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageComplete)
 	if provErr != nil {
 		failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", provErr.Error())
 		run.Emit(agent.StreamEvent{Type: "error", Content: provErr.Error()})
@@ -285,6 +285,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 	// Pass 0 for maxContextChars (no truncation) — the provider's num_ctx
 	// setting handles context limits. Callers can pass a budget for constrained models.
 	systemPrompt, userMsg := agent.BuildStreamSummaryRequest(artifacts, project.Name, project.Version, 0)
+	saTemp, saNumCtx, saStream := sa.Fields()
 
 	go func() {
 		// LIFO defer: clearActivity runs first, then run.Finish (so watcher sees clean state)
@@ -296,6 +297,10 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 			SystemPrompt: systemPrompt,
 			UserMessage:  userMsg,
 			ProjectDir:   project.HostDir,
+			Stage:        string(model.StageComplete),
+			Temperature:  saTemp,
+			NumCtx:       saNumCtx,
+			Stream:       saStream,
 		})
 		if err != nil {
 			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", err.Error())

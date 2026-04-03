@@ -93,15 +93,16 @@ func (h *ChatHandler) buildProviderErrorEvent(hostDir string, stage model.StageN
 	return agent.StreamEvent{Type: "error", Content: string(content)}
 }
 
-// resolveProvider returns the Provider and model ID to use for a stage. It
-// delegates to the Registry when one is available; otherwise it falls back to
-// the Claude CLI provider using the hardcoded stage-model map (v0.1.0 behaviour).
-func (h *ChatHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
+// resolveProvider returns the Provider, model ID, and optional stage settings to
+// use for a stage. It delegates to the Registry when one is available; otherwise
+// it falls back to the Claude CLI provider using the hardcoded stage-model map
+// (v0.1.0 behaviour). The returned *StageAssignment may be nil for the fallback.
+func (h *ChatHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, *provider.StageAssignment, error) {
 	if h.providerRegistry != nil {
-		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+		return h.providerRegistry.ResolveForStageWithSettings(projectID, stage, h.stageConfig, hostDir)
 	}
 	// Nil registry — construct a bare Claude CLI provider as a safe fallback.
-	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
 func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
@@ -257,7 +258,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
 
 	// Resolve the LLM provider for this stage (project override → global default → Claude CLI).
-	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
+	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
 	if provErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
 		clearActivity(h.activityRepo, project.HostDir, stage)
@@ -265,6 +266,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 		return run, nil
 	}
 
+	saTemp, saNumCtx, saStream := sa.Fields()
 	events, chatErr := prov.Chat(run.Context(), provider.ChatRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
@@ -272,6 +274,9 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 		UserMessage:  message,
 		ProjectDir:   project.HostDir,
 		Stage:        string(stage),
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
 	})
 	if chatErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
@@ -402,7 +407,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
 
 	// Resolve the LLM provider for this stage (project override → global default → Claude CLI).
-	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
+	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
 	if provErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
 		clearActivity(h.activityRepo, project.HostDir, stage)
@@ -411,6 +416,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	}
 
 	// Start LLM streaming via the resolved provider (survives client disconnect).
+	saTemp, saNumCtx, saStream := sa.Fields()
 	events, chatErr := prov.Chat(run.Context(), provider.ChatRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
@@ -418,6 +424,9 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		UserMessage:  message,
 		ProjectDir:   project.HostDir,
 		Stage:        string(stage),
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
 	})
 	if chatErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))

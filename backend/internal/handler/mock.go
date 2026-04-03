@@ -80,11 +80,11 @@ func NewMockHandler(
 // resolveProvider returns the Provider and model ID to use for the UX stage.
 // It delegates to the Registry when one is available; otherwise it falls back
 // to the Claude CLI provider (v0.1.0 behaviour).
-func (h *MockHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
+func (h *MockHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, *provider.StageAssignment, error) {
 	if h.providerRegistry != nil {
-		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+		return h.providerRegistry.ResolveForStageWithSettings(projectID, stage, h.stageConfig, hostDir)
 	}
-	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
 // buildProviderErrorEvent builds a StreamEvent{Type: "error"} whose Content is
@@ -175,7 +175,7 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	if uxContent == "" {
 		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
 	}
-	prov, _, _ := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
+	prov, _, _, _ := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
 
 	var run *stream.Run
 	if prov != nil && useOrchestrated(prov, uxContent) {
@@ -221,7 +221,7 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
 
 	// Resolve the LLM provider for the UX stage (project override → global default → Claude CLI).
-	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
+	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
 	if provErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
 		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
@@ -256,6 +256,7 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 		}()
 
 		userPrompt := initialUserPrompt
+		saTemp, saNumCtx, saStream := sa.Fields()
 
 		for attempt := 0; attempt <= agent.MaxMockRetries; attempt++ {
 			if run.Context().Err() != nil {
@@ -267,6 +268,10 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 				SystemPrompt: systemPrompt,
 				UserMessage:  userPrompt,
 				ProjectDir:   project.HostDir,
+				Stage:        string(model.StageUI),
+				Temperature:  saTemp,
+				NumCtx:       saNumCtx,
+				Stream:       saStream,
 			})
 			if chatErr != nil {
 				run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, chatErr))
@@ -367,6 +372,7 @@ func useOrchestrated(prov provider.Provider, uxContent string) bool {
 func runPlannerCall(
 	prov provider.Provider,
 	modelID string,
+	sa *provider.StageAssignment,
 	run *stream.Run,
 	uxContent, refinement string,
 	tokensAccum *int,
@@ -380,10 +386,15 @@ func runPlannerCall(
 		userMsg.WriteString(refinement)
 	}
 
+	saTemp, saNumCtx, saStream := sa.Fields()
 	events, err := prov.Chat(run.Context(), provider.ChatRequest{
 		Model:        modelID,
 		SystemPrompt: agent.BuildMockPlannerSystemPrompt(),
 		UserMessage:  userMsg.String(),
+		Stage:        string(model.StageUI),
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
 	})
 	if err != nil {
 		return nil, err
@@ -540,6 +551,7 @@ func runViewCall(
 func runComponentPlannerCall(
 	prov provider.Provider,
 	modelID string,
+	sa *provider.StageAssignment,
 	run *stream.Run,
 	frameworkCfg *model.FrameworkConfig,
 	screen plannerScreen,
@@ -548,10 +560,15 @@ func runComponentPlannerCall(
 ) ([]plannerComponent, error) {
 	userMsg := "Screen: " + screen.Title + "\n\n" + screen.Description
 
+	saTemp, saNumCtx, saStream := sa.Fields()
 	events, err := prov.Chat(run.Context(), provider.ChatRequest{
 		Model:        modelID,
 		SystemPrompt: agent.BuildMockComponentPlannerSystemPrompt(frameworkCfg),
 		UserMessage:  userMsg,
+		Stage:        string(model.StageUI),
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
 	})
 	if err != nil {
 		return nil, err
@@ -610,6 +627,7 @@ func runComponentPlannerCall(
 func runComponentCall(
 	prov provider.Provider,
 	modelID string,
+	sa *provider.StageAssignment,
 	run *stream.Run,
 	frameworkCfg *model.FrameworkConfig,
 	comp plannerComponent,
@@ -621,6 +639,7 @@ func runComponentCall(
 		comp.Type, comp.LayoutRole, comp.Description)
 
 	htmlEngine := llmparse.NewEngine([]llmparse.Strategy{llmparse.HTMLStrategy{}}, nil)
+	saTemp, saNumCtx, saStream := sa.Fields()
 
 	for attempt := 0; attempt <= agent.MaxMockRetries; attempt++ {
 		if run.Context().Err() != nil {
@@ -631,6 +650,10 @@ func runComponentCall(
 			Model:        modelID,
 			SystemPrompt: systemPrompt,
 			UserMessage:  userMsg,
+			Stage:        string(model.StageUI),
+			Temperature:  saTemp,
+			NumCtx:       saNumCtx,
+			Stream:       saStream,
 		})
 		if err != nil {
 			return "", err
@@ -874,7 +897,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 	}
 	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
 
-	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
+	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
 	if provErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
 		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
@@ -899,7 +922,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 
 		// Step 1: Planner
 		run.Emit(agent.StreamEvent{Type: "chunk", Content: "Planning screens from UX artifact...\n"})
-		screens, err := runPlannerCall(prov, modelID, run, uxContent, refinement, &tokensAccum)
+		screens, err := runPlannerCall(prov, modelID, sa, run, uxContent, refinement, &tokensAccum)
 		if err != nil {
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
 			return
@@ -921,7 +944,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 
 				// 2a. Component planner
 				run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Launching component planner...\n", sc.Title)})
-				components, compPlanErr := runComponentPlannerCall(prov, modelID, run, frameworkCfg, sc, &tokensAccum, &tokensMu)
+				components, compPlanErr := runComponentPlannerCall(prov, modelID, sa, run, frameworkCfg, sc, &tokensAccum, &tokensMu)
 				if compPlanErr != nil {
 					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Component planner failed — using fallback.\n", sc.Title)})
 					components = []plannerComponent{{
@@ -936,7 +959,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 				htmlFragments := make(map[string]string, len(components))
 				for _, comp := range components {
 					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Launching component agent (%s, %s)...\n", sc.Title, comp.ID, comp.Type, comp.LayoutRole)})
-					compHTML, compErr := runComponentCall(prov, modelID, run, frameworkCfg, comp, &tokensAccum, &tokensMu)
+					compHTML, compErr := runComponentCall(prov, modelID, sa, run, frameworkCfg, comp, &tokensAccum, &tokensMu)
 					if compErr != nil {
 						run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Warning: %s\n", sc.Title, comp.ID, compErr.Error())})
 						compHTML = fmt.Sprintf(`<div class="mock-component"><p style="color:#f87171">Component failed: %s</p></div>`, comp.ID)

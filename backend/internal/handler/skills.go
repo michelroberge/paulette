@@ -47,13 +47,13 @@ func NewSkillHandler(
 	}
 }
 
-// resolveProvider returns the Provider and model ID to use for the given stage,
-// falling back to ClaudeCLI when no registry is configured.
-func (h *SkillHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
+// resolveProvider returns the Provider, model ID, and optional stage settings to
+// use for a stage. Falls back to ClaudeCLI when no registry is configured.
+func (h *SkillHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, *provider.StageAssignment, error) {
 	if h.providerRegistry != nil {
-		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+		return h.providerRegistry.ResolveForStageWithSettings(projectID, stage, h.stageConfig, hostDir)
 	}
-	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
 // Analyze triggers Claude-based skill analysis of the build plan (pre-phase).
@@ -88,7 +88,7 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "skills-analyze")
 
 	// Resolve the LLM provider for the Build stage before entering the goroutine.
-	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
+	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
 	if provErr != nil {
 		run.Emit(agent.StreamEvent{Type: "error", Content: provErr.Error()})
 		clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
@@ -105,11 +105,16 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
 
 		runStart := time.Now()
+		saTemp, saNumCtx, saStream := sa.Fields()
 		events, err := prov.Chat(run.Context(), provider.ChatRequest{
 			Model:        modelID,
 			SystemPrompt: systemPrompt,
 			UserMessage:  userMsg,
 			ProjectDir:   project.HostDir,
+			Stage:        string(model.StageBuild),
+			Temperature:  saTemp,
+			NumCtx:       saNumCtx,
+			Stream:       saStream,
 		})
 		if err != nil {
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})

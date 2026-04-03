@@ -36,6 +36,7 @@ func dispatchExecuteBeadOrchestrated(
 	ctx context.Context,
 	prov provider.Provider,
 	modelID string,
+	sa *provider.StageAssignment,
 	projectDir string,
 	bead model.Bead,
 	artifacts map[model.StageName]string,
@@ -55,7 +56,7 @@ func dispatchExecuteBeadOrchestrated(
 
 		// --- Level 1: File Planner ---
 		emitLog(fmt.Sprintf("[%s] Planning files...", bead.ID))
-		files, planTokens, err := runCodeFilePlannerCall(ctx, prov, modelID, bead, artifacts)
+		files, planTokens, err := runCodeFilePlannerCall(ctx, prov, modelID, sa, bead, artifacts)
 		if err != nil {
 			emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] file planner: %v", bead.ID, err)})
 			return
@@ -87,7 +88,7 @@ func dispatchExecuteBeadOrchestrated(
 				}
 			}
 
-			content, genTokens, genErr := runCodeFileGeneratorCall(ctx, prov, modelID, bead, fp, existing, generated)
+			content, genTokens, genErr := runCodeFileGeneratorCall(ctx, prov, modelID, sa, bead, fp, existing, generated)
 			if genErr != nil {
 				emitLog(fmt.Sprintf("[%s] warn: generator failed for %s: %v — skipping", bead.ID, fp.Path, genErr))
 				continue
@@ -162,7 +163,7 @@ func dispatchExecuteBeadOrchestrated(
 						if !ok {
 							continue
 						}
-						fixed, fixTokens, fixErr := runCodeFileGeneratorCall(ctx, prov, modelID, corrBead, fp, content, generated)
+						fixed, fixTokens, fixErr := runCodeFileGeneratorCall(ctx, prov, modelID, sa, corrBead, fp, content, generated)
 						if fixTokens > 0 {
 							emit(agent.StreamEvent{Type: "tokens", Tokens: fixTokens})
 						}
@@ -190,6 +191,7 @@ func runCodeFilePlannerCall(
 	ctx context.Context,
 	prov provider.Provider,
 	modelID string,
+	sa *provider.StageAssignment,
 	bead model.Bead,
 	artifacts map[model.StageName]string,
 ) ([]codeFilePlan, int, error) {
@@ -225,10 +227,15 @@ func runCodeFilePlannerCall(
 	}
 	userMsg.WriteString("List all files to create or modify for this task.")
 
+	saTemp, saNumCtx, saStream := sa.Fields()
 	events, err := prov.Chat(ctx, provider.ChatRequest{
 		Model:        modelID,
 		SystemPrompt: agent.BuildCodeFilePlannerSystemPrompt(),
 		UserMessage:  userMsg.String(),
+		Stage:        string(model.StageBuild),
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
 	})
 	if err != nil {
 		return nil, 0, err
@@ -312,6 +319,7 @@ func runCodeFileGeneratorCall(
 	ctx context.Context,
 	prov provider.Provider,
 	modelID string,
+	sa *provider.StageAssignment,
 	bead model.Bead,
 	fp codeFilePlan,
 	existing string,
@@ -351,10 +359,15 @@ func runCodeFileGeneratorCall(
 	}
 	userMsg.WriteString("\nGenerate the complete file content now.")
 
+	saTemp, saNumCtx, saStream := sa.Fields()
 	events, err := prov.Chat(ctx, provider.ChatRequest{
 		Model:        modelID,
 		SystemPrompt: agent.BuildCodeFileGeneratorSystemPrompt(),
 		UserMessage:  userMsg.String(),
+		Stage:        string(model.StageBuild),
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
 	})
 	if err != nil {
 		return "", 0, err

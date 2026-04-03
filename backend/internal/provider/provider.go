@@ -74,8 +74,16 @@ type ChatRequest struct {
 	Stage string
 
 	// Temperature overrides the provider's default/heuristic temperature.
-	// When nil, the provider uses its own logic (e.g. Ollama's keyword-based heuristic).
+	// When nil, the provider uses its own logic (e.g. Ollama's stage-based default).
 	Temperature *float64
+
+	// NumCtx overrides the context window size sent to the provider.
+	// When nil, the provider uses its own default (e.g. Ollama's model capability table).
+	NumCtx *int
+
+	// Stream controls whether the response is streamed.
+	// When nil, the provider defaults to streaming where supported.
+	Stream *bool
 }
 
 // TempLow returns a pointer to 0.3, suitable for structured output prompts.
@@ -211,6 +219,20 @@ func (r *Registry) ResolveForStage(
 	stageConfig *StageConfigStore,
 	hostDir string,
 ) (Provider, string, error) {
+	prov, model, _, err := r.ResolveForStageWithSettings(projectID, stage, stageConfig, hostDir)
+	return prov, model, err
+}
+
+// ResolveForStageWithSettings is identical to ResolveForStage but additionally
+// returns the full *StageAssignment (which includes optional inference settings
+// such as Temperature, NumCtx, and Stream). The assignment is nil when no
+// configuration exists (level-3 Claude CLI fallback).
+func (r *Registry) ResolveForStageWithSettings(
+	projectID string,
+	stage model.StageName,
+	stageConfig *StageConfigStore,
+	hostDir string,
+) (Provider, string, *StageAssignment, error) {
 	if stageConfig != nil {
 		// Levels 1 & 2: single read-lock acquisition via ResolveStage.
 		// This avoids the double lock-release cycle that would occur if
@@ -218,9 +240,9 @@ func (r *Registry) ResolveForStage(
 		if assignment := stageConfig.ResolveStage(hostDir, stage); assignment != nil {
 			p, err := r.ForConnection(assignment.ConnectionID)
 			if err != nil {
-				return nil, "", fmt.Errorf("stage %q: configured connection error: %w", stage, err)
+				return nil, "", nil, fmt.Errorf("stage %q: configured connection error: %w", stage, err)
 			}
-			return p, assignment.Model, nil
+			return p, assignment.Model, assignment, nil
 		}
 	}
 
@@ -229,5 +251,5 @@ func (r *Registry) ResolveForStage(
 	if !ok {
 		claudeModel = "claude-sonnet-4-6"
 	}
-	return NewClaudeCLIProvider(), claudeModel, nil
+	return NewClaudeCLIProvider(), claudeModel, nil, nil
 }

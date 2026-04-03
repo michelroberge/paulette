@@ -289,7 +289,26 @@ func ollamaAdaptHTMLPrompt(basePrompt string) string {
 	return result
 }
 
+// ollamaStageDefault holds sensible Ollama defaults for a pipeline stage.
+type ollamaStageDefault struct {
+	temperature float64
+	numCtx      int
+}
+
+// ollamaStageDefaults maps pipeline stage names to their recommended Ollama
+// defaults. These are used when no explicit value is provided in ChatRequest.
+// Users may override any field via StageAssignment in their config files.
+var ollamaStageDefaults = map[string]ollamaStageDefault{
+	"vision":       {temperature: 0.9, numCtx: 2048}, // high creativity for brainstorming
+	"ux":           {temperature: 0.6, numCtx: 2048}, // structured reasoning for UX design
+	"ui":           {temperature: 0.4, numCtx: 1024}, // focused code gen for HTML mockups
+	"architecture": {temperature: 0.5, numCtx: 2048}, // balanced reasoning for arch diagrams
+	"build":        {temperature: 0.4, numCtx: 2048}, // deterministic build plans
+	"complete":     {temperature: 0.5, numCtx: 2048}, // summary generation
+}
+
 // ollamaTemperatureForPrompt selects a temperature based on prompt content.
+// This is the fallback heuristic when no stage default or explicit value applies.
 // Structured output prompts (JSON planning, code generation) use low temperature
 // for predictable formatting; conversational prompts use moderate temperature.
 func ollamaTemperatureForPrompt(systemPrompt string) float64 {
@@ -335,18 +354,38 @@ func (p *OllamaProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
 	// Append the new user turn.
 	msgs = append(msgs, ollamaMessage{Role: "user", Content: req.UserMessage})
 
-	// Use explicit temperature if provided; otherwise fall back to heuristic.
-	temp := ollamaTemperatureForPrompt(systemPrompt)
+	// Resolve temperature: explicit override → stage default → prompt heuristic.
+	var temp float64
 	if req.Temperature != nil {
 		temp = *req.Temperature
+	} else if sd, ok := ollamaStageDefaults[req.Stage]; ok {
+		temp = sd.temperature
+	} else {
+		temp = ollamaTemperatureForPrompt(systemPrompt)
+	}
+
+	// Resolve numCtx: explicit override → stage default → model capability.
+	var numCtx int
+	if req.NumCtx != nil {
+		numCtx = *req.NumCtx
+	} else if sd, ok := ollamaStageDefaults[req.Stage]; ok {
+		numCtx = sd.numCtx
+	} else {
+		numCtx = caps.EffectiveNumCtx()
+	}
+
+	// Resolve stream: explicit override → default true.
+	stream := true
+	if req.Stream != nil {
+		stream = *req.Stream
 	}
 
 	return json.Marshal(ollamaChatRequest{
 		Model:    req.Model,
 		Messages: msgs,
-		Stream:   true,
+		Stream:   stream,
 		Options: &ollamaChatOptions{
-			NumCtx:      caps.EffectiveNumCtx(),
+			NumCtx:      numCtx,
 			Temperature: temp,
 		},
 	})

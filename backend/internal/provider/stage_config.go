@@ -10,10 +10,23 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
-// StageAssignment describes the connection and model to use for a pipeline stage.
+// StageAssignment describes the connection and model to use for a pipeline stage,
+// along with optional per-stage inference settings that override provider defaults.
 type StageAssignment struct {
-	ConnectionID string `json:"connectionId"`
-	Model        string `json:"model"`
+	ConnectionID string   `json:"connectionId"`
+	Model        string   `json:"model"`
+	Temperature  *float64 `json:"temperature,omitempty"`
+	NumCtx       *int     `json:"numCtx,omitempty"`
+	Stream       *bool    `json:"stream,omitempty"`
+}
+
+// Fields returns the optional inference settings, safe to call on a nil receiver.
+// All returned pointers are nil when the receiver is nil or the field is unset.
+func (a *StageAssignment) Fields() (temperature *float64, numCtx *int, stream *bool) {
+	if a == nil {
+		return nil, nil, nil
+	}
+	return a.Temperature, a.NumCtx, a.Stream
 }
 
 // GlobalConfig is the top-level structure persisted at ~/.paulette/config.json.
@@ -289,6 +302,7 @@ func projectConfigPath(hostDir string) string {
 var validStages = map[model.StageName]struct{}{
 	model.StageVision:       {},
 	model.StageUX:           {},
+	model.StageUI:           {},
 	model.StageArchitecture: {},
 	model.StageBuild:        {},
 	model.StageComplete:     {},
