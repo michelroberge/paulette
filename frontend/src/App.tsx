@@ -19,6 +19,7 @@ import { VersionSelectorDropdown } from './components/layout/VersionSelectorDrop
 import { VersionHistoryView } from './components/layout/VersionHistoryView';
 import { ConfigurePage } from './components/configure/ConfigurePage';
 import { ProjectStageSettings } from './components/configure/ProjectStageSettings';
+import { RunLogView } from './components/RunLogView';
 import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
 import { getArtifact } from './api/artifacts';
 import { getMock } from './api/mock';
@@ -114,6 +115,7 @@ function ProjectDetailPage() {
   const [activeRuns, setActiveRuns] = useState<ActiveRun[]>([]);
   const [btwInput, setBtwInput] = useState('');
   const [btwSending, setBtwSending] = useState(false);
+  const [showRunLog, setShowRunLog] = useState(false);
 
   // Load project from URL param on mount / ID change
   useEffect(() => {
@@ -419,6 +421,7 @@ function ProjectDetailPage() {
           onShowHistory={() => setShowVersionHistory(true)}
           onShowProfile={() => setShowProfile(true)}
           onShowStageSettings={() => setShowStageSettings(true)}
+          onShowRunLog={() => setShowRunLog(v => !v)}
           autonomous={!!project.autonomous}
           onToggleAutonomous={handleToggleAutonomous}
           onVersionClick={() => setVersionSelectorOpen(v => !v)}
@@ -447,7 +450,9 @@ function ProjectDetailPage() {
         )}
 
         <main className="main-content">
-          {viewingVersion ? (
+          {showRunLog ? (
+            <RunLogView projectId={project.id} />
+          ) : viewingVersion ? (
             <VersionHistoryView
               project={project}
               version={viewingVersion}

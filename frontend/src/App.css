@@ -2277,6 +2277,181 @@ body {
   color: #ef4444;
 }
 
+/* Run Log */
+.run-log-button {
+  background: none;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 1rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.run-log-button:hover { color: #e2e8f0; border-color: #64748b; }
+
+.run-log-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.run-log-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+
+.run-log-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #e2e8f0;
+  flex: 1;
+}
+
+.run-log-filters { display: flex; gap: 0.5rem; }
+
+.run-log-select {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.run-log-refresh-btn {
+  background: none;
+  border: 1px solid #334155;
+  color: #94a3b8;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.run-log-refresh-btn:hover { color: #e2e8f0; }
+
+.run-log-loading, .run-log-empty {
+  padding: 2rem 1rem;
+  color: #64748b;
+  text-align: center;
+  font-size: 0.875rem;
+}
+
+.run-log-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.run-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.run-log-th {
+  text-align: left;
+  padding: 0.4rem 0.75rem;
+  color: #64748b;
+  font-weight: 500;
+  border-bottom: 1px solid #1e293b;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: #0f172a;
+  z-index: 1;
+}
+
+.run-log-row { border-bottom: 1px solid #0a0f1a; }
+.run-log-row:hover { background: #1e293b; }
+.run-log-row-clickable { cursor: pointer; }
+.run-log-row-failed { border-left: 2px solid #ef4444; }
+
+.run-log-cell {
+  padding: 0.4rem 0.75rem;
+  color: #cbd5e1;
+  vertical-align: middle;
+}
+
+.run-log-cell-stage { color: #94a3b8; font-family: monospace; }
+.run-log-cell-op    { color: #94a3b8; font-family: monospace; }
+.run-log-cell-attempt { color: #475569; }
+.run-log-cell-time  { color: #64748b; white-space: nowrap; font-size: 0.75rem; }
+.run-log-cell-dur   { color: #64748b; white-space: nowrap; }
+.run-log-cell-tokens { color: #64748b; white-space: nowrap; }
+.run-log-cell-info  { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.run-log-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.run-log-badge-success { background: #14532d; color: #4ade80; }
+.run-log-badge-failed  { background: #450a0a; color: #f87171; }
+.run-log-badge-running { background: #1e3a5f; color: #60a5fa; animation: run-log-pulse 1.5s ease-in-out infinite; }
+
+@keyframes run-log-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+.run-log-error-preview { color: #f87171; font-size: 0.75rem; }
+.run-log-notes         { color: #94a3b8; font-size: 0.75rem; }
+.run-log-artifact-count { color: #60a5fa; font-size: 0.75rem; }
+
+.run-log-detail-row { background: #0a0f1a; }
+.run-log-detail-cell { padding: 0.75rem 1.25rem; }
+.run-log-detail-section { margin-bottom: 0.75rem; }
+.run-log-detail-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #475569;
+  margin-bottom: 0.25rem;
+}
+.run-log-detail-path { color: #64748b; font-size: 0.75rem; margin-top: 0.25rem; }
+
+pre.run-log-error-text {
+  background: #1a0a0a;
+  border: 1px solid #450a0a;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  color: #f87171;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 0;
+}
+
+.run-log-artifact-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.2rem;
+}
+.run-log-artifact-name { color: #94a3b8; font-size: 0.75rem; min-width: 90px; }
+.run-log-artifact-path {
+  color: #60a5fa;
+  font-size: 0.75rem;
+  cursor: pointer;
+  background: #0f2744;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.run-log-artifact-path:hover { text-decoration: underline; }
+.run-log-notes-full { color: #94a3b8; font-size: 0.8rem; }
+
 /* Plan limit banner */
 .plan-limit-banner {
   display: flex;

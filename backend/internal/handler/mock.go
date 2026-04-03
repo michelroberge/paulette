@@ -52,6 +52,7 @@ type MockHandler struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	connStore        *provider.ConnectionStore
+	logBase          string
 }
 
 // NewMockHandler creates a MockHandler. providerRegistry, stageConfig, and
@@ -65,6 +66,7 @@ func NewMockHandler(
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
 	connStore *provider.ConnectionStore,
+	logBase string,
 ) *MockHandler {
 	return &MockHandler{
 		registry:         registry,
@@ -74,6 +76,7 @@ func NewMockHandler(
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
 		connStore:        connStore,
+		logBase:          logBase,
 	}
 }
 
@@ -219,10 +222,12 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 		return nil, nil // race: already started
 	}
 	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
+	runLogID := startRunLog(h.logBase, project, model.StageUX, "mock")
 
 	// Resolve the LLM provider for the UX stage (project override → global default → Claude CLI).
 	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
 	if provErr != nil {
+		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
 		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
 		run.Finish(h.runs)
@@ -246,7 +251,15 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageUX)
 
 		var stageTokensAccum int
+		var rlErr string
 		runStart := time.Now()
+		defer func() {
+			if rlErr != "" {
+				failRunLog(h.logBase, project.Name, runLogID, rlErr)
+			} else {
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageUX, "mock"), stageTokensAccum, "")
+			}
+		}()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(model.StageUX, stageTokensAccum)
@@ -274,6 +287,7 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 				Stream:       saStream,
 			})
 			if chatErr != nil {
+				rlErr = chatErr.Error()
 				run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, chatErr))
 				return
 			}
@@ -298,6 +312,7 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 						fullResponse = accumulated.String()
 					}
 				case "error":
+					rlErr = event.Content
 					run.Emit(event)
 					hadError = true
 				default:
@@ -896,9 +911,11 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		return nil, nil // race: already started
 	}
 	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
+	runLogID := startRunLog(h.logBase, project, model.StageUX, "mock")
 
 	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
 	if provErr != nil {
+		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
 		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
 		run.Finish(h.runs)
@@ -911,7 +928,15 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 
 		var tokensAccum int
 		var tokensMu sync.Mutex
+		var rlErr string
 		runStart := time.Now()
+		defer func() {
+			if rlErr != "" {
+				failRunLog(h.logBase, project.Name, runLogID, rlErr)
+			} else {
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageUX, "mock"), tokensAccum, "")
+			}
+		}()
 		defer func() {
 			if tokensAccum > 0 {
 				project.AddStageTokens(model.StageUX, tokensAccum)
@@ -924,6 +949,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		run.Emit(agent.StreamEvent{Type: "chunk", Content: "Planning screens from UX artifact...\n"})
 		screens, err := runPlannerCall(prov, modelID, sa, run, uxContent, refinement, &tokensAccum)
 		if err != nil {
+			rlErr = err.Error()
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
 			return
 		}
