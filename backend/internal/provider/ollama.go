@@ -290,21 +290,23 @@ func ollamaAdaptHTMLPrompt(basePrompt string) string {
 }
 
 // ollamaStageDefault holds sensible Ollama defaults for a pipeline stage.
+// numCtx is intentionally absent: context window size comes from model caps
+// (ollamaCapTable / EffectiveNumCtx) so that the model's actual capacity is
+// used rather than a small generic constant that causes truncation.
 type ollamaStageDefault struct {
 	temperature float64
-	numCtx      int
 }
 
 // ollamaStageDefaults maps pipeline stage names to their recommended Ollama
 // defaults. These are used when no explicit value is provided in ChatRequest.
 // Users may override any field via StageAssignment in their config files.
 var ollamaStageDefaults = map[string]ollamaStageDefault{
-	"vision":       {temperature: 0.9, numCtx: 2048}, // high creativity for brainstorming
-	"ux":           {temperature: 0.6, numCtx: 2048}, // structured reasoning for UX design
-	"ui":           {temperature: 0.4, numCtx: 1024}, // focused code gen for HTML mockups
-	"architecture": {temperature: 0.5, numCtx: 2048}, // balanced reasoning for arch diagrams
-	"build":        {temperature: 0.4, numCtx: 2048}, // deterministic build plans
-	"complete":     {temperature: 0.5, numCtx: 2048}, // summary generation
+	"vision":       {temperature: 0.9}, // high creativity for brainstorming
+	"ux":           {temperature: 0.6}, // structured reasoning for UX design
+	"ui":           {temperature: 0.4}, // focused code gen for HTML mockups
+	"architecture": {temperature: 0.5}, // balanced reasoning for arch diagrams
+	"build":        {temperature: 0.4}, // deterministic build plans
+	"complete":     {temperature: 0.5}, // summary generation
 }
 
 // ollamaTemperatureForPrompt selects a temperature based on prompt content.
@@ -364,12 +366,12 @@ func (p *OllamaProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
 		temp = ollamaTemperatureForPrompt(systemPrompt)
 	}
 
-	// Resolve numCtx: explicit override → stage default → model capability.
+	// Resolve numCtx: explicit override → model capability.
+	// Stage defaults are not used for numCtx; the model's actual context
+	// window (from ollamaCapTable) must be respected to avoid truncation.
 	var numCtx int
 	if req.NumCtx != nil {
 		numCtx = *req.NumCtx
-	} else if sd, ok := ollamaStageDefaults[req.Stage]; ok {
-		numCtx = sd.numCtx
 	} else {
 		numCtx = caps.EffectiveNumCtx()
 	}
@@ -447,8 +449,18 @@ func (p *OllamaProvider) streamResponse(ctx context.Context, body io.Reader, ch 
 		}
 
 		// Emit content as a chunk event; skip empty content lines.
+		// Truncate at known instruction-format stop tokens that some Llama-family
+		// models leak into their output (e.g. [/INST], <|eot_id|>). If found,
+		// emit the clean prefix and stop — this prevents duplicated artifact content.
 		if chunk.Message.Content != "" {
-			ch <- StreamEvent{Type: "chunk", Content: chunk.Message.Content}
+			content, stopped := truncateAtStopToken(chunk.Message.Content)
+			if content != "" {
+				ch <- StreamEvent{Type: "chunk", Content: content}
+			}
+			if stopped {
+				ch <- StreamEvent{Type: "done"}
+				return
+			}
 		}
 	}
 
@@ -674,6 +686,32 @@ func executeTool(ctx context.Context, executor *ToolExecutor, name string, args 
 		return fmt.Sprintf("error: %v\n%s", err, output)
 	}
 	return output
+}
+
+// ── Stop-token helpers ────────────────────────────────────────────────────────
+
+// knownStopTokens are instruction-format tokens that some Llama-family models
+// emit verbatim in their output when they lose track of the chat template
+// boundary. Encountering one means the model has finished its real response and
+// is about to repeat itself (or output training-data artefacts). We truncate the
+// stream at the first occurrence to prevent duplicated artifact content.
+var knownStopTokens = []string{
+	"[/INST]",    // Llama-2 end-of-instruction
+	"[/INSTS]",   // Llama-2 variant seen in the wild
+	"<|eot_id|>", // Llama-3 end-of-turn
+	"<|end|>",    // Phi-family end token
+	"<|im_end|>", // ChatML (Qwen, Mistral-Nemo, etc.)
+}
+
+// truncateAtStopToken returns (content[:idx], true) when a known stop token is
+// found in content, or (content, false) when none are present.
+func truncateAtStopToken(content string) (string, bool) {
+	for _, tok := range knownStopTokens {
+		if idx := strings.Index(content, tok); idx >= 0 {
+			return content[:idx], true
+		}
+	}
+	return content, false
 }
 
 // ── Pseudo-tool helpers ───────────────────────────────────────────────────────

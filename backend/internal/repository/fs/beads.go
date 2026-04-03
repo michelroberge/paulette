@@ -296,7 +296,6 @@ func runBdFS(ctx context.Context, hostDir string, args ...string) (string, error
 	cmd.Dir = hostDir
 	var out bytes.Buffer
 	cmd.Stdout = &out
-	cmd.Stderr = &out
 	err := cmd.Run()
 	return out.String(), err
 }

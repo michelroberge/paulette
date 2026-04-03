@@ -38,6 +38,10 @@ type ParsedResponse struct {
 // It tries the XML envelope format first (<discussion>, <artifact>, etc.).
 // If no XML tags are found it falls back to the plain "## Discussion / ## Artifact"
 // section-header format used by non-XML-friendly Ollama models.
+// As a last resort, if the response looks like a standalone document (starts with a
+// markdown heading and is substantial), it is returned as the Artifact so that
+// models like codellama that ignore section-header instructions still produce a
+// saved artifact rather than dumping everything into the chat discussion.
 func ParseResponse(raw string) ParsedResponse {
 	if strings.Contains(raw, "<"+TagDiscussion+">") || strings.Contains(raw, "<"+TagArtifact+">") {
 		return parseXMLEnvelope(raw)
@@ -46,8 +50,27 @@ func ParseResponse(raw string) ParsedResponse {
 	if strings.Contains(lower, "## discussion") || strings.Contains(lower, "## artifact") {
 		return parsePlainSections(raw)
 	}
-	// No known structure — return everything as discussion.
-	return ParsedResponse{Discussion: strings.TrimSpace(raw)}
+	// No known structure — check if this looks like a document (artifact).
+	// Models that ignore section-header formatting instructions often output the
+	// document directly, starting with a markdown heading. Treat those as artifacts
+	// so the file gets saved. Short/conversational responses remain as discussion.
+	trimmed := strings.TrimSpace(raw)
+	if looksLikeDocument(trimmed) {
+		return ParsedResponse{Artifact: trimmed}
+	}
+	return ParsedResponse{Discussion: trimmed}
+}
+
+// looksLikeDocument reports whether s appears to be a standalone document
+// rather than a conversational reply. The heuristic: the text must be
+// substantial (≥200 bytes) AND must begin with a markdown heading ("# " or "## ").
+// Conversational replies almost never start with a heading; generated documents
+// (vision, UX, architecture, build plans) always do.
+func looksLikeDocument(s string) bool {
+	if len(s) < 200 {
+		return false
+	}
+	return strings.HasPrefix(s, "# ") || strings.HasPrefix(s, "## ")
 }
 
 // parseXMLEnvelope extracts sections from the XML envelope format.
