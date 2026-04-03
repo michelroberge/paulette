@@ -372,7 +372,7 @@ func runPlannerCall(
 
 	events, err := prov.Chat(run.Context(), provider.ChatRequest{
 		Model:        modelID,
-		SystemPrompt: agent.BuildMockPlannerSystemPrompt(uxContent),
+		SystemPrompt: agent.BuildMockPlannerSystemPrompt(),
 		UserMessage:  userMsg.String(),
 	})
 	if err != nil {

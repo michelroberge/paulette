@@ -21,12 +21,6 @@ Rules for output:
   - "description": full self-contained description for the screen
 - If there is only one screen, return an array with one item.
 
-Here is the UX Design Document:
-
---- 
-%s
----
-
 Output exactly in this format:
 
 <jsonplan>

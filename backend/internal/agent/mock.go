@@ -180,8 +180,8 @@ func BuildMockViewSystemPrompt(cfg *model.FrameworkConfig) string {
 
 // BuildMockPlannerSystemPrompt returns the system prompt used by the orchestrated
 // planner step to decompose a UX artifact into a screen list.
-func BuildMockPlannerSystemPrompt(uxContent string) string {
-	return fmt.Sprintf(ollamaprompts.MockPlanner, uxContent)
+func BuildMockPlannerSystemPrompt() string {
+	return fmt.Sprintf(ollamaprompts.MockPlanner)
 }
 
 // AssembleMockHTML combines generated view fragments into a single self-contained
