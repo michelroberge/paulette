@@ -41,6 +41,7 @@ func TestBuildProviderErrorEvent_IsConnectionError(t *testing.T) {
 		&nopActivityRepo{},
 		runs,
 		nil, nil, nil,
+		"", // logBase empty in tests
 	)
 
 	event := h.buildProviderErrorEvent("/tmp/testdir", model.StageVision, errors.New("connection refused"))
@@ -79,6 +80,7 @@ func TestBuildProviderErrorEvent_ValidJSON(t *testing.T) {
 		&nopActivityRepo{},
 		runs,
 		nil, nil, nil, // nil registry — fallback path
+		"", // logBase empty in tests
 	)
 
 	event := h.buildProviderErrorEvent("/tmp/testdir", model.StageArchitecture,
@@ -138,6 +140,7 @@ func TestBuildProviderErrorEvent_WithStageConfig(t *testing.T) {
 		provRegistry,
 		stageConfig,
 		connStore,
+		"", // logBase empty in tests
 	)
 
 	event := h.buildProviderErrorEvent(projectDir, model.StageVision,
@@ -181,9 +184,9 @@ func TestBuildProviderErrorEvent_NilStageConfig_NoNilPanic(t *testing.T) {
 		nil, // nil providerRegistry
 		nil, // nil stageConfig — must not panic
 		nil, // nil connStore
+		"",  // logBase empty in tests
 	)
 
-	// This must not panic.
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("buildProviderErrorEvent panicked with nil stageConfig: %v", r)
@@ -220,6 +223,7 @@ func TestBuildProviderErrorEvent_AllStages(t *testing.T) {
 		&nopActivityRepo{},
 		runs,
 		nil, nil, nil,
+		"", // logBase empty in tests
 	)
 
 	for _, stage := range stages {

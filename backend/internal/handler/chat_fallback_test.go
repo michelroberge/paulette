@@ -86,6 +86,7 @@ func TestChatHandler_NilRegistry_ResolveProviderFallback(t *testing.T) {
 		nil, // providerRegistry — nil triggers v0.1.0 fallback path
 		nil, // stageConfig
 		nil, // connStore
+		"",  // logBase empty in tests
 	)
 
 	cases := []struct {
@@ -141,6 +142,7 @@ func TestChatHandler_WithRegistryNoConfig_ResolveProviderFallback(t *testing.T) 
 		provRegistry,
 		stageConfig,
 		connStore,
+		"", // logBase empty in tests
 	)
 
 	cases := []struct {
