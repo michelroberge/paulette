@@ -13,13 +13,14 @@ interface Props {
   onShowHistory?: () => void;
   onShowProfile?: () => void;
   onShowStageSettings?: () => void;
+  onShowRunLog?: () => void;
   autonomous?: boolean;
   onToggleAutonomous?: () => void;
   onVersionClick?: () => void;
   viewingVersion?: string | null;
 }
 
-export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onShowProfile, onShowStageSettings, autonomous, onToggleAutonomous, onVersionClick, viewingVersion }: Readonly<Props>) {
+export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onShowProfile, onShowStageSettings, onShowRunLog, autonomous, onToggleAutonomous, onVersionClick, viewingVersion }: Readonly<Props>) {
   return (
     <header className="project-header">
       <button className="back-button" onClick={onBack}>&larr;</button>
@@ -58,6 +59,16 @@ export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onS
           aria-label="Stage connection settings"
         >
           ⚙
+        </button>
+      )}
+      {onShowRunLog && (
+        <button
+          className="run-log-button"
+          onClick={onShowRunLog}
+          title="Run log"
+          aria-label="Run log"
+        >
+          ▤
         </button>
       )}
       {onShowHistory && (

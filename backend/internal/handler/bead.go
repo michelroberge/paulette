@@ -38,10 +38,11 @@ type BeadHandler struct {
 	gitSvc           *git.Service
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
+	logBase          string
 }
 
-func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, skillRepo *fsrepo.SkillRepo) *BeadHandler {
-	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs, skillRepo: skillRepo, gitSvc: git.NewService()}
+func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, skillRepo *fsrepo.SkillRepo, logBase string) *BeadHandler {
+	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs, skillRepo: skillRepo, gitSvc: git.NewService(), logBase: logBase}
 }
 
 // SetProviderRegistry wires in the provider registry and stage config so bead
@@ -214,13 +215,23 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 		return nil, nil // race: already started
 	}
 	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "beads-generate")
+	runLogID := startRunLog(h.logBase, project, model.StageBuild, "beads-generate")
 
 	go func() {
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
 
 		var generateTokens int
+		var rlErr string
+		var beadNotes string
 		runStart := time.Now()
+		defer func() {
+			if rlErr != "" {
+				failRunLog(h.logBase, project.Name, runLogID, rlErr)
+			} else {
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageBuild, "beads-generate"), generateTokens, beadNotes)
+			}
+		}()
 		defer func() {
 			if generateTokens > 0 {
 				project.AddStageTokens(model.StageBuild, generateTokens)
@@ -236,7 +247,8 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 
 		prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
 		if provErr != nil {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to resolve provider: " + provErr.Error()})
+			rlErr = "Failed to resolve provider: " + provErr.Error()
+			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
 
@@ -314,20 +326,23 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 
 		jsonBytes, err := agent.ParseAndValidateJSON(ctx, fullResponse, agent.BuildPlanSchema, fixer)
 		if err != nil {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "JSON validation failed: " + err.Error()})
+			rlErr = "JSON validation failed: " + err.Error()
+			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
 
 		var plan model.ParsedBuildPlan
 		if err := json.Unmarshal(jsonBytes, &plan); err != nil {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to parse JSON: " + err.Error()})
+			rlErr = "Failed to parse JSON: " + err.Error()
+			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
 
 		// Step 2: Ensure bd is initialized
 		run.Emit(agent.StreamEvent{Type: "log", Content: "Checking bd status..."})
 		if err := ensureBdInitRun(ctx, project.HostDir, run); err != nil {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "bd init failed: " + err.Error()})
+			rlErr = "bd init failed: " + err.Error()
+			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
 
@@ -441,8 +456,8 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 			}
 		}
 
-		summary := fmt.Sprintf("Generated %d beads (%d epics)", len(allBeads), len(plan.Epics))
-		run.Emit(agent.StreamEvent{Type: "done", Content: summary})
+		beadNotes = fmt.Sprintf("Generated %d beads (%d epics)", len(allBeads), len(plan.Epics))
+		run.Emit(agent.StreamEvent{Type: "done", Content: beadNotes})
 	}()
 
 	return run, nil
@@ -511,13 +526,22 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		return nil, nil // race: already started
 	}
 	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "beads-execute")
+	runLogID := startRunLog(h.logBase, project, model.StageBuild, "beads-execute")
 
 	go func() {
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
 
 		var totalBuildTokens atomic.Int64
+		var rlErr string
 		runStart := time.Now()
+		defer func() {
+			if rlErr != "" {
+				failRunLog(h.logBase, project.Name, runLogID, rlErr)
+			} else {
+				successRunLog(h.logBase, project.Name, runLogID, nil, int(totalBuildTokens.Load()), "")
+			}
+		}()
 		defer func() {
 			if n := int(totalBuildTokens.Load()); n > 0 {
 				project.AddStageTokens(model.StageBuild, n)
