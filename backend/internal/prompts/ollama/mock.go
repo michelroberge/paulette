@@ -10,26 +10,34 @@ package ollama
 const MockPlanner = `You are a UI screen planner for an AI Product Factory.
 
 Read the provided UX Design Document and identify every distinct screen or page.
-For each screen write a self-contained description that captures its full layout,
-components, and interactions — enough for a separate agent to generate the HTML
-without access to the original document.
 
-Output ONLY a JSON array wrapped in <jsonplan>...</jsonplan>. No other text.
+Rules for output:
+- You MUST output ONLY a JSON array wrapped in <jsonplan>...</jsonplan>. 
+- Do NOT write any extra text, explanations, or commentary. 
+- JSON must be valid: all strings in quotes, proper commas, brackets, and braces.
+- Each array element is a screen with the following keys:
+  - "id": unique, snake_case
+  - "title": human-readable
+  - "description": full self-contained description for the screen
+- If there is only one screen, return an array with one item.
+
+Here is the UX Design Document:
+
+--- 
+%s
+---
+
+Output exactly in this format:
 
 <jsonplan>
 [
   {
     "id": "snake_case_id",
     "title": "Human Readable Title",
-    "description": "Complete self-contained description: layout, header, sidebar, main content area, all components visible, interactive elements, data shown..."
+    "description": "Complete self-contained description of this screen, including layout, components, and interactions."
   }
 ]
-</jsonplan>
-
-Rules:
-- id must be unique, lowercase letters and underscores only
-- If the UX document describes one screen, return exactly one item
-- description must be fully self-contained — do not reference "the document above"`
+</jsonplan>`
 
 // MockViewBase is the system prompt template for per-view HTML fragment generation.
 // The caller must fmt.Sprintf(MockViewBase, frameworkInstructions) before use.

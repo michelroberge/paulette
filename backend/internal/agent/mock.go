@@ -174,11 +174,15 @@ func buildMockViewSystemPrompt(cfg *model.FrameworkConfig) string {
 }
 
 // BuildMockViewSystemPrompt is the exported version of buildMockViewSystemPrompt.
-func BuildMockViewSystemPrompt(cfg *model.FrameworkConfig) string { return buildMockViewSystemPrompt(cfg) }
+func BuildMockViewSystemPrompt(cfg *model.FrameworkConfig) string {
+	return buildMockViewSystemPrompt(cfg)
+}
 
 // BuildMockPlannerSystemPrompt returns the system prompt used by the orchestrated
 // planner step to decompose a UX artifact into a screen list.
-func BuildMockPlannerSystemPrompt() string { return ollamaprompts.MockPlanner }
+func BuildMockPlannerSystemPrompt(uxContent string) string {
+	return fmt.Sprintf(ollamaprompts.MockPlanner, uxContent)
+}
 
 // AssembleMockHTML combines generated view fragments into a single self-contained
 // HTML file with tab navigation. This is purely deterministic — no LLM involved.
