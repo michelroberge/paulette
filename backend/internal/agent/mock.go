@@ -12,7 +12,15 @@ import (
 	"time"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
+	ollamaprompts "github.com/michelroberge/paulette/backend/internal/prompts/ollama"
 )
+
+// MockView holds a single screen's generated HTML fragment for use by the assembler.
+type MockView struct {
+	ID    string
+	Title string
+	HTML  string // body fragment only — no <html>/<head>/<body> shell
+}
 
 const mockSystemPromptBase = `You are a UI mockup generator for an AI Product Factory. Based on the provided UX design document, generate a complete standalone HTML page that visually represents the proposed UI as high-fidelity wireframe mockups.
 
@@ -74,6 +82,163 @@ var frameworkInstructions = map[model.UXFramework]string{
 - Use only plain CSS in a <style> block — no external dependencies
 - Modern dark aesthetic: dark background (#0f172a), slate panels (#1e293b), blue accents (#3b82f6), light text (#e2e8f0)
 - Use CSS Grid and Flexbox for layout`,
+}
+
+// frameworkShellHeads contains the <head> elements (CDN links, CSS variables, base styles)
+// that the deterministic assembler injects into the shared HTML shell. Each view fragment
+// relies on these being present but must not re-include them.
+var frameworkShellHeads = map[model.UXFramework]string{
+	model.FrameworkTailwind: `<script src="https://cdn.tailwindcss.com"></script>`,
+
+	model.FrameworkBootstrap: `<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<style>body{background:#0f172a;color:#e2e8f0}</style>`,
+
+	model.FrameworkMUI: `<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<style>body{font-family:'Roboto',sans-serif;background:#121212;color:#fff}</style>`,
+
+	model.FrameworkShadcn: `<style>
+:root{--background:#09090b;--foreground:#fafafa;--card:#18181b;--border:#27272a;--primary:#fafafa;--muted:#71717a}
+body{background:var(--background);color:var(--foreground)}
+</style>`,
+
+	model.FrameworkVanilla: `<style>
+:root{--bg:#0f172a;--panel:#1e293b;--accent:#3b82f6;--text:#e2e8f0;--border:#334155}
+body{background:var(--bg);color:var(--text)}
+</style>`,
+}
+
+// frameworkViewInstructs contains per-view agent instructions (which classes/styles to use)
+// without CDN links — those are already in frameworkShellHeads.
+var frameworkViewInstructs = map[model.UXFramework]string{
+	model.FrameworkTailwind: `Framework: Tailwind CSS (CDN already loaded in shell)
+- Use Tailwind utility classes exclusively (bg-slate-900, text-slate-100, rounded-lg, shadow-lg, etc.)
+- Dark mode palette: bg-slate-900, bg-slate-800, bg-slate-700, text-slate-100, text-blue-500
+- Do NOT include <script> CDN tags — Tailwind is already available`,
+
+	model.FrameworkBootstrap: `Framework: Bootstrap 5 (CDN already loaded in shell)
+- Use Bootstrap grid, components (card, navbar, btn, form-control, badge, list-group, etc.)
+- Dark theme is already applied globally; use Bootstrap dark variants where available
+- Do NOT include <link> or <script> CDN tags — Bootstrap is already available`,
+
+	model.FrameworkMUI: `Framework: Material UI (MUI) design language — plain CSS approximation
+- Color palette: primary #1976d2, background #121212, surface #1e1e1e, on-surface #fff, secondary #90caf9
+- Use box-shadow for elevation (dp2: 0 2px 4px rgba(0,0,0,.4), dp4: 0 4px 8px rgba(0,0,0,.4))
+- Roboto font is already loaded; rounded corners: 4px for components, 8px for cards
+- Inline <style> blocks for component CSS are fine`,
+
+	model.FrameworkShadcn: `Framework: Shadcn/UI design language — plain CSS
+- Use CSS variables already defined in the shell: var(--background), var(--foreground), var(--card), var(--border), var(--primary), var(--muted)
+- Zinc color scale for neutrals, rounded-md (6px) borders, subtle hover states
+- Bordered cards with 1px solid var(--border); inline <style> blocks are fine`,
+
+	model.FrameworkVanilla: `Framework: Vanilla CSS
+- CSS variables are already defined in the shell: var(--bg), var(--panel), var(--accent), var(--text), var(--border)
+- Use CSS Grid and Flexbox; inline <style> blocks are fine`,
+}
+
+// frameworkShellHead returns the <head> snippet for the given framework config.
+func frameworkShellHead(cfg *model.FrameworkConfig) string {
+	if cfg == nil {
+		return frameworkShellHeads[model.FrameworkVanilla]
+	}
+	h, ok := frameworkShellHeads[cfg.Framework]
+	if !ok {
+		return frameworkShellHeads[model.FrameworkVanilla]
+	}
+	return h
+}
+
+// frameworkViewInstruct returns the per-view agent framework instruction for the given config.
+func frameworkViewInstruct(cfg *model.FrameworkConfig) string {
+	if cfg == nil {
+		return frameworkViewInstructs[model.FrameworkVanilla]
+	}
+	instruct, ok := frameworkViewInstructs[cfg.Framework]
+	if !ok || cfg.Framework == model.FrameworkOther {
+		name := cfg.CustomName
+		if name == "" {
+			name = "custom framework"
+		}
+		return fmt.Sprintf(`Framework: %s — plain CSS approximation
+- Use plain CSS inline <style> blocks as the base styling
+- Apply %s design conventions as closely as possible
+- Modern dark aesthetic: background #0f172a, panels #1e293b, accents #3b82f6`, name, name)
+	}
+	return instruct
+}
+
+// buildMockViewSystemPrompt constructs the per-view system prompt for the given framework.
+func buildMockViewSystemPrompt(cfg *model.FrameworkConfig) string {
+	return fmt.Sprintf(ollamaprompts.MockViewBase, frameworkViewInstruct(cfg))
+}
+
+// BuildMockViewSystemPrompt is the exported version of buildMockViewSystemPrompt.
+func BuildMockViewSystemPrompt(cfg *model.FrameworkConfig) string { return buildMockViewSystemPrompt(cfg) }
+
+// BuildMockPlannerSystemPrompt returns the system prompt used by the orchestrated
+// planner step to decompose a UX artifact into a screen list.
+func BuildMockPlannerSystemPrompt() string { return ollamaprompts.MockPlanner }
+
+// AssembleMockHTML combines generated view fragments into a single self-contained
+// HTML file with tab navigation. This is purely deterministic — no LLM involved.
+func AssembleMockHTML(cfg *model.FrameworkConfig, views []MockView) string {
+	var b strings.Builder
+
+	b.WriteString("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
+	b.WriteString("<meta charset=\"UTF-8\">\n")
+	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n")
+	b.WriteString("<title>UI Mockup</title>\n")
+	b.WriteString(frameworkShellHead(cfg))
+	b.WriteString("\n<style>\n")
+	b.WriteString("*{box-sizing:border-box}\n")
+	b.WriteString(".mock-tab-bar{display:flex;gap:4px;padding:8px 16px;background:#1e293b;border-bottom:1px solid #334155;flex-wrap:wrap}\n")
+	b.WriteString(".mock-tab{padding:6px 16px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#94a3b8;font-size:14px;font-family:inherit}\n")
+	b.WriteString(".mock-tab.active{background:#3b82f6;color:#fff}\n")
+	b.WriteString(".mock-screen{display:none}\n")
+	b.WriteString(".mock-screen.active{display:block}\n")
+	b.WriteString("</style>\n</head>\n<body>\n")
+
+	// Tab bar — only when there are multiple screens
+	if len(views) > 1 {
+		b.WriteString("<nav class=\"mock-tab-bar\">\n")
+		for i, v := range views {
+			active := ""
+			if i == 0 {
+				active = " active"
+			}
+			b.WriteString(fmt.Sprintf(
+				"  <button class=\"mock-tab%s\" onclick=\"mockShow('%s',this)\">%s</button>\n",
+				active, v.ID, v.Title,
+			))
+		}
+		b.WriteString("</nav>\n")
+	}
+
+	// Screen containers
+	for i, v := range views {
+		active := ""
+		if i == 0 {
+			active = " active"
+		}
+		b.WriteString(fmt.Sprintf("<div id=\"mock-screen-%s\" class=\"mock-screen%s\">\n", v.ID, active))
+		b.WriteString(v.HTML)
+		b.WriteString("\n</div>\n")
+	}
+
+	// Tab-switching script
+	b.WriteString("<script>\n")
+	b.WriteString("function mockShow(id,btn){\n")
+	b.WriteString("  document.querySelectorAll('.mock-screen').forEach(function(s){s.classList.remove('active')});\n")
+	b.WriteString("  document.querySelectorAll('.mock-tab').forEach(function(t){t.classList.remove('active')});\n")
+	b.WriteString("  var s=document.getElementById('mock-screen-'+id);\n")
+	b.WriteString("  if(s)s.classList.add('active');\n")
+	b.WriteString("  if(btn)btn.classList.add('active');\n")
+	b.WriteString("}\n")
+	b.WriteString("</script>\n")
+
+	b.WriteString("</body>\n</html>")
+	return b.String()
 }
 
 // buildMockSystemPrompt constructs the mock generation prompt for the given framework.

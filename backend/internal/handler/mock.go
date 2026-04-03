@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +19,18 @@ import (
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
+
+// orchestratedArtifactThreshold is the UX artifact byte length above which the
+// orchestrated multi-agent path is used even for non-Ollama providers, to keep
+// each individual LLM call within a manageable context window.
+const orchestratedArtifactThreshold = 6000
+
+// plannerScreen is a single screen entry decoded from the planner agent's JSON output.
+type plannerScreen struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
 
 const mockRelPath = ".paulette/ux/mock.html"
 
@@ -147,7 +160,19 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	var req generateMockRequest
 	json.NewDecoder(r.Body).Decode(&req) // optional body — ignore decode errors
 
-	run, err := h.StartMockRun(project, req.Refinement)
+	// Resolve provider early so we can pick the right generation strategy.
+	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
+	if uxContent == "" {
+		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
+	}
+	prov, _, _ := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
+
+	var run *stream.Run
+	if prov != nil && useOrchestrated(prov, uxContent) {
+		run, err = h.StartMockRunOrchestrated(project, req.Refinement)
+	} else {
+		run, err = h.StartMockRun(project, req.Refinement)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -309,6 +334,240 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 				run.Emit(agent.StreamEvent{Type: "done", Content: html})
 			}
 		}
+	}()
+
+	return run, nil
+}
+
+// useOrchestrated reports whether the orchestrated multi-agent path should be
+// used for mock generation. It returns true when:
+//   - the provider is Ollama (small context window, weaker instruction following), or
+//   - the UX artifact exceeds orchestratedArtifactThreshold bytes (keeps any provider's
+//     individual calls within a manageable context window).
+func useOrchestrated(prov provider.Provider, uxContent string) bool {
+	if _, ok := prov.(*provider.OllamaProvider); ok {
+		return true
+	}
+	return len(uxContent) > orchestratedArtifactThreshold
+}
+
+// runPlannerCall sends the UX artifact to the LLM and returns the parsed screen list.
+// Chunk events are forwarded to run so the user sees activity. Tokens are accumulated
+// into the provided pointer.
+func runPlannerCall(
+	prov provider.Provider,
+	modelID string,
+	run *stream.Run,
+	uxContent, refinement string,
+	tokensAccum *int,
+) ([]plannerScreen, error) {
+	var userMsg strings.Builder
+	userMsg.WriteString("UX Design Document:\n---\n")
+	userMsg.WriteString(uxContent)
+	userMsg.WriteString("\n---\n\nList every distinct screen described above.")
+	if refinement != "" {
+		userMsg.WriteString("\n\nContext: ")
+		userMsg.WriteString(refinement)
+	}
+
+	events, err := prov.Chat(run.Context(), provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: agent.BuildMockPlannerSystemPrompt(),
+		UserMessage:  userMsg.String(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var fullResponse strings.Builder
+	for ev := range events {
+		switch ev.Type {
+		case "chunk":
+			fullResponse.WriteString(ev.Content)
+			run.Emit(agent.StreamEvent{Type: "chunk", Content: ev.Content})
+		case "tokens":
+			var n int
+			fmt.Sscanf(ev.Content, "%d", &n)
+			*tokensAccum += n
+		case "error":
+			return nil, fmt.Errorf("planner: %s", ev.Content)
+		}
+	}
+
+	raw := fullResponse.String()
+	parsed := agent.ParseResponse(raw)
+	if len(parsed.JSON) == 0 {
+		return nil, fmt.Errorf("planner returned no JSON screen list")
+	}
+
+	var screens []plannerScreen
+	if err := json.Unmarshal(parsed.JSON, &screens); err != nil {
+		return nil, fmt.Errorf("planner JSON parse error: %w", err)
+	}
+	if len(screens) == 0 {
+		return nil, fmt.Errorf("planner returned empty screen list")
+	}
+	return screens, nil
+}
+
+// runViewCall asks the LLM to generate an HTML fragment for a single screen.
+// It applies the same HTML-envelope retry logic as StartMockRun. Chunk events
+// are NOT forwarded to run here (the caller handles per-view progress messages).
+func runViewCall(
+	prov provider.Provider,
+	modelID string,
+	run *stream.Run,
+	frameworkCfg *model.FrameworkConfig,
+	screen plannerScreen,
+	tokensAccum *int,
+	tokensMu *sync.Mutex,
+) (string, error) {
+	systemPrompt := agent.BuildMockViewSystemPrompt(frameworkCfg)
+	userMsg := "Generate the HTML fragment for this screen:\n\n" + screen.Description
+
+	for attempt := 0; attempt <= agent.MaxMockRetries; attempt++ {
+		if run.Context().Err() != nil {
+			return "", run.Context().Err()
+		}
+
+		events, err := prov.Chat(run.Context(), provider.ChatRequest{
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  userMsg,
+		})
+		if err != nil {
+			return "", err
+		}
+
+		var fullResponse strings.Builder
+		var hadError bool
+		for ev := range events {
+			switch ev.Type {
+			case "chunk":
+				fullResponse.WriteString(ev.Content)
+			case "tokens":
+				var n int
+				fmt.Sscanf(ev.Content, "%d", &n)
+				tokensMu.Lock()
+				*tokensAccum += n
+				tokensMu.Unlock()
+			case "error":
+				hadError = true
+			}
+		}
+		if hadError {
+			return "", fmt.Errorf("view %q: LLM error", screen.Title)
+		}
+
+		raw := fullResponse.String()
+		if agent.HasHTMLBlock(raw) {
+			html := agent.ExtractHTML(raw)
+			return html, nil
+		}
+
+		if attempt < agent.MaxMockRetries {
+			snippet := raw
+			if len(snippet) > 500 {
+				snippet = snippet[:500] + "..."
+			}
+			userMsg = fmt.Sprintf(agent.MockRetryPrompt, snippet)
+		}
+	}
+
+	// Retries exhausted — return whatever was extracted (may be empty)
+	return agent.ExtractHTML(userMsg), nil
+}
+
+// StartMockRunOrchestrated starts an orchestrated multi-agent mock generation run:
+//  1. Planner call  — decomposes UX artifact into a screen list (JSON)
+//  2. Parallel view calls — one per screen, each generating a small HTML fragment
+//  3. Deterministic assembly — wraps fragments in a shared shell with tab navigation
+//
+// Returns (nil, nil) on race condition (another run already started).
+func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinement string) (*stream.Run, error) {
+	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
+	if uxContent == "" {
+		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
+	}
+	if uxContent == "" {
+		return nil, fmt.Errorf("no artifact available — chat with the agent to generate content first")
+	}
+
+	frameworkCfg, _ := fsrepo.ReadFramework(project.HostDir)
+
+	run := h.runs.Start(project.ID, "ux", "mock")
+	if run == nil {
+		return nil, nil // race: already started
+	}
+	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
+
+	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
+	if provErr != nil {
+		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
+		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
+		run.Finish(h.runs)
+		return run, nil
+	}
+
+	go func() {
+		defer run.Finish(h.runs)
+		defer clearActivity(h.activityRepo, project.HostDir, model.StageUX)
+
+		var tokensAccum int
+		var tokensMu sync.Mutex
+		runStart := time.Now()
+		defer func() {
+			if tokensAccum > 0 {
+				project.AddStageTokens(model.StageUX, tokensAccum)
+				h.registry.Update(project)
+				recordSession(project.HostDir, model.StageUX, model.SessionMock, project.Iteration, runStart, tokensAccum)
+			}
+		}()
+
+		// Step 1: Planner
+		run.Emit(agent.StreamEvent{Type: "chunk", Content: "Planning screens from UX artifact...\n"})
+		screens, err := runPlannerCall(prov, modelID, run, uxContent, refinement, &tokensAccum)
+		if err != nil {
+			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
+			return
+		}
+		run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("\nFound %d screen(s). Generating HTML fragments in parallel...\n\n", len(screens))})
+
+		// Step 2: Parallel view generation (max 3 concurrent)
+		const maxViewWorkers = 3
+		views := make([]agent.MockView, len(screens))
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, maxViewWorkers)
+
+		for i, screen := range screens {
+			wg.Add(1)
+			go func(idx int, sc plannerScreen) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Generating...\n", sc.Title)})
+				html, err := runViewCall(prov, modelID, run, frameworkCfg, sc, &tokensAccum, &tokensMu)
+				if err != nil {
+					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Warning: %s\n", sc.Title, err.Error())})
+					html = "<p style='color:#f87171'>Failed to generate this screen.</p>"
+				}
+				views[idx] = agent.MockView{ID: sc.ID, Title: sc.Title, HTML: html}
+				run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Done.\n", sc.Title)})
+			}(i, screen)
+		}
+		wg.Wait()
+
+		// Step 3: Deterministic assembly
+		run.Emit(agent.StreamEvent{Type: "chunk", Content: "\nAssembling final HTML...\n"})
+		finalHTML := agent.AssembleMockHTML(frameworkCfg, views)
+
+		// Persist + emit done
+		p := filepath.Join(project.HostDir, mockRelPath)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
+			os.WriteFile(p, []byte(finalHTML), 0644)
+		}
+		run.Emit(agent.StreamEvent{Type: "done", Content: finalHTML})
 	}()
 
 	return run, nil
