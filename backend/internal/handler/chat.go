@@ -41,6 +41,7 @@ type ChatHandler struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	connStore        *provider.ConnectionStore
+	logBase          string
 }
 
 // NewChatHandler creates a ChatHandler. providerRegistry, stageConfig, and
@@ -55,6 +56,7 @@ func NewChatHandler(
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
 	connStore *provider.ConnectionStore,
+	logBase string,
 ) *ChatHandler {
 	return &ChatHandler{
 		registry:         registry,
@@ -65,6 +67,7 @@ func NewChatHandler(
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
 		connStore:        connStore,
+		logBase:          logBase,
 	}
 }
 
@@ -405,10 +408,12 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		return nil, nil // race: already started
 	}
 	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
+	runLogID := startRunLog(h.logBase, project, stage, "chat")
 
 	// Resolve the LLM provider for this stage (project override → global default → Claude CLI).
 	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
 	if provErr != nil {
+		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
 		clearActivity(h.activityRepo, project.HostDir, stage)
 		run.Finish(h.runs)
@@ -429,6 +434,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		Stream:       saStream,
 	})
 	if chatErr != nil {
+		failRunLog(h.logBase, project.Name, runLogID, chatErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
 		clearActivity(h.activityRepo, project.HostDir, stage)
 		run.Finish(h.runs)
@@ -436,14 +442,23 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	}
 
 	// Background goroutine: process agent events, emit through run.
-	// LIFO defer: clearActivity runs first, then run.Finish — watcher sees clean state.
+	// LIFO defer order: token tracking (1st) → run log (2nd) → clearActivity → run.Finish
 	go func() {
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.HostDir, stage)
 
 		var stageTokensAccum int
 		var accumulated strings.Builder
+		var rlErr string
 		runStart := time.Now()
+		// Run log completion — runs after token tracking (declared before it, so runs after in LIFO)
+		defer func() {
+			if rlErr != "" {
+				failRunLog(h.logBase, project.Name, runLogID, rlErr)
+			} else {
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, stage, "chat"), stageTokensAccum, "")
+			}
+		}()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(stage, stageTokensAccum)
@@ -458,6 +473,9 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 				fmt.Sscanf(event.Content, "%d", &n)
 				stageTokensAccum += n
 			}
+			if event.Type == "error" {
+				rlErr = event.Content
+			}
 			if event.Type == "done" {
 				fullContent := event.Content
 				if fullContent == "" {
@@ -466,6 +484,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 				// Extract and save artifact if present
 				if artifact, found := agent.ExtractArtifact(fullContent); found {
 					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
+						rlErr = "failed to save artifact: " + err.Error()
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
 						run.Emit(agent.StreamEvent{Type: "artifact", Content: string(stage) + "/" + string(stage) + ".md"})

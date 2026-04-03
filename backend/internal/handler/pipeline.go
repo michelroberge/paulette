@@ -35,9 +35,10 @@ type PipelineHandler struct {
 	git              *git.Service
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
+	logBase          string
 }
 
-func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, chatRepo repository.ChatRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore) *PipelineHandler {
+func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, chatRepo repository.ChatRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore, logBase string) *PipelineHandler {
 	return &PipelineHandler{
 		registry:         registry,
 		projectRepo:      projectRepo,
@@ -48,6 +49,7 @@ func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository
 		git:              gitSvc,
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
+		logBase:          logBase,
 	}
 }
 
@@ -259,6 +261,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		return // already running
 	}
 	writeActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary")
+	runLogID := startRunLog(h.logBase, project, model.StageComplete, "summary")
 
 	// Collect artifacts before entering the goroutine.
 	artifacts := make(map[model.StageName]string)
@@ -275,6 +278,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 	// Resolve provider before entering the goroutine.
 	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageComplete)
 	if provErr != nil {
+		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", provErr.Error())
 		run.Emit(agent.StreamEvent{Type: "error", Content: provErr.Error()})
 		clearActivity(h.activityRepo, project.HostDir, model.StageComplete)
@@ -292,6 +296,16 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageComplete)
 
+		var rlErr string
+		var tokens int
+		defer func() {
+			if rlErr != "" {
+				failRunLog(h.logBase, project.Name, runLogID, rlErr)
+			} else {
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageComplete, "summary"), tokens, "")
+			}
+		}()
+
 		events, err := prov.Chat(run.Context(), provider.ChatRequest{
 			Model:        modelID,
 			SystemPrompt: systemPrompt,
@@ -303,6 +317,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 			Stream:       saStream,
 		})
 		if err != nil {
+			rlErr = err.Error()
 			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", err.Error())
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
 			return
@@ -310,7 +325,6 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 
 		runStart := time.Now()
 		var fullText strings.Builder
-		var tokens int
 		for ev := range events {
 			if ev.Type == "chunk" {
 				fullText.WriteString(ev.Content)
@@ -326,18 +340,19 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		}
 		summary := parsed
 		if summary == "" {
-			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", "summary generation produced no output")
-			run.Emit(agent.StreamEvent{Type: "error", Content: "summary generation produced no output"})
+			rlErr = "summary generation produced no output"
+			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", rlErr)
+			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
 
 		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 		if err := os.WriteFile(summaryPath, []byte(summary), 0644); err != nil {
+			rlErr = "failed to write summary: " + err.Error()
 			log.Printf("failed to write summary: %v", err)
 			run.Emit(agent.StreamEvent{Type: "error", Content: "failed to write summary"})
 			return
 		}
-
 		project.SummaryReady = true
 		project.SummaryTokens = tokens
 		project.AddStageTokens(model.StageComplete, tokens)

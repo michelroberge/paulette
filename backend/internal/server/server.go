@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -131,13 +132,14 @@ func (s *Server) Router() http.Handler {
 
 	gitSvc := git.NewService()
 	skillRepo := fsrepo.NewSkillRepo(s.cfg.RegistryPath)
+	logBase := filepath.Join(s.cfg.RegistryPath, "log")
 
 	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
-	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.chatRepo, s.runs, gitSvc, s.providerRegistry, s.stageConfig)
+	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.chatRepo, s.runs, gitSvc, s.providerRegistry, s.stageConfig, logBase)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
-	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
-	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore)
-	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo)
+	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
+	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
+	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo, logBase)
 	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
@@ -273,6 +275,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/versions/{version}/beads/{beadId}", vh.GetVersionBeadExecution)
 		r.Get("/{id}/versions/{version}/mock", vh.GetVersionMock)
 	})
+
+	rlh := handler.NewRunLogHandler(s.registry, logBase)
+	r.Get("/api/run-log", rlh.GetAll)
+	r.Get("/api/projects/{id}/run-log", rlh.GetForProject)
 
 	r.Route("/api/skills", func(r chi.Router) {
 		r.Get("/", skh.ListAll)
