@@ -85,11 +85,6 @@ func (h *ImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Warn if imported project has Dolt-backed beads (not portable)
-	if noDb, hasBeads := detectBeadsNoDB(req.HostDir); hasBeads && !noDb {
-		log.Printf("import: project %s has Dolt-backed beads; recommend switching to no-db mode", req.Name)
-	}
-
 	// Start background import
 	h.startImportRun(project)
 
@@ -168,15 +163,6 @@ func (h *ImportHandler) startImportRun(project *model.Project) {
 		}
 
 		emit(agent.StreamEvent{Type: "log", Content: "Starting import analysis..."})
-
-		// Warn user if beads are Dolt-backed (not portable across machines)
-		if noDb, hasBeads := detectBeadsNoDB(project.HostDir); hasBeads && !noDb {
-			emit(agent.StreamEvent{Type: "warning", Content: "This project uses Dolt-backed beads. " +
-				"For cross-machine portability, switch to no-db mode on the original machine first: " +
-				"edit .beads/config.yaml and set 'no-db: true', then push."})
-		} else if !hasBeads {
-			emit(agent.StreamEvent{Type: "log", Content: "No beads found; will initialize on first build."})
-		}
 
 		result, err := agent.StreamImport(run.Context(), project.HostDir, project.Version, project.Name, emit)
 		if err != nil {

@@ -82,9 +82,11 @@ type ollamaChatRequest struct {
 // ollamaStreamChunk is one NDJSON line from the /api/chat stream.
 // Only the fields we need are decoded; unknown fields are silently dropped.
 type ollamaStreamChunk struct {
-	Message ollamaMessage `json:"message"`
-	Done    bool          `json:"done"`
-	Error   string        `json:"error,omitempty"`
+	Message         ollamaMessage `json:"message"`
+	Done            bool          `json:"done"`
+	Error           string        `json:"error,omitempty"`
+	PromptEvalCount int           `json:"prompt_eval_count,omitempty"`
+	EvalCount       int           `json:"eval_count,omitempty"`
 }
 
 // ollamaModel is one entry in the GET /api/tags response.
@@ -443,6 +445,11 @@ func (p *OllamaProvider) streamResponse(ctx context.Context, body io.Reader, ch 
 		}
 
 		if chunk.Done {
+			// Emit token count if available (Ollama includes this in the final response).
+			totalTokens := chunk.PromptEvalCount + chunk.EvalCount
+			if totalTokens > 0 {
+				ch <- StreamEvent{Type: "tokens", Content: fmt.Sprintf("%d", totalTokens)}
+			}
 			// Generation complete; emit the sentinel and stop.
 			ch <- StreamEvent{Type: "done"}
 			return

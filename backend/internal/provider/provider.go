@@ -253,3 +253,36 @@ func (r *Registry) ResolveForStageWithSettings(
 	}
 	return NewClaudeCLIProvider(), claudeModel, nil, nil
 }
+
+// ResolveForStageOperation resolves the provider and model for a specific
+// sub-step operation (e.g. "ux.mock", "build.generate") using a five-level
+// fallback hierarchy:
+//
+//  1. Per-project operation override
+//  2. Global operation default
+//  3. Per-project stage override
+//  4. Global stage default
+//  5. Hardcoded Claude CLI fallback
+//
+// Falls back to ResolveForStageWithSettings when stageConfig is nil or when
+// operation is empty.
+func (r *Registry) ResolveForStageOperation(
+	projectID string,
+	stage model.StageName,
+	operation OperationKey,
+	stageConfig *StageConfigStore,
+	hostDir string,
+) (Provider, string, *StageAssignment, error) {
+	if stageConfig != nil && operation != "" {
+		if assignment := stageConfig.ResolveOperation(hostDir, stage, operation); assignment != nil {
+			p, err := r.ForConnection(assignment.ConnectionID)
+			if err != nil {
+				return nil, "", nil, fmt.Errorf("operation %q: configured connection error: %w", operation, err)
+			}
+			return p, assignment.Model, assignment, nil
+		}
+	}
+
+	// No operation-level config — fall through to stage-level resolution.
+	return r.ResolveForStageWithSettings(projectID, stage, stageConfig, hostDir)
+}

@@ -16,13 +16,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { StageName } from '../../types';
-import type { Connection, GlobalStageConfig, ModelInfo } from '../../types/provider';
+import type { Connection, GlobalStageConfig, ModelInfo, OperationKey } from '../../types/provider';
 import { listConnections } from '../../api/connections';
 import {
   getGlobalDefaults,
   getProjectOverrides,
   setProjectStageOverride,
   resetProjectOverrides,
+  setProjectOperationOverride,
+  deleteProjectOperationOverride,
 } from '../../api/stageConfig';
 
 // ---------------------------------------------------------------------------
@@ -56,6 +58,23 @@ const STAGE_COLORS: Record<StageName, string> = {
  * as falling back to the Claude CLI.
  */
 const CLAUDE_CLI_ID = '';
+
+interface SubOperation {
+  key: OperationKey;
+  label: string;
+}
+
+const STAGE_OPERATIONS: Partial<Record<StageName, SubOperation[]>> = {
+  ux: [
+    { key: 'ux.chat', label: 'Chat' },
+    { key: 'ux.mock', label: 'Mock Generation' },
+  ],
+  build: [
+    { key: 'build.generate', label: 'Generate Plan' },
+    { key: 'build.review', label: 'Review' },
+    { key: 'build.execute', label: 'Execute Beads' },
+  ],
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,6 +127,12 @@ export function ProjectStageSettings({ projectId, projectName, onClose, onOverri
   const [loading, setLoading] = useState(true);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
+  /** Which stages have their sub-operations expanded. */
+  const [expandedStages, setExpandedStages] = useState<Record<StageName, boolean>>({} as Record<StageName, boolean>);
+  /** Per-operation override state: connection, model, inherit. */
+  const [opRows, setOpRows] = useState<Record<string, RowState>>({});
+  /** Whether each operation has a project-level override. */
+  const [opOverridden, setOpOverridden] = useState<Record<string, boolean>>({});
 
   // ── Data loading ──────────────────────────────────────────────────────────
 
@@ -151,6 +176,25 @@ export function ProjectStageSettings({ projectId, projectName, onClose, onOverri
           }
         }
         setRows(newRows as RowStates);
+
+        // Load operation-level overrides
+        const opRowsInit: Record<string, RowState> = {};
+        const opOverriddenInit: Record<string, boolean> = {};
+        if (overrides.operationOverrides) {
+          for (const [opKey, assignment] of Object.entries(overrides.operationOverrides)) {
+            if (assignment) {
+              opRowsInit[opKey] = {
+                inherit: false,
+                connectionId: assignment.connectionId ?? CLAUDE_CLI_ID,
+                model: assignment.model ?? '',
+                saveStatus: 'idle',
+              };
+              opOverriddenInit[opKey] = true;
+            }
+          }
+        }
+        setOpRows(opRowsInit);
+        setOpOverridden(opOverriddenInit);
       } catch (err) {
         console.error('[ProjectStageSettings] Failed to load settings:', err);
       } finally {
@@ -267,6 +311,73 @@ export function ProjectStageSettings({ projectId, projectName, onClose, onOverri
       }
     },
     [rows, saveRow],
+  );
+
+  // ── Operation-level handlers ──────────────────────────────────────────────
+
+  const toggleExpanded = useCallback((stage: StageName) => {
+    setExpandedStages(prev => ({ ...prev, [stage]: !prev[stage] }));
+  }, []);
+
+  const updateOpRow = useCallback((key: string, patch: Partial<RowState>) => {
+    setOpRows(prev => ({ ...prev, [key]: { ...(prev[key] ?? defaultRow()), ...patch } }));
+  }, []);
+
+  const handleOpOverride = useCallback(
+    async (opKey: OperationKey, connectionId: string, model: string) => {
+      updateOpRow(opKey, { saveStatus: 'saving', connectionId, model, inherit: false });
+      setOpOverridden(prev => ({ ...prev, [opKey]: true }));
+      try {
+        await setProjectOperationOverride(projectId, opKey, { connectionId, model });
+        updateOpRow(opKey, { saveStatus: 'saved' });
+        onOverridesChange?.();
+        setTimeout(() => updateOpRow(opKey, { saveStatus: 'idle' }), 2000);
+      } catch {
+        updateOpRow(opKey, { saveStatus: 'error' });
+      }
+    },
+    [projectId, updateOpRow, onOverridesChange],
+  );
+
+  const handleClearOpOverride = useCallback(
+    async (opKey: OperationKey) => {
+      try {
+        await deleteProjectOperationOverride(projectId, opKey);
+        setOpOverridden(prev => {
+          const next = { ...prev };
+          delete next[opKey];
+          return next;
+        });
+        setOpRows(prev => {
+          const next = { ...prev };
+          delete next[opKey];
+          return next;
+        });
+        onOverridesChange?.();
+      } catch (err) {
+        console.error(`[ProjectStageSettings] Failed to clear operation ${opKey}:`, err);
+      }
+    },
+    [projectId, onOverridesChange],
+  );
+
+  const handleOpConnectionChange = useCallback(
+    async (opKey: OperationKey, connectionId: string) => {
+      const conn = connections.find(c => c.id === connectionId);
+      const newModel = conn?.defaultModel ?? '';
+      await handleOpOverride(opKey, connectionId, newModel);
+    },
+    [connections, handleOpOverride],
+  );
+
+  const handleOpModelBlur = useCallback(
+    async (opKey: OperationKey) => {
+      const row = opRows[opKey];
+      if (row && opOverridden[opKey]) {
+        await handleOpOverride(opKey, row.connectionId, row.model);
+      }
+    },
+    [opRows, opOverridden, handleOpOverride],
   );
 
   // ── Reset all ─────────────────────────────────────────────────────────────
@@ -406,6 +517,9 @@ export function ProjectStageSettings({ projectId, projectName, onClose, onOverri
                 const selectedConn = connections.find(c => c.id === row.connectionId);
                 const discoveredModels = selectedConn?.discoveredModels ?? [];
                 const hasDiscoveredModels = discoveredModels.length > 0;
+                const ops = STAGE_OPERATIONS[stage];
+                const hasOps = ops && ops.length > 0;
+                const isExpanded = expandedStages[stage] ?? false;
 
                 return (
                   <div
@@ -438,6 +552,32 @@ export function ProjectStageSettings({ projectId, projectName, onClose, onOverri
                           display: 'inline-block',
                         }}
                       />
+
+                      {/* Expand toggle for stages with sub-operations */}
+                      {hasOps && (
+                        <button
+                          onClick={() => toggleExpanded(stage)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: '0 2px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            flexShrink: 0,
+                          }}
+                          aria-expanded={isExpanded}
+                          aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${STAGE_LABELS[stage]} sub-operations`}
+                        >
+                          <span style={{
+                            display: 'inline-block',
+                            transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                            transition: 'transform 150ms',
+                            fontSize: '0.5rem',
+                            color: '#64748b',
+                          }}>&#9654;</span>
+                        </button>
+                      )}
 
                       {/* Stage label */}
                       <span
@@ -534,6 +674,102 @@ export function ProjectStageSettings({ projectId, projectName, onClose, onOverri
                             />
                           )}
                         </FieldRow>
+                      </div>
+                    )}
+
+                    {/* Sub-operation rows */}
+                    {hasOps && isExpanded && (
+                      <div style={{ marginTop: '0.75rem', borderTop: '1px solid rgba(51, 65, 85, 0.5)', paddingTop: '0.5rem' }}>
+                        {ops!.map(op => {
+                          const isOpOverridden = opOverridden[op.key] ?? false;
+                          const opRow = opRows[op.key] ?? defaultRow();
+
+                          return (
+                            <div
+                              key={op.key}
+                              style={{
+                                padding: '0.375rem 0 0.375rem 1rem',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '0.25rem',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                                <span style={{ color: '#475569', fontSize: '0.875rem' }}>&#8627;</span>
+                                <span style={{ fontSize: '0.75rem', color: '#94a3b8', flex: 1 }}>{op.label}</span>
+                                {isOpOverridden ? (
+                                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <SaveStatusLabel status={opRow.saveStatus} />
+                                    <button
+                                      onClick={() => void handleClearOpOverride(op.key)}
+                                      style={{
+                                        background: 'none',
+                                        border: 'none',
+                                        color: '#64748b',
+                                        cursor: 'pointer',
+                                        fontSize: '0.625rem',
+                                        padding: '2px',
+                                      }}
+                                      title="Clear override and inherit from stage"
+                                    >
+                                      &#10005;
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => {
+                                      setOpOverridden(prev => ({ ...prev, [op.key]: true }));
+                                      updateOpRow(op.key, { inherit: false, connectionId: row.connectionId, model: row.model, saveStatus: 'idle' });
+                                    }}
+                                    style={{
+                                      background: 'none',
+                                      border: '1px solid #334155',
+                                      borderRadius: '4px',
+                                      color: '#64748b',
+                                      cursor: 'pointer',
+                                      fontSize: '0.625rem',
+                                      padding: '1px 6px',
+                                      fontFamily: 'inherit',
+                                    }}
+                                  >
+                                    Override
+                                  </button>
+                                )}
+                              </div>
+                              {isOpOverridden && (
+                                <div style={{ paddingLeft: '1rem', display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                                  <FieldRow label="Connection">
+                                    <select
+                                      value={opRow.connectionId}
+                                      onChange={e => void handleOpConnectionChange(op.key, e.target.value)}
+                                      style={{ ...selectStyle, fontSize: '0.6875rem' }}
+                                    >
+                                      <option value="">Claude CLI (default)</option>
+                                      {connections.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                      ))}
+                                    </select>
+                                  </FieldRow>
+                                  <FieldRow label="Model">
+                                    <input
+                                      type="text"
+                                      value={opRow.model}
+                                      onChange={e => updateOpRow(op.key, { model: e.target.value })}
+                                      onBlur={() => void handleOpModelBlur(op.key)}
+                                      placeholder="e.g. llama3:8b"
+                                      style={{ ...inputStyle, fontSize: '0.6875rem' }}
+                                    />
+                                  </FieldRow>
+                                </div>
+                              )}
+                              {!isOpOverridden && (
+                                <span style={{ paddingLeft: '1rem', fontSize: '0.6875rem', color: '#475569', fontStyle: 'italic' }}>
+                                  Inherited from {STAGE_LABELS[stage]}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>

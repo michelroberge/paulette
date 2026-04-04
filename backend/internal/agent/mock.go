@@ -1,15 +1,8 @@
 package agent
 
 import (
-	"bufio"
-	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
 	ollamaprompts "github.com/michelroberge/paulette/backend/internal/prompts/ollama"
@@ -337,9 +330,16 @@ Here is your previous (wrong) response for reference — do NOT repeat this mist
 
 Now output the complete HTML wireframe mockup wrapped in the required XML envelope.`
 
-// hasHTMLBlock checks whether the response contains the XML envelope with htmlcontent.
+// hasHTMLBlock checks whether the response contains the XML envelope with htmlcontent,
+// or raw HTML content (for models that don't follow the envelope format).
 func hasHTMLBlock(s string) bool {
-	return strings.Contains(s, "<htmlcontent>") && strings.Contains(s, "</htmlcontent>")
+	if strings.Contains(s, "<htmlcontent>") && strings.Contains(s, "</htmlcontent>") {
+		return true
+	}
+	// Fallback: check for raw HTML in the response
+	lower := strings.ToLower(s)
+	return (strings.Contains(lower, "<!doctype html>") || strings.Contains(lower, "<html")) &&
+		strings.Contains(lower, "</html>")
 }
 
 // HasHTMLBlock is the exported version of hasHTMLBlock. It checks whether the
@@ -353,148 +353,95 @@ func HasHTMLBlock(s string) bool { return hasHTMLBlock(s) }
 // calling the provider layer directly (bypassing agent.GenerateMock).
 func BuildMockSystemPrompt(cfg *model.FrameworkConfig) string { return buildMockSystemPrompt(cfg) }
 
+// BuildMockContext builds a compressed project context block that precedes the
+// UX design document in mock generation prompts. This ensures the LLM knows
+// what the app is about (its name, vision, and high-level plan) rather than
+// generating generic wireframes that don't match the project.
+func BuildMockContext(projectName, visionContent, buildContent string) string {
+	if visionContent == "" && buildContent == "" && projectName == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Project Context\n")
+	if projectName != "" {
+		b.WriteString("Project: ")
+		b.WriteString(projectName)
+		b.WriteString("\n")
+	}
+	if visionContent != "" {
+		b.WriteString("\n### Vision\n")
+		// Include up to ~2000 chars of vision to keep context manageable
+		if len(visionContent) > 2000 {
+			b.WriteString(visionContent[:2000])
+			b.WriteString("\n... (truncated)\n")
+		} else {
+			b.WriteString(visionContent)
+			b.WriteString("\n")
+		}
+	}
+	if buildContent != "" {
+		b.WriteString("\n### Build Plan Summary\n")
+		// Include up to ~1500 chars of build plan for high-level context
+		if len(buildContent) > 1500 {
+			b.WriteString(buildContent[:1500])
+			b.WriteString("\n... (truncated)\n")
+		} else {
+			b.WriteString(buildContent)
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\n---\n\n")
+	return b.String()
+}
+
 // MockRetryPrompt is the exported correction prompt template used when the LLM
 // returns conversational text instead of a valid HTML envelope. Callers should
 // fmt.Sprintf(agent.MockRetryPrompt, snippet) where snippet is the first 500
 // characters of the bad response.
 const MockRetryPrompt = mockRetryPrompt
 
-// invokeMockClaude runs a single Claude invocation and collects streamed events.
-// It sends chunks to the provided channel and returns the full response text.
-func invokeMockClaude(ctx context.Context, systemPrompt, userPrompt string, ch chan<- StreamEvent) (string, error) {
-	cmd := exec.CommandContext(ctx, claudeBin,
-		"--print",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--system-prompt", systemPrompt,
-	)
-	cmd.Stdin = strings.NewReader(userPrompt)
-	cmd.Stderr = os.Stderr // surface claude errors in server logs
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("stdout pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start claude: %w", err)
-	}
-
-	var fullResponse strings.Builder
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		var event claudeEvent
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue
-		}
-
-		switch event.Type {
-		case "assistant":
-			if event.Message != nil {
-				for _, c := range event.Message.Content {
-					if c.Type == "text" && c.Text != "" {
-						fullResponse.WriteString(c.Text)
-						ch <- StreamEvent{Type: "chunk", Content: c.Text}
-					}
-				}
-			}
-		case "result":
-			if event.IsError {
-				cmd.Wait() // reap before returning
-				return "", fmt.Errorf("claude error: %s", event.Result)
-			}
-			if event.Usage != nil {
-				ch <- StreamEvent{Type: "tokens", Content: strconv.Itoa(event.Usage.OutputTokens)}
-			}
-			if fullResponse.Len() == 0 && event.Result != "" {
-				fullResponse.WriteString(event.Result)
-				ch <- StreamEvent{Type: "chunk", Content: event.Result}
-			}
-		}
-	}
-
-	if serr := scanner.Err(); serr != nil {
-		cmd.Wait() // reap before returning
-		return "", fmt.Errorf("reading claude output: %w", serr)
-	}
-
-	if werr := cmd.Wait(); werr != nil {
-		if ctx.Err() != nil {
-			return "", fmt.Errorf("claude cancelled: %w", ctx.Err())
-		}
-		return "", fmt.Errorf("claude exited with error: %w", werr)
-	}
-
-	return fullResponse.String(), nil
-}
-
-// GenerateMock streams an HTML wireframe mockup from Claude based on UX artifact content.
-// If Claude returns conversational text instead of raw HTML, it retries up to maxMockRetries
-// times with a correction prompt.
-func GenerateMock(ctx context.Context, uxArtifact string, refinement string, frameworkCfg *model.FrameworkConfig) (<-chan StreamEvent, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-
-	var prompt strings.Builder
-	prompt.WriteString("UX Design Document:\n---\n")
-	prompt.WriteString(uxArtifact)
-	prompt.WriteString("\n---\n\nGenerate the HTML wireframe mockup for all screens described above.")
-	if refinement != "" {
-		prompt.WriteString("\n\nRefinement instruction: ")
-		prompt.WriteString(refinement)
-	}
-
-	systemPrompt := buildMockSystemPrompt(frameworkCfg)
-
-	ch := make(chan StreamEvent, 64)
-
-	go func() {
-		defer cancel()
-		defer close(ch)
-
-		userPrompt := prompt.String()
-
-		for attempt := 0; attempt <= maxMockRetries; attempt++ {
-			if ctx.Err() != nil {
-				return
-			}
-
-			response, err := invokeMockClaude(ctx, systemPrompt, userPrompt, ch)
-			if err != nil {
-				ch <- StreamEvent{Type: "error", Content: err.Error()}
-				return
-			}
-
-			if hasHTMLBlock(response) {
-				ch <- StreamEvent{Type: "done", Content: response}
-				return
-			}
-
-			// Response was not HTML — retry with correction prompt
-			if attempt < maxMockRetries {
-				// Truncate the bad response for the retry prompt (keep first 500 chars)
-				snippet := response
-				if len(snippet) > 500 {
-					snippet = snippet[:500] + "..."
-				}
-				userPrompt = fmt.Sprintf(mockRetryPrompt, snippet)
-				ch <- StreamEvent{Type: "chunk", Content: "\n\n[Response was not valid HTML — retrying...]\n\n"}
-			} else {
-				// Exhausted retries — return whatever we got
-				ch <- StreamEvent{Type: "done", Content: response}
-			}
-		}
-	}()
-
-	return ch, nil
-}
-
 // ExtractHTML extracts HTML from a Claude XML envelope response.
+// Falls back to extracting raw HTML if no envelope is found.
 func ExtractHTML(raw string) string {
-	return ParseResponse(raw).HTML
+	html := ParseResponse(raw).HTML
+	if html != "" {
+		return html
+	}
+	// Fallback: extract raw HTML from the response
+	return extractRawHTML(raw)
+}
+
+// extractRawHTML finds HTML content in a response that lacks the XML envelope.
+// It looks for <!DOCTYPE html>...</html> or <html>...</html> blocks,
+// including inside code blocks (```html ... ```).
+func extractRawHTML(s string) string {
+	// Try code block first
+	codeStart := strings.Index(s, "```html")
+	if codeStart >= 0 {
+		after := s[codeStart+7:]
+		codeEnd := strings.Index(after, "```")
+		if codeEnd > 0 {
+			candidate := strings.TrimSpace(after[:codeEnd])
+			if len(candidate) > 50 {
+				return candidate
+			}
+		}
+	}
+
+	// Try raw HTML
+	lower := strings.ToLower(s)
+	dtIdx := strings.Index(lower, "<!doctype html>")
+	if dtIdx < 0 {
+		dtIdx = strings.Index(lower, "<html")
+	}
+	if dtIdx < 0 {
+		return ""
+	}
+
+	endIdx := strings.LastIndex(lower, "</html>")
+	if endIdx < dtIdx {
+		return ""
+	}
+
+	return strings.TrimSpace(s[dtIdx : endIdx+7])
 }

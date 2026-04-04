@@ -39,6 +39,16 @@ func WriteRunErrorLog(logBase, projectName, runID, content string) error {
 	return os.WriteFile(filepath.Join(dir, "error.log"), []byte(content), 0644)
 }
 
+// WriteRunStepLog writes a step trace file into the run directory and returns the filename.
+func WriteRunStepLog(logBase, projectName, runID, stepName, content string) (string, error) {
+	dir := runDir(logBase, projectName, runID)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	filename := stepName + ".txt"
+	return filename, os.WriteFile(filepath.Join(dir, filename), []byte(content), 0644)
+}
+
 // ReadProjectRuns reads all run meta.json files for a project, sorted newest-first.
 func ReadProjectRuns(logBase, projectName string) ([]model.RunLogEntry, error) {
 	pattern := filepath.Join(logBase, projectName, "runs", "*", "meta.json")
@@ -106,6 +116,43 @@ func ReadRunMeta(logBase, projectName, runID string) (model.RunLogEntry, error) 
 		return model.RunLogEntry{}, err
 	}
 	return entry, nil
+}
+
+// ReadRunTraceFile reads a trace file from a run directory.
+// The filename is validated to prevent path traversal.
+func ReadRunTraceFile(logBase, projectName, runID, filename string) ([]byte, error) {
+	if strings.Contains(filename, "/") || strings.Contains(filename, "\\") || filename == ".." {
+		return nil, os.ErrNotExist
+	}
+	path := filepath.Join(runDir(logBase, projectName, runID), filename)
+	return os.ReadFile(path)
+}
+
+// DeleteRun removes an entire run directory.
+func DeleteRun(logBase, projectName, runID string) error {
+	dir := runDir(logBase, projectName, runID)
+	return os.RemoveAll(dir)
+}
+
+// PruneProjectRuns keeps only the most recent `keep` runs for a project,
+// deleting older ones. Returns the number of deleted runs.
+func PruneProjectRuns(logBase, projectName string, keep int) (int, error) {
+	entries, err := ReadProjectRuns(logBase, projectName)
+	if err != nil {
+		return 0, err
+	}
+	if len(entries) <= keep {
+		return 0, nil
+	}
+	// entries are already sorted newest-first
+	toDelete := entries[keep:]
+	deleted := 0
+	for _, e := range toDelete {
+		if err := DeleteRun(logBase, e.ProjectName, e.ID); err == nil {
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 // SanitizeProjectName replaces characters that would be problematic in a directory name.

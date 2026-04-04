@@ -134,13 +134,25 @@ func (s *Server) Router() http.Handler {
 	skillRepo := fsrepo.NewSkillRepo(s.cfg.RegistryPath)
 	logBase := filepath.Join(s.cfg.RegistryPath, "log")
 
+	// Instantiate build pool from persisted config (nil if not configured).
+	var buildPool *provider.BuildPool
+	if poolCfg := s.stageConfig.GetBuildPool(); poolCfg != nil {
+		buildPool = provider.NewBuildPool(poolCfg, s.providerRegistry)
+		if buildPool != nil {
+			log.Printf("Build pool started with %d slot(s)", len(poolCfg.Slots))
+		}
+	}
+
 	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
 	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.chatRepo, s.runs, gitSvc, s.providerRegistry, s.stageConfig, logBase)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
 	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
 	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo, logBase)
+	bh.SetProviderRegistry(s.providerRegistry, s.stageConfig)
+	bh.SetBuildPool(buildPool)
 	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
+	instructH.SetProviderRegistry(s.providerRegistry, s.stageConfig)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
 	acth := handler.NewActivityHandler(s.runs, s.activityRepo, s.registry)
@@ -150,6 +162,7 @@ func (s *Server) Router() http.Handler {
 	sh := handler.NewSessionHandler(s.registry)
 	vh := handler.NewVersionHandler(s.registry)
 	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs, s.providerRegistry, s.stageConfig)
+	rfh := handler.NewRefineHandler(s.registry, s.artifactRepo, s.chatRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
 
 	// Wire orchestrator (created once, reused across Router calls)
 	if s.orchestrator == nil {
@@ -167,10 +180,18 @@ func (s *Server) Router() http.Handler {
 	connH := handler.NewConnectionHandler(s.connStore, s.providerRegistry, s.stageConfig, s.registry)
 	r.Route("/api/connections", connH.RegisterRoutes)
 
-	// Stage-config global defaults: GET /api/config/stages, PUT /api/config/stages/:stage
+	// Stage-config global defaults and operation-level overrides
 	scfgH := handler.NewStageConfigHandler(s.stageConfig, s.connStore, s.registry)
+	scfgH.SetBuildPoolRuntime(buildPool)
 	r.Get("/api/config/stages", scfgH.GetGlobalDefaults)
 	r.Put("/api/config/stages/{stage}", scfgH.SetGlobalStageDefault)
+	r.Put("/api/config/operations/{operation}", scfgH.SetGlobalOperationDefault)
+	r.Delete("/api/config/operations/{operation}", scfgH.DeleteGlobalOperationDefault)
+	// Build pool config
+	r.Get("/api/config/build-pool", scfgH.GetBuildPool)
+	r.Put("/api/config/build-pool", scfgH.SetBuildPool)
+	r.Delete("/api/config/build-pool", scfgH.DeleteBuildPool)
+	r.Get("/api/config/build-pool/status", scfgH.GetBuildPoolStatus)
 
 	authH := handler.NewAuthHandler(s.cfg.ClaudePath)
 	r.Get("/api/auth/status", authH.Status)
@@ -208,6 +229,9 @@ func (s *Server) Router() http.Handler {
 		r.Post("/{id}/pipeline/enhance", eh.Enhance)
 
 		r.Get("/{id}/stages/{stage}/artifact", ah.Get)
+		r.Post("/{id}/stages/{stage}/artifact/refine", rfh.Refine)
+		r.Post("/{id}/stages/{stage}/artifact/manual-edit", rfh.ManualEdit)
+		r.Post("/{id}/stages/{stage}/artifact/apply-refine", rfh.ApplyRefine)
 
 		r.Get("/{id}/stages/{stage}/chat", ch.GetHistory)
 		r.Post("/{id}/stages/{stage}/chat", ch.Send)
@@ -268,6 +292,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/config/stages", scfgH.GetProjectOverrides)
 		r.Put("/{id}/config/stages/{stage}", scfgH.SetProjectStageOverride)
 		r.Post("/{id}/config/stages/reset", scfgH.ResetProjectOverrides)
+		// Per-project operation overrides.
+		r.Put("/{id}/config/operations/{operation}", scfgH.SetProjectOperationOverride)
+		r.Delete("/{id}/config/operations/{operation}", scfgH.DeleteProjectOperationOverride)
 
 		// Version history (read-only).
 		r.Get("/{id}/versions", vh.ListVersions)
@@ -279,6 +306,9 @@ func (s *Server) Router() http.Handler {
 	rlh := handler.NewRunLogHandler(s.registry, logBase)
 	r.Get("/api/run-log", rlh.GetAll)
 	r.Get("/api/projects/{id}/run-log", rlh.GetForProject)
+	r.Get("/api/projects/{id}/run-log/{runId}/trace/{filename}", rlh.GetTraceFile)
+	r.Delete("/api/projects/{id}/run-log/{runId}", rlh.DeleteRun)
+	r.Post("/api/projects/{id}/run-log/prune", rlh.PruneRuns)
 
 	r.Route("/api/skills", func(r chi.Router) {
 		r.Get("/", skh.ListAll)

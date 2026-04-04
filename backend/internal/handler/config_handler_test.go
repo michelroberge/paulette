@@ -44,7 +44,14 @@ func (r *mockRegistryRepo) Get(id string) (*model.Project, error) {
 
 func (r *mockRegistryRepo) Create(p *model.Project) error { return nil }
 func (r *mockRegistryRepo) Update(p *model.Project) error { return nil }
-func (r *mockRegistryRepo) Delete(id string) error        { return nil }
+func (r *mockRegistryRepo) UpdateFunc(id string, fn func(*model.Project) error) error {
+	p, ok := r.projects[id]
+	if !ok {
+		return fmt.Errorf("project %q not found", id)
+	}
+	return fn(p)
+}
+func (r *mockRegistryRepo) Delete(id string) error { return nil }
 
 // ---------------------------------------------------------------------------
 // Test helpers

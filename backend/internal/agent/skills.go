@@ -1,13 +1,9 @@
 package agent
 
 import (
-	"bufio"
-	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
@@ -111,25 +107,6 @@ func BuildAnalyzeSkillsRequest(buildPlan, archContent string, existingSkills []m
 	return skillAnalysisSystemPrompt, prompt.String()
 }
 
-func AnalyzeSkills(ctx context.Context, buildPlan, archContent string, existingSkills []model.Skill) (<-chan StreamEvent, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-
-	var prompt strings.Builder
-	prompt.WriteString("## Build Plan\n---\n")
-	prompt.WriteString(buildPlan)
-	prompt.WriteString("\n---\n\n")
-
-	if archContent != "" {
-		prompt.WriteString("## Architecture\n---\n")
-		prompt.WriteString(archContent)
-		prompt.WriteString("\n---\n\n")
-	}
-
-	writeExistingSkills(&prompt, existingSkills)
-
-	return runSkillAgent(ctx, cancel, skillAnalysisSystemPrompt, prompt.String())
-}
-
 // BuildObserveBeadsRequest returns the system prompt and user message for bead observer analysis.
 // Used by non-CLI providers that call provider.Chat directly.
 func BuildObserveBeadsRequest(beads []ObservedBead, existingSkills []model.Skill) (systemPrompt, userMsg string) {
@@ -150,29 +127,6 @@ func BuildObserveBeadsRequest(beads []ObservedBead, existingSkills []model.Skill
 	return skillObserverSystemPrompt, prompt.String()
 }
 
-// ObserveBeads calls Claude to analyze completed bead outputs for emergent patterns.
-func ObserveBeads(ctx context.Context, beads []ObservedBead, existingSkills []model.Skill) (<-chan StreamEvent, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-
-	var prompt strings.Builder
-	prompt.WriteString("## Completed Bead Outputs\n\n")
-	for _, b := range beads {
-		prompt.WriteString(fmt.Sprintf("### Bead: %s (ID: %s)\n", b.Title, b.ID))
-		prompt.WriteString(fmt.Sprintf("Tags: %s\n", strings.Join(b.Tags, ", ")))
-		if b.PromptUsed != "" {
-			prompt.WriteString(fmt.Sprintf("Prompt used:\n```\n%s\n```\n", truncate(b.PromptUsed, 1000)))
-		}
-		if b.CodeOutput != "" {
-			prompt.WriteString(fmt.Sprintf("Generated code (summary):\n```\n%s\n```\n", truncate(b.CodeOutput, 2000)))
-		}
-		prompt.WriteString("\n")
-	}
-
-	writeExistingSkills(&prompt, existingSkills)
-
-	return runSkillAgent(ctx, cancel, skillObserverSystemPrompt, prompt.String())
-}
-
 // ObservedBead captures data from a completed bead for observer analysis.
 type ObservedBead struct {
 	ID         string
@@ -180,45 +134,6 @@ type ObservedBead struct {
 	Tags       []string
 	PromptUsed string
 	CodeOutput string
-}
-
-func runSkillAgent(ctx context.Context, cancel context.CancelFunc, systemPrompt, prompt string) (<-chan StreamEvent, error) {
-	cmd := exec.CommandContext(ctx, claudeBin,
-		"--print",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--include-partial-messages",
-		"--model", "claude-sonnet-4-6",
-		"--system-prompt", systemPrompt,
-	)
-	cmd.Stdin = strings.NewReader(prompt)
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return nil, fmt.Errorf("start claude: %w", err)
-	}
-
-	ch := make(chan StreamEvent, 64)
-
-	go func() {
-		defer cancel()
-		defer close(ch)
-		defer cmd.Wait()
-
-		var fullText strings.Builder
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-		processStreamEvents(scanner, &fullText, ch, streamOptions{tokenField: "content"})
-		ch <- StreamEvent{Type: "done", Content: fullText.String()}
-	}()
-
-	return ch, nil
 }
 
 // skillSuggestionSchema is the JSON Schema for []model.SkillSuggestion.
@@ -240,20 +155,33 @@ var skillSuggestionSchema = []byte(`{
 
 // ExtractSkillSuggestions parses the <!-- SKILLS:START -->...<!-- SKILLS:END --> JSON block.
 // Applies repairJSON and schema validation before unmarshalling; returns nil, false on any failure.
+// Falls back to finding a JSON array in the text if delimiters are missing.
 func ExtractSkillSuggestions(text string) ([]model.SkillSuggestion, bool) {
 	const start = "<!-- SKILLS:START -->"
 	const end = "<!-- SKILLS:END -->"
 
+	var raw []byte
+
 	si := strings.Index(text, start)
 	ei := strings.Index(text, end)
-	if si < 0 || ei < 0 || ei <= si {
-		return nil, false
+	if si >= 0 && ei > si {
+		raw = []byte(strings.TrimSpace(text[si+len(start) : ei]))
+	} else {
+		// Fallback: try to find a JSON array in a code block or directly
+		raw = extractJSONArray(text)
+		if raw == nil {
+			return nil, false
+		}
 	}
 
-	raw := []byte(strings.TrimSpace(text[si+len(start) : ei]))
 	raw = repairJSON(raw)
 	if validateJSON(raw, skillSuggestionSchema) != nil {
-		return nil, false
+		// Try without validation — some models produce slightly non-conformant JSON
+		var suggestions []model.SkillSuggestion
+		if err := json.Unmarshal(raw, &suggestions); err != nil {
+			return nil, false
+		}
+		return suggestions, true
 	}
 
 	var suggestions []model.SkillSuggestion
@@ -261,6 +189,52 @@ func ExtractSkillSuggestions(text string) ([]model.SkillSuggestion, bool) {
 		return nil, false
 	}
 	return suggestions, true
+}
+
+// extractJSONArray tries to find a JSON array in the text, possibly inside a code block.
+func extractJSONArray(text string) []byte {
+	// Try ```json ... ``` code block first
+	jsonStart := strings.Index(text, "```json")
+	if jsonStart >= 0 {
+		afterStart := text[jsonStart+7:]
+		jsonEnd := strings.Index(afterStart, "```")
+		if jsonEnd > 0 {
+			candidate := strings.TrimSpace(afterStart[:jsonEnd])
+			if len(candidate) > 2 && candidate[0] == '[' {
+				return []byte(candidate)
+			}
+		}
+	}
+
+	// Try ``` ... ``` code block
+	codeStart := strings.Index(text, "```")
+	if codeStart >= 0 {
+		afterStart := text[codeStart+3:]
+		// Skip language identifier on same line
+		nlIdx := strings.Index(afterStart, "\n")
+		if nlIdx >= 0 {
+			afterStart = afterStart[nlIdx+1:]
+		}
+		codeEnd := strings.Index(afterStart, "```")
+		if codeEnd > 0 {
+			candidate := strings.TrimSpace(afterStart[:codeEnd])
+			if len(candidate) > 2 && candidate[0] == '[' {
+				return []byte(candidate)
+			}
+		}
+	}
+
+	// Last resort: find first [ and last ] in the text
+	firstBracket := strings.Index(text, "[")
+	lastBracket := strings.LastIndex(text, "]")
+	if firstBracket >= 0 && lastBracket > firstBracket {
+		candidate := strings.TrimSpace(text[firstBracket : lastBracket+1])
+		if json.Valid([]byte(candidate)) {
+			return []byte(candidate)
+		}
+	}
+
+	return nil
 }
 
 func truncate(s string, maxLen int) string {

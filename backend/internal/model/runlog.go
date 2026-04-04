@@ -17,6 +17,15 @@ type ArtifactRef struct {
 	Path string `json:"path"` // relative to project HostDir
 }
 
+// StepLogRef records a single agent step's trace file within a run directory.
+type StepLogRef struct {
+	Step     string `json:"step"`               // e.g. "screen_planner", "component_planner_dashboard"
+	File     string `json:"file"`               // filename within the run dir, e.g. "screen_planner.txt"
+	Status   string `json:"status"`             // "ok" or "error"
+	Detail   string `json:"detail,omitempty"`   // short parse/error summary
+	Duration int64  `json:"durationMs,omitempty"`
+}
+
 // RunLogEntry records the full lifecycle of a single pipeline operation.
 // Persisted at <logBase>/<project-name>/runs/<run-id>/meta.json.
 type RunLogEntry struct {
@@ -35,4 +44,5 @@ type RunLogEntry struct {
 	ErrorLogPath string        `json:"errorLogPath,omitempty"` // relative path within run dir
 	TokensTotal  int           `json:"tokensTotal,omitempty"`
 	Notes        string        `json:"notes,omitempty"` // e.g. "3 epics, 12 tasks created"
+	StepLogs     []StepLogRef  `json:"stepLogs,omitempty"`
 }

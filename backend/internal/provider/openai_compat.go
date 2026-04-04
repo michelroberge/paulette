@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -145,6 +146,7 @@ func openAICompatChat(
 	}
 
 	url := strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
+	log.Printf("[openai-compat] POST %s model=%s msgCount=%d", url, req.Model, len(req.History)+1)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyData))
 	if err != nil {
 		return nil, fmt.Errorf("openai-compat: create request: %w", err)
@@ -155,14 +157,52 @@ func openAICompatChat(
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("openai-compat: request failed: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
+	log.Printf("[openai-compat] sending request to %s ...", url)
+
+	// Retry loop for rate limiting (HTTP 429)
+	var resp *http.Response
+	maxRetries := 5
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// Re-create the request for retry (body was consumed)
+			httpReq, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyData))
+			if err != nil {
+				return nil, fmt.Errorf("openai-compat: create request: %w", err)
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+			httpReq.Header.Set("Accept", "text/event-stream")
+			for k, v := range authHeaders {
+				httpReq.Header.Set(k, v)
+			}
+		}
+
+		resp, err = httpClient.Do(httpReq)
+		log.Printf("[openai-compat] response received: err=%v", err)
+		if err != nil {
+			return nil, fmt.Errorf("openai-compat: request failed: %w", err)
+		}
+		log.Printf("[openai-compat] HTTP status: %d", resp.StatusCode)
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			_ = resp.Body.Close()
+			if attempt < maxRetries {
+				backoff := time.Duration(15*(attempt+1)) * time.Second
+				log.Printf("[openai-compat] rate limited (429), retrying in %v (attempt %d/%d)", backoff, attempt+1, maxRetries)
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(backoff):
+					continue
+				}
+			}
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			break
+		}
+
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		_ = resp.Body.Close()
-		// Attempt to parse structured OpenAI error body.
 		var apiErr struct {
 			Error openAIError `json:"error"`
 		}
@@ -172,6 +212,14 @@ func openAICompatChat(
 		return nil, fmt.Errorf("openai-compat: HTTP %d: %s", resp.StatusCode, string(errBody))
 	}
 
+	if resp == nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		return nil, fmt.Errorf("openai-compat: exhausted retries due to rate limiting")
+	}
+
+	log.Printf("[openai-compat] starting SSE stream goroutine")
 	ch := make(chan StreamEvent, 32)
 	go func() {
 		defer close(ch)
@@ -193,10 +241,12 @@ func openAICompatChat(
 // "data: [DONE]" emits the final "done" event and returns.
 // A "done" event is always the last event emitted, even on the error path.
 func openAICompatStreamSSE(ctx context.Context, body io.Reader, ch chan<- StreamEvent) {
+	log.Printf("[openai-compat-sse] starting SSE stream read")
 	scanner := bufio.NewScanner(body)
 	// Expand scanner buffer to handle large JSON payloads.
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
+	chunkCount := 0
 	for scanner.Scan() {
 		// Honour context cancellation between lines.
 		select {
@@ -223,6 +273,7 @@ func openAICompatStreamSSE(ctx context.Context, body io.Reader, ch chan<- Stream
 
 		// The [DONE] sentinel marks the end of the stream.
 		if payload == "[DONE]" {
+			log.Printf("[openai-compat-sse] received [DONE] after %d chunks", chunkCount)
 			ch <- StreamEvent{Type: "done"}
 			return
 		}
@@ -246,9 +297,14 @@ func openAICompatStreamSSE(ctx context.Context, body io.Reader, ch chan<- Stream
 
 		// Emit non-empty content fragments as "chunk" events.
 		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			chunkCount++
+			if chunkCount <= 3 || chunkCount%50 == 0 {
+				log.Printf("[openai-compat-sse] chunk #%d len=%d", chunkCount, len(chunk.Choices[0].Delta.Content))
+			}
 			ch <- StreamEvent{Type: "chunk", Content: chunk.Choices[0].Delta.Content}
 		}
 	}
+	log.Printf("[openai-compat-sse] scanner loop ended, total chunks=%d, err=%v", chunkCount, scanner.Err())
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
 		ch <- StreamEvent{

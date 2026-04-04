@@ -48,6 +48,28 @@ func extractHTMLEnvelope(s string) string {
 	return strings.TrimSpace(content)
 }
 
+// extractEmbeddedHTML finds the first block-level HTML opening tag in s and
+// returns s from that position onward (trimmed). This handles Ollama model
+// responses that prefix HTML with explanatory text such as
+// "Here is the component:\n\n<div class=\"card\">...".
+// Returns "" if no qualifying tag is found.
+func extractEmbeddedHTML(s string) string {
+	blockTags := []string{
+		"<div", "<section", "<nav", "<main", "<article",
+		"<header", "<footer", "<ul", "<ol", "<table", "<form", "<aside",
+	}
+	earliest := -1
+	for _, tag := range blockTags {
+		if idx := strings.Index(s, tag); idx >= 0 && (earliest < 0 || idx < earliest) {
+			earliest = idx
+		}
+	}
+	if earliest < 0 {
+		return ""
+	}
+	return strings.TrimSpace(s[earliest:])
+}
+
 // extractCodeBlocks extracts text inside ``` code fences
 func extractCodeBlocks(s string) []string {
 	var results []string

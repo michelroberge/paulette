@@ -207,13 +207,22 @@ func (h *PipelineHandler) ApproveInternal(projectID string) error {
 		return err
 	}
 
-	project.CurrentStage = nextStage
-	project.UpdatedAt = time.Now()
-	if nextStage == model.StageComplete {
-		project.SummaryReady = false
-	}
-
-	if err := h.registry.Update(project); err != nil {
+	// Use atomic UpdateFunc to avoid clobbering concurrent field changes
+	// (e.g. autonomous toggle racing with stage advancement).
+	if err := h.registry.UpdateFunc(project.ID, func(p *model.Project) error {
+		p.CurrentStage = nextStage
+		p.UpdatedAt = time.Now()
+		if nextStage == model.StageComplete {
+			p.SummaryReady = false
+		}
+		if project.CurrentStage == model.StageArchitecture {
+			p.DevCommands = project.DevCommands
+			p.BuildCommands = project.BuildCommands
+			p.RunCommands = project.RunCommands
+		}
+		*project = *p // update caller's copy with latest state
+		return nil
+	}); err != nil {
 		return fmt.Errorf("failed to update registry: %w", err)
 	}
 	if err := h.projectRepo.Save(project.HostDir, project); err != nil {

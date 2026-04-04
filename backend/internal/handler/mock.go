@@ -90,6 +90,15 @@ func (h *MockHandler) resolveProvider(projectID, hostDir string, stage model.Sta
 	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
+// resolveProviderOp resolves the provider for a specific UX sub-step operation
+// (e.g. "ux.chat", "ux.mock") using the five-level fallback hierarchy.
+func (h *MockHandler) resolveProviderOp(projectID, hostDir string, stage model.StageName, operation provider.OperationKey) (provider.Provider, string, *provider.StageAssignment, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStageOperation(projectID, stage, operation, h.stageConfig, hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
+}
+
 // buildProviderErrorEvent builds a StreamEvent{Type: "error"} whose Content is
 // a JSON-encoded connectionErrorPayload. It attempts to look up the connection
 // name for the given stage; on any lookup failure it falls back to safe defaults
@@ -178,7 +187,7 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	if uxContent == "" {
 		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
 	}
-	prov, _, _, _ := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
+	prov, _, _, _ := h.resolveProviderOp(project.ID, project.HostDir, model.StageUX, provider.OperationUXMock)
 
 	var run *stream.Run
 	if prov != nil && useOrchestrated(prov, uxContent) {
@@ -224,8 +233,8 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
 	runLogID := startRunLog(h.logBase, project, model.StageUX, "mock")
 
-	// Resolve the LLM provider for the UX stage (project override → global default → Claude CLI).
-	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
+	// Resolve the LLM provider for mock generation (ux.mock → ux → Claude CLI fallback).
+	prov, modelID, sa, provErr := h.resolveProviderOp(project.ID, project.HostDir, model.StageUX, provider.OperationUXMock)
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
@@ -234,8 +243,14 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 		return run, nil
 	}
 
+	// Gather project context (vision, build plan) so the LLM knows what
+	// the app is about, not just the UX layout.
+	visionContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+
 	// Build the initial user prompt and the shared mock system prompt.
 	var userPromptBuf strings.Builder
+	userPromptBuf.WriteString(agent.BuildMockContext(project.Name, visionContent, buildContent))
 	userPromptBuf.WriteString("UX Design Document:\n---\n")
 	userPromptBuf.WriteString(uxContent)
 	userPromptBuf.WriteString("\n---\n\nGenerate the HTML wireframe mockup for all screens described above.")
@@ -253,7 +268,9 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 		var stageTokensAccum int
 		var rlErr string
 		runStart := time.Now()
+		trace := newRunTrace(h.logBase, project.Name, runLogID)
 		defer func() {
+			trace.flush()
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
@@ -325,7 +342,10 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 				}
 			}
 
+			stepName := fmt.Sprintf("mock_attempt%d", attempt)
+
 			if hadError {
+				trace.logStep(stepName, "error", "LLM error event", fullResponse, 0)
 				return
 			}
 
@@ -338,9 +358,16 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 						os.WriteFile(p, []byte(html), 0644)
 					}
 				}
+				trace.logStep(stepName, "ok",
+					fmt.Sprintf("HTML extracted (%d bytes)", len(html)),
+					fullResponse, 0)
 				run.Emit(agent.StreamEvent{Type: "done", Content: html})
 				return
 			}
+
+			trace.logStep(stepName, "error",
+				fmt.Sprintf("no HTML envelope found; response length: %d bytes", len(fullResponse)),
+				fullResponse, 0)
 
 			// Response did not contain the HTML envelope — retry with a
 			// correction prompt (up to agent.MaxMockRetries times).
@@ -391,6 +418,7 @@ func runPlannerCall(
 	run *stream.Run,
 	uxContent, refinement string,
 	tokensAccum *int,
+	trace *runTrace,
 ) ([]plannerScreen, error) {
 	var userMsg strings.Builder
 	userMsg.WriteString("UX Design Document:\n---\n")
@@ -401,6 +429,7 @@ func runPlannerCall(
 		userMsg.WriteString(refinement)
 	}
 
+	stepStart := time.Now()
 	saTemp, saNumCtx, saStream := sa.Fields()
 	events, err := prov.Chat(run.Context(), provider.ChatRequest{
 		Model:        modelID,
@@ -429,7 +458,7 @@ func runPlannerCall(
 		}
 	}
 
-	raw := fullResponse.String()
+	raw := agent.StripThinkBlocks(fullResponse.String())
 	debugLogAgentOutput("screen_planner", raw)
 
 	// Primary path: extract JSON (handles <jsonplan> tags and raw JSON arrays).
@@ -437,6 +466,9 @@ func runPlannerCall(
 	if len(parsed.JSON) > 0 {
 		var screens []plannerScreen
 		if err := json.Unmarshal(parsed.JSON, &screens); err == nil && len(screens) > 0 {
+			trace.logStep("screen_planner", "ok",
+				fmt.Sprintf("parsed %d screen(s) via JSON", len(screens)),
+				raw, time.Since(stepStart))
 			return screens, nil
 		}
 	}
@@ -456,10 +488,32 @@ func runPlannerCall(
 				Description: title,
 			}
 		}
+		trace.logStep("screen_planner", "ok",
+			fmt.Sprintf("parsed %d screen(s) via list fallback", len(screens)),
+			raw, time.Since(stepStart))
 		return screens, nil
 	}
 
-	return nil, fmt.Errorf("planner returned no parseable screen list")
+	// Both strategies failed — log the raw response for debugging.
+	var diag strings.Builder
+	diag.WriteString("JSON extraction: ")
+	if len(parsed.JSON) == 0 {
+		diag.WriteString("no JSON found")
+	} else {
+		var tmp []plannerScreen
+		if err := json.Unmarshal(parsed.JSON, &tmp); err != nil {
+			diag.WriteString("unmarshal error: " + err.Error())
+		} else {
+			diag.WriteString("empty array")
+		}
+	}
+	diag.WriteString("; list extraction: no items found")
+	diag.WriteString(fmt.Sprintf("; response length: %d bytes", len(raw)))
+	detail := diag.String()
+
+	trace.logStep("screen_planner", "error", detail, raw, time.Since(stepStart))
+
+	return nil, fmt.Errorf("planner returned no parseable screen list (%s)", detail)
 }
 
 // debugLogAgentOutput prints the raw LLM response for an agent step to stdout and,
@@ -506,6 +560,7 @@ func runViewCall(
 ) (string, error) {
 	systemPrompt := agent.BuildMockViewSystemPrompt(frameworkCfg)
 	userMsg := "Generate the HTML fragment for this screen:\n\n" + screen.Description
+	var lastRaw string
 
 	for attempt := 0; attempt <= agent.MaxMockRetries; attempt++ {
 		if run.Context().Err() != nil {
@@ -541,14 +596,14 @@ func runViewCall(
 			return "", fmt.Errorf("view %q: LLM error", screen.Title)
 		}
 
-		raw := fullResponse.String()
-		if agent.HasHTMLBlock(raw) {
-			html := agent.ExtractHTML(raw)
+		lastRaw = fullResponse.String()
+		if agent.HasHTMLBlock(lastRaw) {
+			html := agent.ExtractHTML(lastRaw)
 			return html, nil
 		}
 
 		if attempt < agent.MaxMockRetries {
-			snippet := raw
+			snippet := lastRaw
 			if len(snippet) > 500 {
 				snippet = snippet[:500] + "..."
 			}
@@ -556,8 +611,8 @@ func runViewCall(
 		}
 	}
 
-	// Retries exhausted — return whatever was extracted (may be empty)
-	return agent.ExtractHTML(userMsg), nil
+	// Retries exhausted — return whatever can be extracted from the last response.
+	return agent.ExtractHTML(lastRaw), nil
 }
 
 // runComponentPlannerCall asks the LLM to decompose a single screen into sub-components.
@@ -572,9 +627,11 @@ func runComponentPlannerCall(
 	screen plannerScreen,
 	tokensAccum *int,
 	tokensMu *sync.Mutex,
+	trace *runTrace,
 ) ([]plannerComponent, error) {
 	userMsg := "Screen: " + screen.Title + "\n\n" + screen.Description
 
+	stepStart := time.Now()
 	saTemp, saNumCtx, saStream := sa.Fields()
 	events, err := prov.Chat(run.Context(), provider.ChatRequest{
 		Model:        modelID,
@@ -605,14 +662,18 @@ func runComponentPlannerCall(
 		}
 	}
 
-	raw := fullResponse.String()
-	debugLogAgentOutput("component_planner", raw)
+	raw := agent.StripThinkBlocks(fullResponse.String())
+	stepName := "component_planner_" + screen.ID
+	debugLogAgentOutput(stepName, raw)
 
 	// Primary: extract <jsonplan> JSON and unmarshal into []plannerComponent.
 	parsed := agent.ParseResponse(raw)
 	if len(parsed.JSON) > 0 {
 		var components []plannerComponent
 		if err := json.Unmarshal(parsed.JSON, &components); err == nil && len(components) > 0 {
+			trace.logStep(stepName, "ok",
+				fmt.Sprintf("parsed %d component(s) via JSON", len(components)),
+				raw, time.Since(stepStart))
 			return components, nil
 		}
 	}
@@ -630,10 +691,15 @@ func runComponentPlannerCall(
 				Description: title,
 			}
 		}
+		trace.logStep(stepName, "ok",
+			fmt.Sprintf("parsed %d component(s) via list fallback", len(components)),
+			raw, time.Since(stepStart))
 		return components, nil
 	}
 
-	return nil, fmt.Errorf("component planner returned no parseable component list")
+	detail := fmt.Sprintf("JSON: %d bytes extracted, list: no items; response length: %d bytes", len(parsed.JSON), len(raw))
+	trace.logStep(stepName, "error", detail, raw, time.Since(stepStart))
+	return nil, fmt.Errorf("component planner returned no parseable component list (%s)", detail)
 }
 
 // runComponentCall asks the LLM to generate an HTML fragment for a single component.
@@ -648,6 +714,7 @@ func runComponentCall(
 	comp plannerComponent,
 	tokensAccum *int,
 	tokensMu *sync.Mutex,
+	trace *runTrace,
 ) (string, error) {
 	systemPrompt := agent.BuildMockComponentSystemPrompt(frameworkCfg)
 	userMsg := fmt.Sprintf("Component type: %s\nLayout role: %s\n\n%s",
@@ -657,6 +724,7 @@ func runComponentCall(
 	saTemp, saNumCtx, saStream := sa.Fields()
 
 	for attempt := 0; attempt <= agent.MaxMockRetries; attempt++ {
+		stepStart := time.Now()
 		if run.Context().Err() != nil {
 			return "", run.Context().Err()
 		}
@@ -676,6 +744,7 @@ func runComponentCall(
 
 		var fullResponse strings.Builder
 		var hadError bool
+		var errContent string
 		for ev := range events {
 			switch ev.Type {
 			case "chunk":
@@ -688,21 +757,47 @@ func runComponentCall(
 				tokensMu.Unlock()
 			case "error":
 				hadError = true
+				errContent = ev.Content
 			}
 		}
 		if hadError {
-			return "", fmt.Errorf("component %q: LLM error", comp.ID)
+			return "", fmt.Errorf("component %q: LLM error: %s", comp.ID, errContent)
 		}
 
-		raw := fullResponse.String()
-		debugLogAgentOutput(fmt.Sprintf("component_gen_%s", comp.ID), raw)
+		original := fullResponse.String()
+		raw := agent.StripThinkBlocks(original)
+		stepName := fmt.Sprintf("component_gen_%s_attempt%d", comp.ID, attempt)
+		debugLogAgentOutput(stepName, raw)
 		var html string
 		if err := htmlEngine.Parse(raw, &html); err == nil && html != "" {
+			trace.logStep(stepName, "ok",
+				fmt.Sprintf("extracted HTML (%d bytes)", len(html)),
+				raw, time.Since(stepStart))
 			return html, nil
 		}
 
+		// Fallback: if think-block stripping removed useful content,
+		// try to extract HTML from the original (pre-stripped) response.
+		// Reasoning models sometimes put the HTML inside <think> blocks
+		// or leave them unclosed, causing StripThinkBlocks to drop everything.
+		if len(raw) < len(original) {
+			if err := htmlEngine.Parse(original, &html); err == nil && html != "" {
+				trace.logStep(stepName, "ok",
+					fmt.Sprintf("extracted HTML from pre-stripped response (%d bytes)", len(html)),
+					original, time.Since(stepStart))
+				return html, nil
+			}
+		}
+
+		trace.logStep(stepName, "error",
+			fmt.Sprintf("no HTML extracted; raw length: %d bytes, original length: %d bytes", len(raw), len(original)),
+			original, time.Since(stepStart))
+
 		if attempt < agent.MaxMockRetries {
-			snippet := raw
+			snippet := original
+			if snippet == "" {
+				snippet = raw
+			}
 			if len(snippet) > 500 {
 				snippet = snippet[:500] + "..."
 			}
@@ -710,7 +805,7 @@ func runComponentCall(
 		}
 	}
 
-	return "", fmt.Errorf("component %q: retries exhausted", comp.ID)
+	return "", fmt.Errorf("component %q: retries exhausted, no HTML extracted", comp.ID)
 }
 
 // sanitizeMockClasses performs a deterministic pass over assembled HTML, stripping
@@ -904,6 +999,11 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		return nil, fmt.Errorf("no artifact available — chat with the agent to generate content first")
 	}
 
+	// Gather project context for the planner call.
+	visionContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+	projectContext := agent.BuildMockContext(project.Name, visionContent, buildContent)
+
 	frameworkCfg, _ := fsrepo.ReadFramework(project.HostDir)
 
 	run := h.runs.Start(project.ID, "ux", "mock")
@@ -913,7 +1013,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
 	runLogID := startRunLog(h.logBase, project, model.StageUX, "mock")
 
-	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageUX)
+	prov, modelID, sa, provErr := h.resolveProviderOp(project.ID, project.HostDir, model.StageUX, provider.OperationUXMock)
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
@@ -930,7 +1030,9 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		var tokensMu sync.Mutex
 		var rlErr string
 		runStart := time.Now()
+		trace := newRunTrace(h.logBase, project.Name, runLogID)
 		defer func() {
+			trace.flush()
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
@@ -947,7 +1049,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 
 		// Step 1: Planner
 		run.Emit(agent.StreamEvent{Type: "chunk", Content: "Planning screens from UX artifact...\n"})
-		screens, err := runPlannerCall(prov, modelID, sa, run, uxContent, refinement, &tokensAccum)
+		screens, err := runPlannerCall(prov, modelID, sa, run, projectContext+uxContent, refinement, &tokensAccum, trace)
 		if err != nil {
 			rlErr = err.Error()
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
@@ -970,7 +1072,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 
 				// 2a. Component planner
 				run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Launching component planner...\n", sc.Title)})
-				components, compPlanErr := runComponentPlannerCall(prov, modelID, sa, run, frameworkCfg, sc, &tokensAccum, &tokensMu)
+				components, compPlanErr := runComponentPlannerCall(prov, modelID, sa, run, frameworkCfg, sc, &tokensAccum, &tokensMu, trace)
 				if compPlanErr != nil {
 					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Component planner failed — using fallback.\n", sc.Title)})
 					components = []plannerComponent{{
@@ -985,7 +1087,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 				htmlFragments := make(map[string]string, len(components))
 				for _, comp := range components {
 					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Launching component agent (%s, %s)...\n", sc.Title, comp.ID, comp.Type, comp.LayoutRole)})
-					compHTML, compErr := runComponentCall(prov, modelID, sa, run, frameworkCfg, comp, &tokensAccum, &tokensMu)
+					compHTML, compErr := runComponentCall(prov, modelID, sa, run, frameworkCfg, comp, &tokensAccum, &tokensMu, trace)
 					if compErr != nil {
 						run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Warning: %s\n", sc.Title, comp.ID, compErr.Error())})
 						compHTML = fmt.Sprintf(`<div class="mock-component"><p style="color:#f87171">Component failed: %s</p></div>`, comp.ID)

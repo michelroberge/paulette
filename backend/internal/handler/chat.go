@@ -108,6 +108,15 @@ func (h *ChatHandler) resolveProvider(projectID, hostDir string, stage model.Sta
 	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
+// resolveProviderOp resolves the provider for a specific sub-step operation
+// using the five-level fallback hierarchy.
+func (h *ChatHandler) resolveProviderOp(projectID, hostDir string, stage model.StageName, operation provider.OperationKey) (provider.Provider, string, *provider.StageAssignment, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStageOperation(projectID, stage, operation, h.stageConfig, hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
+}
+
 func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	stage := model.StageName(chi.URLParam(r, "stage"))
@@ -260,8 +269,17 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 	}
 	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
 
-	// Resolve the LLM provider for this stage (project override → global default → Claude CLI).
-	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
+	// Resolve the LLM provider for this stage. For UX we use the operation-specific
+	// "ux.chat" key so mock generation can use a different connection if configured.
+	var prov provider.Provider
+	var modelID string
+	var sa *provider.StageAssignment
+	var provErr error
+	if stage == model.StageUX {
+		prov, modelID, sa, provErr = h.resolveProviderOp(project.ID, project.HostDir, stage, provider.OperationUXChat)
+	} else {
+		prov, modelID, sa, provErr = h.resolveProvider(project.ID, project.HostDir, stage)
+	}
 	if provErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
 		clearActivity(h.activityRepo, project.HostDir, stage)
@@ -410,8 +428,16 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
 	runLogID := startRunLog(h.logBase, project, stage, "chat")
 
-	// Resolve the LLM provider for this stage (project override → global default → Claude CLI).
-	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
+	// Resolve the LLM provider for this stage. UX chat uses "ux.chat" operation key.
+	var prov provider.Provider
+	var modelID string
+	var sa *provider.StageAssignment
+	var provErr error
+	if stage == model.StageUX {
+		prov, modelID, sa, provErr = h.resolveProviderOp(project.ID, project.HostDir, stage, provider.OperationUXChat)
+	} else {
+		prov, modelID, sa, provErr = h.resolveProvider(project.ID, project.HostDir, stage)
+	}
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))

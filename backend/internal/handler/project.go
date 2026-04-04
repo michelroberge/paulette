@@ -107,11 +107,6 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 			log.Printf("bd init failed in %s: %v: %s", req.HostDir, err, out)
 		}
 	}
-	// Ensure JSONL-only mode for cross-machine portability
-	if err := ensureBeadsNoDB(req.HostDir); err != nil {
-		log.Printf("beads: ensureNoDB in %s: %v", req.HostDir, err)
-	}
-
 	// Initialize .paulette directory structure
 	if err := h.projectRepo.Init(req.HostDir); err != nil {
 		http.Error(w, "failed to init project directory: "+err.Error(), http.StatusInternalServerError)

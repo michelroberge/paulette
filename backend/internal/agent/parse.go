@@ -34,6 +34,29 @@ type ParsedResponse struct {
 	JSON       []byte // <jsonplan> content as bytes
 }
 
+// StripThinkBlocks removes all <think>...</think> blocks produced by reasoning
+// models (qwen3, deepseek-r1, etc.) before any parsing occurs. The removal is
+// case-insensitive on the tag name. Nested blocks are handled by repeated passes.
+// An unclosed opening tag causes everything from that tag to the end to be dropped.
+func StripThinkBlocks(s string) string {
+	const open = "<think>"
+	const close = "</think>"
+	for {
+		lo := strings.ToLower(s)
+		si := strings.Index(lo, open)
+		if si < 0 {
+			return s
+		}
+		rest := lo[si:]
+		ei := strings.Index(rest, close)
+		if ei < 0 {
+			// Unclosed block — drop everything from the opening tag onward.
+			return strings.TrimSpace(s[:si])
+		}
+		s = s[:si] + s[si+ei+len(close):]
+	}
+}
+
 // ParseResponse extracts all sections from a model response.
 // It tries the XML envelope format first (<discussion>, <artifact>, etc.).
 // If no XML tags are found it falls back to the plain "## Discussion / ## Artifact"
@@ -43,7 +66,8 @@ type ParsedResponse struct {
 // models like codellama that ignore section-header instructions still produce a
 // saved artifact rather than dumping everything into the chat discussion.
 func ParseResponse(raw string) ParsedResponse {
-	if strings.Contains(raw, "<"+TagDiscussion+">") || strings.Contains(raw, "<"+TagArtifact+">") {
+	raw = StripThinkBlocks(raw)
+	if strings.Contains(raw, "<"+TagDiscussion+">") || strings.Contains(raw, "<"+TagArtifact+">") || strings.Contains(raw, "<"+TagJSON+">") {
 		return parseXMLEnvelope(raw)
 	}
 	lower := strings.ToLower(raw)
@@ -132,7 +156,9 @@ func extractPlainSection(raw, heading string) string {
 }
 
 // extractBetween returns trimmed content between open and close tags.
-// Returns "" if either tag is absent or close precedes open.
+// Returns "" if the open tag is absent. If the close tag is absent (truncated
+// response from token-limited models), returns content from the open tag to end
+// of string so that partially generated artifacts are still captured.
 func extractBetween(s, open, close string) string {
 	si := strings.Index(s, open)
 	if si < 0 {
@@ -141,7 +167,13 @@ func extractBetween(s, open, close string) string {
 	si += len(open)
 	ei := strings.LastIndex(s, close)
 	if ei <= si {
-		return ""
+		// Close tag missing — treat content from open tag to end as the body.
+		// This handles token-limited models (e.g. Groq) that truncate mid-artifact.
+		trimmed := strings.TrimSpace(s[si:])
+		if trimmed == "" {
+			return ""
+		}
+		return trimmed
 	}
 	return strings.TrimSpace(s[si:ei])
 }
@@ -166,6 +198,8 @@ var reCodeFenceJSON = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.*?)\\n\\s*```
 // 3. First line starting with { or [ through last line ending with } or ]
 // 4. Outermost { ... } or [ ... ] in the raw string (most aggressive)
 func extractJSONPlan(s string) []byte {
+	s = StripThinkBlocks(s)
+
 	// Strategy 1: <jsonplan> tags
 	content := extractBetween(s, "<"+TagJSON+">", "</"+TagJSON+">")
 	if content != "" {

@@ -10,7 +10,14 @@
  */
 
 import type { StageName } from '../types';
-import type { GlobalStageConfig, ProjectStageConfig, StageAssignment } from '../types/provider';
+import type {
+  GlobalStageConfig,
+  ProjectStageConfig,
+  StageAssignment,
+  OperationKey,
+  BuildPoolConfig,
+  BuildPoolStatus,
+} from '../types/provider';
 import { apiFetch } from './client';
 
 /**
@@ -80,4 +87,69 @@ export function resetProjectOverrides(projectId: string): Promise<void> {
   return apiFetch<void>(`/projects/${projectId}/config/stages/reset`, {
     method: 'POST',
   });
+}
+
+// ---------------------------------------------------------------------------
+// Operation-level defaults & overrides
+// ---------------------------------------------------------------------------
+
+export function setGlobalOperationDefault(
+  operation: OperationKey,
+  assignment: StageAssignment,
+): Promise<void> {
+  return apiFetch<void>(`/config/operations/${operation}`, {
+    method: 'PUT',
+    body: JSON.stringify(assignment),
+  });
+}
+
+export function deleteGlobalOperationDefault(operation: OperationKey): Promise<void> {
+  return apiFetch<void>(`/config/operations/${operation}`, {
+    method: 'DELETE',
+  });
+}
+
+export function setProjectOperationOverride(
+  projectId: string,
+  operation: OperationKey,
+  assignment: StageAssignment | null,
+): Promise<void> {
+  return apiFetch<void>(`/projects/${projectId}/config/operations/${operation}`, {
+    method: 'PUT',
+    body: JSON.stringify(assignment),
+  });
+}
+
+export function deleteProjectOperationOverride(
+  projectId: string,
+  operation: OperationKey,
+): Promise<void> {
+  return apiFetch<void>(`/projects/${projectId}/config/operations/${operation}`, {
+    method: 'DELETE',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Build pool
+// ---------------------------------------------------------------------------
+
+export function getBuildPool(): Promise<BuildPoolConfig | null> {
+  return apiFetch<BuildPoolConfig | null>('/config/build-pool');
+}
+
+export function setBuildPool(config: BuildPoolConfig): Promise<void> {
+  return apiFetch<void>('/config/build-pool', {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  });
+}
+
+export function deleteBuildPool(): Promise<void> {
+  return apiFetch<void>('/config/build-pool', {
+    method: 'DELETE',
+  });
+}
+
+export function getBuildPoolStatus(): Promise<BuildPoolStatus> {
+  return apiFetch<BuildPoolStatus>('/config/build-pool/status');
 }

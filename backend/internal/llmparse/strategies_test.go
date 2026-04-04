@@ -100,3 +100,53 @@ func TestHTMLStrategyCodeFence(t *testing.T) {
 		t.Error("expected non-empty html from code fence")
 	}
 }
+
+// TestHTMLStrategyDetectPreamble verifies that Detect scores > 0 when the model
+// prefixes HTML with explanatory text (common Ollama behavior).
+func TestHTMLStrategyDetectPreamble(t *testing.T) {
+	input := "Here is the HTML component:\n\n<div class=\"card\">content</div>"
+	score := (HTMLStrategy{}).Detect(input)
+	if score <= 0 {
+		t.Errorf("expected Detect score > 0 for preamble-prefixed HTML, got %f", score)
+	}
+}
+
+// TestHTMLStrategyParsePreamble verifies that Parse extracts HTML from a response
+// that has preamble text before the actual HTML tags.
+func TestHTMLStrategyParsePreamble(t *testing.T) {
+	input := "Here is the HTML component:\n\n<div class=\"card\">content</div>"
+	var result string
+	if err := (HTMLStrategy{}).Parse(input, &result); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	expected := "<div class=\"card\">content</div>"
+	if result != expected {
+		t.Errorf("expected %q, got %q", expected, result)
+	}
+}
+
+// TestHTMLStrategyDetectPlainText verifies that Detect returns 0 for plain text
+// with no HTML tags.
+func TestHTMLStrategyDetectPlainText(t *testing.T) {
+	input := "This is just a regular sentence with no HTML at all."
+	score := (HTMLStrategy{}).Detect(input)
+	if score != 0 {
+		t.Errorf("expected Detect score 0 for plain text, got %f", score)
+	}
+}
+
+// TestHTMLStrategyParsePreambleMultipleTags verifies extraction when there are
+// multiple block-level tags — should extract from the first one.
+func TestHTMLStrategyParsePreambleMultipleTags(t *testing.T) {
+	input := "I'll create a navigation bar and content section:\n\n<nav class=\"main-nav\">Nav</nav>\n<div class=\"content\">Body</div>"
+	var result string
+	if err := (HTMLStrategy{}).Parse(input, &result); err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if result == "" {
+		t.Error("expected non-empty result")
+	}
+	if result[0:4] != "<nav" {
+		t.Errorf("expected result to start with <nav, got %q", result[:20])
+	}
+}

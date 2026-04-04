@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,10 @@ func startRunLog(logBase string, project *model.Project, stage model.StageName, 
 	if err := fsrepo.WriteRunMeta(logBase, entry); err != nil {
 		log.Printf("runlog: start %s/%s: %v", stage, op, err)
 		return ""
+	}
+	// Auto-prune to keep only the last 10 runs per project.
+	if _, err := fsrepo.PruneProjectRuns(logBase, safeProjectName, 10); err != nil {
+		log.Printf("runlog: prune %s: %v", safeProjectName, err)
 	}
 	return entry.ID
 }
@@ -130,4 +135,75 @@ func expectedArtifacts(hostDir string, stage model.StageName, op string) []model
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// runTrace carries run-log context through an operation so each agent step
+// can write its raw LLM output and parse diagnostics into the run directory.
+// Safe for concurrent use from parallel goroutines.
+type runTrace struct {
+	logBase     string
+	projectName string
+	runID       string
+	mu          sync.Mutex
+	steps       []model.StepLogRef
+}
+
+// newRunTrace creates a trace context. Returns nil if logging is disabled.
+func newRunTrace(logBase, projectName, runID string) *runTrace {
+	if logBase == "" || runID == "" {
+		return nil
+	}
+	return &runTrace{
+		logBase:     logBase,
+		projectName: fsrepo.SanitizeProjectName(projectName),
+		runID:       runID,
+	}
+}
+
+// logStep writes a step trace file and records it in the step list.
+// content is the raw LLM response; detail is a short parse summary (ok or error info).
+func (t *runTrace) logStep(stepName, status, detail, content string, dur time.Duration) {
+	if t == nil {
+		return
+	}
+	filename, err := fsrepo.WriteRunStepLog(t.logBase, t.projectName, t.runID, stepName, content)
+	if err != nil {
+		log.Printf("runlog: step %s: %v", stepName, err)
+		return
+	}
+	ref := model.StepLogRef{
+		Step:     stepName,
+		File:     filename,
+		Status:   status,
+		Detail:   detail,
+		Duration: dur.Milliseconds(),
+	}
+	t.mu.Lock()
+	t.steps = append(t.steps, ref)
+	t.mu.Unlock()
+}
+
+// flush writes the accumulated step logs into the run's meta.json.
+func (t *runTrace) flush() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	steps := make([]model.StepLogRef, len(t.steps))
+	copy(steps, t.steps)
+	t.mu.Unlock()
+
+	if len(steps) == 0 {
+		return
+	}
+
+	entry, err := fsrepo.ReadRunMeta(t.logBase, t.projectName, t.runID)
+	if err != nil {
+		log.Printf("runlog: flush steps %s: %v", t.runID, err)
+		return
+	}
+	entry.StepLogs = steps
+	if err := fsrepo.WriteRunMeta(t.logBase, entry); err != nil {
+		log.Printf("runlog: flush steps write %s: %v", t.runID, err)
+	}
 }

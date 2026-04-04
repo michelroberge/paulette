@@ -103,6 +103,15 @@ func (h HTMLStrategy) Detect(input string) float64 {
 	if strings.HasPrefix(s, "<") {
 		return 0.6
 	}
+	// Preamble-prefixed HTML: model wrote introductory text before the HTML.
+	for _, tag := range []string{
+		"<div", "<section", "<nav", "<main", "<article",
+		"<header", "<footer", "<ul", "<ol", "<table", "<form",
+	} {
+		if strings.Contains(input, tag) {
+			return 0.4
+		}
+	}
 	return 0
 }
 
@@ -115,10 +124,14 @@ func (h HTMLStrategy) Parse(input string, target any) error {
 		// 2. Try ``` code fence
 		result = blocks[0]
 	} else {
-		// 3. Raw HTML fallback
+		// 3. Raw HTML fallback: entire response is HTML
 		s := strings.TrimSpace(input)
 		if strings.HasPrefix(s, "<") {
 			result = s
+		} else {
+			// 4. Preamble-prefixed HTML: find the first block-level tag and
+			// extract from there. Handles responses like "Here is the component:\n\n<div...".
+			result = extractEmbeddedHTML(input)
 		}
 	}
 	if result == "" {

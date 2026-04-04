@@ -123,13 +123,33 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 
 		var fullText strings.Builder
 		var tokens int
+		var hadError bool
 		for ev := range events {
-			if ev.Type == "chunk" {
+			switch ev.Type {
+			case "chunk":
 				fullText.WriteString(ev.Content)
-			} else if ev.Type == "tokens" {
+			case "tokens":
 				fmt.Sscanf(ev.Content, "%d", &tokens)
+			case "error":
+				hadError = true
+				// Enhance bare "ERROR" messages with diagnostic context
+				msg := ev.Content
+				if msg == "" || strings.EqualFold(msg, "error") {
+					msg = fmt.Sprintf("Skill analysis failed (provider: %s, model: %s). Check provider connection and API key.", fmt.Sprintf("%T", prov), modelID)
+				}
+				run.Emit(agent.StreamEvent{Type: "error", Content: msg})
+				continue
 			}
-			run.Emit(ev)
+			// Don't forward the provider's "done" event — we need to save
+			// suggestions first. The client will see the stream close when
+			// run.Finish() is called after post-processing completes.
+			if ev.Type != "done" {
+				run.Emit(ev)
+			}
+		}
+
+		if hadError {
+			return
 		}
 
 		// Record session
@@ -139,11 +159,22 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 			recordSession(project.HostDir, model.StageBuild, model.SessionSkillAnalyze, project.Iteration, runStart, tokens)
 		}
 
-		// Extract and save suggestions
+		// Check for empty response
+		if fullText.Len() == 0 {
+			run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("Skill analysis returned empty response (provider: %s, model: %s). The LLM may have refused or timed out.", fmt.Sprintf("%T", prov), modelID)})
+			return
+		}
+
+		// Extract and save suggestions before signaling done to the client.
 		suggestions, ok := agent.ExtractSkillSuggestions(fullText.String())
 		if ok && len(suggestions) > 0 {
 			fsrepo.WriteSkillSuggestions(project.HostDir, &model.SkillSuggestions{Suggestions: suggestions})
+		} else if !ok {
+			run.Emit(agent.StreamEvent{Type: "log", Content: "Warning: could not extract skill suggestions from LLM response. The response may not have followed the expected format."})
 		}
+
+		// Now emit done so the client fetches suggestions after they're saved.
+		run.Emit(agent.StreamEvent{Type: "done", Content: fullText.String()})
 	}()
 
 	run.StreamTo(w, r, 0)

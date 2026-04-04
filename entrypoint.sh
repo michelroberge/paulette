@@ -20,5 +20,15 @@ fi
 chown -R paulette:paulette /home/paulette/.claude 2>/dev/null || true
 find /home/paulette/.paulette ! -user paulette -exec chown paulette:paulette {} + 2>/dev/null || true
 
+# Fix .beads ownership (named volume may be created as root)
+find /home/paulette/.beads ! -user paulette -exec chown paulette:paulette {} + 2>/dev/null || true
+
+# Fix .ssh ownership and permissions (named volume may be created as root)
+if [ -d /home/paulette/.ssh ]; then
+  chown -R paulette:paulette /home/paulette/.ssh
+  chmod 700 /home/paulette/.ssh
+  find /home/paulette/.ssh -type f -name 'id_*' ! -name '*.pub' -exec chmod 600 {} \;
+  find /home/paulette/.ssh -type f \( -name '*.pub' -o -name 'known_hosts' -o -name 'authorized_keys' -o -name 'config' \) -exec chmod 644 {} \;
+fi
 
 exec gosu paulette /usr/local/bin/paulette "$@"
