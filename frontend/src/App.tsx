@@ -139,7 +139,7 @@ function ProjectDetailPage() {
     [stageTokens],
   );
 
-  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, loadHistory, send, resume, stop } =
+  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, ragSources, loadHistory, send, resume, stop } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger, selectedStage ? (n) => addTokens(selectedStage, n) : undefined);
 
   const { active: agentActive, streamingText: agentStreamingText, operation: agentOperation, stage: agentStage } =
@@ -550,6 +550,7 @@ function ProjectDetailPage() {
                       connectionError={connectionError}
                       onOpenProjectSettings={() => setShowStageSettings(true)}
                       onRetry={resume}
+                      ragSources={ragSources}
                     />
                   )
                 )}
@@ -604,6 +605,7 @@ function ProjectDetailPage() {
                       connectionError={connectionError}
                       onOpenProjectSettings={() => setShowStageSettings(true)}
                       onRetry={resume}
+                      ragSources={ragSources}
                     />
                   )
                 )}

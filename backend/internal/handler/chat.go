@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
 	"github.com/michelroberge/paulette/backend/internal/provider"
+	"github.com/michelroberge/paulette/backend/internal/rag"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -41,12 +44,13 @@ type ChatHandler struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	connStore        *provider.ConnectionStore
+	ragClient        *rag.Client
 	logBase          string
 }
 
-// NewChatHandler creates a ChatHandler. providerRegistry, stageConfig, and
-// connStore may be nil — in that case every stage falls back to the Claude CLI
-// provider, preserving v0.1.0 behaviour exactly.
+// NewChatHandler creates a ChatHandler. providerRegistry, stageConfig,
+// connStore, and ragClient may be nil — in that case every stage falls back to
+// the Claude CLI provider (preserving v0.1.0 behaviour) and RAG context is skipped.
 func NewChatHandler(
 	registry repository.RegistryRepo,
 	chatRepo repository.ChatRepo,
@@ -56,6 +60,7 @@ func NewChatHandler(
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
 	connStore *provider.ConnectionStore,
+	ragClient *rag.Client,
 	logBase string,
 ) *ChatHandler {
 	return &ChatHandler{
@@ -67,6 +72,7 @@ func NewChatHandler(
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
 		connStore:        connStore,
+		ragClient:        ragClient,
 		logBase:          logBase,
 	}
 }
@@ -94,6 +100,22 @@ func (h *ChatHandler) buildProviderErrorEvent(hostDir string, stage model.StageN
 
 	content, _ := json.Marshal(payload)
 	return agent.StreamEvent{Type: "error", Content: string(content)}
+}
+
+// fetchRAGContext retrieves RAG knowledge context for a stage chat message.
+// Returns ("", nil) if RAG is unavailable, unhealthy, or the retrieval times out.
+func (h *ChatHandler) fetchRAGContext(stage model.StageName, message string, projectName string) (string, []rag.SourceRef) {
+	if h.ragClient == nil || !h.ragClient.IsHealthy() {
+		return "", nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ragContext, sources, err := rag.BuildStageContext(ctx, h.ragClient, stage, message, projectName)
+	if err != nil {
+		log.Printf("RAG context retrieval failed for %s: %v", stage, err)
+		return "", nil
+	}
+	return ragContext, sources
 }
 
 // resolveProvider returns the Provider, model ID, and optional stage settings to
@@ -261,7 +283,9 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 		}
 	}
 
-	systemPrompt := agent.GetSystemPrompt(stage, project.Version, previousArtifacts, frameworkCfg, enhCtx)
+	// Retrieve RAG context (non-blocking, 3s timeout).
+	ragContext, _ := h.fetchRAGContext(stage, message, project.Name)
+	systemPrompt := agent.GetSystemPromptWithRAG(stage, project.Version, previousArtifacts, frameworkCfg, ragContext, enhCtx)
 
 	run := h.runs.Start(project.ID, string(stage), "chat")
 	if run == nil {
@@ -408,7 +432,9 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		}
 	}
 
-	systemPrompt := agent.GetSystemPrompt(stage, project.Version, previousArtifacts, frameworkCfg, enhCtx)
+	// Retrieve RAG context (non-blocking, 3s timeout).
+	ragContext, ragSources := h.fetchRAGContext(stage, message, project.Name)
+	systemPrompt := agent.GetSystemPromptWithRAG(stage, project.Version, previousArtifacts, frameworkCfg, ragContext, enhCtx)
 
 	// Get chat history for context
 	history, err := h.chatRepo.GetHistory(project.HostDir, stage)
@@ -472,6 +498,14 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	go func() {
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.HostDir, stage)
+
+		// Emit RAG source references before the first LLM chunk so the
+		// frontend can display them immediately.
+		if len(ragSources) > 0 {
+			if sourcesJSON, err := json.Marshal(ragSources); err == nil {
+				run.Emit(agent.StreamEvent{Type: "rag_sources", Content: string(sourcesJSON)})
+			}
+		}
 
 		var stageTokensAccum int
 		var accumulated strings.Builder

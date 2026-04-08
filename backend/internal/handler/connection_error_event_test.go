@@ -40,7 +40,7 @@ func TestBuildProviderErrorEvent_IsConnectionError(t *testing.T) {
 		&nopArtifactRepo{},
 		&nopActivityRepo{},
 		runs,
-		nil, nil, nil,
+		nil, nil, nil, nil,
 		"", // logBase empty in tests
 	)
 
@@ -79,7 +79,7 @@ func TestBuildProviderErrorEvent_ValidJSON(t *testing.T) {
 		&nopArtifactRepo{},
 		&nopActivityRepo{},
 		runs,
-		nil, nil, nil, // nil registry — fallback path
+		nil, nil, nil, nil, // nil registry, stageConfig, connStore, ragClient — fallback path
 		"", // logBase empty in tests
 	)
 
@@ -140,7 +140,8 @@ func TestBuildProviderErrorEvent_WithStageConfig(t *testing.T) {
 		provRegistry,
 		stageConfig,
 		connStore,
-		"", // logBase empty in tests
+		nil, // ragClient
+		"",  // logBase empty in tests
 	)
 
 	event := h.buildProviderErrorEvent(projectDir, model.StageVision,
@@ -184,6 +185,7 @@ func TestBuildProviderErrorEvent_NilStageConfig_NoNilPanic(t *testing.T) {
 		nil, // nil providerRegistry
 		nil, // nil stageConfig — must not panic
 		nil, // nil connStore
+		nil, // nil ragClient
 		"",  // logBase empty in tests
 	)
 
@@ -222,7 +224,7 @@ func TestBuildProviderErrorEvent_AllStages(t *testing.T) {
 		&nopArtifactRepo{},
 		&nopActivityRepo{},
 		runs,
-		nil, nil, nil,
+		nil, nil, nil, nil,
 		"", // logBase empty in tests
 	)
 

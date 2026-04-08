@@ -21,6 +21,14 @@ type OIDCConfig struct {
 	SessionSecret string
 }
 
+// RAGConfig holds optional R³ RAG Pipeline integration settings.
+// When Enabled is false the RAG client is not created and all RAG
+// features degrade gracefully to no-ops.
+type RAGConfig struct {
+	Enabled bool
+	BaseURL string
+}
+
 type Config struct {
 	Port         int
 	RegistryPath string
@@ -29,6 +37,7 @@ type Config struct {
 	Version      string
 	Author       string
 	OIDC         OIDCConfig
+	RAG          RAGConfig
 }
 
 // Settings represents user-persisted configuration saved by "paulette init".
@@ -111,6 +120,12 @@ func Load() *Config {
 		log.Println("WARNING: SESSION_SECRET is not set or is shorter than 32 characters; OIDC sessions will be insecure")
 	}
 
+	ragEnabled := os.Getenv("RAG_ENABLED") == "true"
+	ragBaseURL := os.Getenv("RAG_BASE_URL")
+	if ragBaseURL == "" {
+		ragBaseURL = "http://localhost:8000/api/v1"
+	}
+
 	return &Config{
 		Port:         port,
 		RegistryPath: registryPath,
@@ -118,6 +133,10 @@ func Load() *Config {
 		ClaudePath:   claudePath,
 		Version:      version,
 		Author:       author,
+		RAG: RAGConfig{
+			Enabled: ragEnabled,
+			BaseURL: ragBaseURL,
+		},
 		OIDC: OIDCConfig{
 			Enabled:       oidcEnabled,
 			IssuerURL:     os.Getenv("OIDC_ISSUER_URL"),

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Message } from '../../types';
+import type { Message, RAGSource } from '../../types';
 import { ConnectionErrorBanner } from './ConnectionErrorBanner';
+import { RAGSourcesPanel } from './RAGSourcesPanel';
 import type { ConnectionError } from '../../types/provider';
 
 const ARTIFACT_RE = /<!--\s*ARTIFACT:START\s*-->[\s\S]*?<!--\s*ARTIFACT:END\s*-->/g;
@@ -57,9 +58,11 @@ interface Props {
    * When omitted, the Retry button is not rendered in the banner.
    */
   onRetry?: () => void;
+  /** RAG knowledge sources used for the current/last response. */
+  ragSources?: RAGSource[];
 }
 
-export function ChatPanel({ messages, streaming, streamingContent, onSend, onStop, connectionError, onOpenProjectSettings, onRetry }: Props) {
+export function ChatPanel({ messages, streaming, streamingContent, onSend, onStop, connectionError, onOpenProjectSettings, onRetry, ragSources }: Props) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const thinkingPhrase = useThinkingPhrase(streaming);
@@ -93,6 +96,9 @@ export function ChatPanel({ messages, streaming, streamingContent, onSend, onSto
             </div>
           </div>
         ))}
+        {ragSources && ragSources.length > 0 && (
+          <RAGSourcesPanel sources={ragSources} />
+        )}
         {/* Connection error banner replaces the streaming area (SCR-012 / JRN-v0.2.0-008).
             The banner persists until the user sends a new message (which clears it in useChat). */}
         {connectionError ? (

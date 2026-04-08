@@ -20,6 +20,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
 	"github.com/michelroberge/paulette/backend/internal/provider"
+	"github.com/michelroberge/paulette/backend/internal/rag"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -35,10 +36,11 @@ type PipelineHandler struct {
 	git              *git.Service
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
+	ragClient        *rag.Client
 	logBase          string
 }
 
-func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, chatRepo repository.ChatRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore, logBase string) *PipelineHandler {
+func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, chatRepo repository.ChatRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore, ragClient *rag.Client, logBase string) *PipelineHandler {
 	return &PipelineHandler{
 		registry:         registry,
 		projectRepo:      projectRepo,
@@ -49,6 +51,7 @@ func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository
 		git:              gitSvc,
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
+		ragClient:        ragClient,
 		logBase:          logBase,
 	}
 }
@@ -256,8 +259,33 @@ func (h *PipelineHandler) ApproveInternal(projectID string) error {
 		log.Printf("git commit failed for %s: %v", previousStage, err)
 	}
 
+	// Fire-and-forget: ingest approved artifact into RAG knowledge base.
+	if h.ragClient != nil && h.ragClient.IsHealthy() {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := rag.IngestArtifact(ctx, h.ragClient, project, previousStage, artifactContent); err != nil {
+				log.Printf("RAG ingest failed for %s/%s: %v", project.Name, previousStage, err)
+			}
+		}()
+	}
+
 	if nextStage == model.StageComplete {
 		h.startSummaryRun(project)
+
+		// Fire-and-forget: ingest all project code and promote artifacts on completion.
+		if h.ragClient != nil && h.ragClient.IsHealthy() {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				if err := rag.IngestProjectCode(ctx, h.ragClient, project); err != nil {
+					log.Printf("RAG bulk code ingest failed for %s: %v", project.Name, err)
+				}
+				if err := rag.PromoteProjectArtifacts(ctx, h.ragClient, project); err != nil {
+					log.Printf("RAG artifact promotion failed for %s: %v", project.Name, err)
+				}
+			}()
+		}
 	}
 
 	return nil

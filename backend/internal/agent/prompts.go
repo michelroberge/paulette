@@ -330,6 +330,13 @@ Example task format:
 
 // GetSystemPrompt returns the system prompt for a given stage, injecting previous artifacts and framework config.
 func GetSystemPrompt(stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig, enhancement ...*EnhancementContext) string {
+	return GetSystemPromptWithRAG(stage, version, previousArtifacts, frameworkCfg, "", enhancement...)
+}
+
+// GetSystemPromptWithRAG returns the system prompt for a given stage, with
+// optional RAG knowledge context injected between the base prompt and any
+// enhancement context. Pass ragContext="" to get the same result as GetSystemPrompt.
+func GetSystemPromptWithRAG(stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig, ragContext string, enhancement ...*EnhancementContext) string {
 	template, ok := systemPrompts[stage]
 	if !ok {
 		return fmt.Sprintf("You are an AI assistant helping with the %s stage of product development.", stage)
@@ -352,6 +359,10 @@ func GetSystemPrompt(stage model.StageName, version string, previousArtifacts ma
 		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact)
 	default:
 		prompt = template
+	}
+
+	if ragContext != "" {
+		prompt += "\n\n" + ragContext
 	}
 
 	return applyEnhancementContext(stage, prompt, enhancement)

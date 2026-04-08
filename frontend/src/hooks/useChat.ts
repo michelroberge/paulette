@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { getChatHistory, sendMessage, resumeChat } from '../api/chat';
 import { getActiveRuns, reconnectToRun } from '../api/activity';
-import type { Message, StageName, StreamEvent } from '../types';
+import type { Message, StageName, StreamEvent, RAGSource } from '../types';
 import type { ConnectionError } from '../types/provider';
 import { parseConnectionError } from '../components/chat/ConnectionErrorBanner';
 
@@ -14,6 +14,8 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
   const [nextTurn, setNextTurn] = useState<'agent' | 'user'>('agent');
   /** Populated when the SSE stream emits a structured connection-failure error. */
   const [connectionError, setConnectionError] = useState<ConnectionError | null>(null);
+  /** RAG knowledge sources used for the current/last response. */
+  const [ragSources, setRagSources] = useState<RAGSource[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const onTokensRef = useRef(onTokens);
   onTokensRef.current = onTokens;
@@ -43,6 +45,12 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
         ]);
         setStreamingContent('');
         setStreaming(false);
+        break;
+      case 'rag_sources':
+        try {
+          const sources: RAGSource[] = JSON.parse(event.content);
+          setRagSources(sources);
+        } catch { /* ignore parse errors */ }
         break;
       case 'error': {
         const connErr = parseConnectionError(event.content);
@@ -127,8 +135,9 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
   const send = useCallback(async (message: string) => {
     if (!projectId || !stage || streaming) return;
 
-    // Dismiss any pending connection error banner so the user gets a fresh start.
+    // Dismiss any pending connection error banner and clear stale RAG sources.
     setConnectionError(null);
+    setRagSources([]);
 
     // Add user message immediately
     const userMsg: Message = {
@@ -166,5 +175,5 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     }, controller.signal);
   }, [projectId, stage, streaming, handleEvent]);
 
-  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, loadHistory, send, resume, stop };
+  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, ragSources, loadHistory, send, resume, stop };
 }

@@ -59,8 +59,16 @@ export interface ChatHistory {
 }
 
 export interface StreamEvent {
-  type: 'chunk' | 'artifact' | 'done' | 'error' | 'tokens' | 'plan_limit';
+  type: 'chunk' | 'artifact' | 'done' | 'error' | 'tokens' | 'plan_limit' | 'rag_sources';
   content: string;
+}
+
+export interface RAGSource {
+  chunk_id: string;
+  file_path?: string;
+  collection?: string;
+  score: number;
+  preview?: string;
 }
 
 export type FrameworkId = 'tailwind' | 'bootstrap' | 'mui' | 'shadcn' | 'vanilla' | 'other';

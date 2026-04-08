@@ -1,4 +1,5 @@
 import type { Project } from '../../types';
+import { RAGStatusBadge } from './RAGStatusBadge';
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -42,6 +43,7 @@ export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onS
       {(totalTokens ?? 0) > 0 && (
         <span className="header-token-total">{formatTokens(totalTokens!)} tok</span>
       )}
+      <RAGStatusBadge />
       {onToggleAutonomous && (
         <button
           className={`autonomous-toggle ${autonomous ? 'active' : ''}`}

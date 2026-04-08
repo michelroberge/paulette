@@ -56,7 +56,8 @@ func buildAutonomousHandler(t *testing.T) (
 		provRegistry,
 		stageConfig,
 		connStore,
-		"", // logBase empty in tests
+		nil, // ragClient
+		"",  // logBase empty in tests
 	)
 
 	return h, connStore, stageConfig, projectDir

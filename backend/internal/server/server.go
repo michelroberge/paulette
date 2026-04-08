@@ -18,6 +18,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/handler"
 	authmw "github.com/michelroberge/paulette/backend/internal/middleware"
 	"github.com/michelroberge/paulette/backend/internal/provider"
+	"github.com/michelroberge/paulette/backend/internal/rag"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -37,6 +38,7 @@ type Server struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	gitIdentity      *git.GlobalIdentityStore
+	ragClient        *rag.Client
 	oidcHandler      *handler.OIDCHandler
 }
 
@@ -50,6 +52,7 @@ func New(
 	connStore *provider.ConnectionStore,
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
+	ragClient *rag.Client,
 ) *Server {
 	srv := &Server{
 		cfg:              cfg,
@@ -64,6 +67,7 @@ func New(
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
 		gitIdentity:      git.NewGlobalIdentityStore(cfg.RegistryPath),
+		ragClient:        ragClient,
 	}
 	if cfg.OIDC.Enabled {
 		oidcH, err := handler.NewOIDCHandler(&cfg.OIDC)
@@ -88,6 +92,11 @@ func (s *Server) Runs() *stream.Manager {
 // Orchestrator returns the autopilot orchestrator.
 func (s *Server) Orchestrator() *autopilot.Orchestrator {
 	return s.orchestrator
+}
+
+// RAGClient returns the RAG integration client (may be nil).
+func (s *Server) RAGClient() *rag.Client {
+	return s.ragClient
 }
 
 func (s *Server) Router() http.Handler {
@@ -144,13 +153,14 @@ func (s *Server) Router() http.Handler {
 	}
 
 	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
-	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.chatRepo, s.runs, gitSvc, s.providerRegistry, s.stageConfig, logBase)
+	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.chatRepo, s.runs, gitSvc, s.providerRegistry, s.stageConfig, s.ragClient, logBase)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
-	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
+	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, s.ragClient, logBase)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
 	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo, logBase)
 	bh.SetProviderRegistry(s.providerRegistry, s.stageConfig)
 	bh.SetBuildPool(buildPool)
+	bh.SetRAGClient(s.ragClient)
 	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
 	instructH.SetProviderRegistry(s.providerRegistry, s.stageConfig)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
@@ -175,6 +185,9 @@ func (s *Server) Router() http.Handler {
 
 	cfgH := handler.NewConfigHandler(s.cfg)
 	r.Get("/api/config", cfgH.GetInfo)
+
+	ragH := handler.NewRAGHandler(s.ragClient)
+	r.Get("/api/rag/status", ragH.Status)
 
 	// Connection CRUD, test, and model-discovery endpoints.
 	connH := handler.NewConnectionHandler(s.connStore, s.providerRegistry, s.stageConfig, s.registry)

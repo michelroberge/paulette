@@ -23,6 +23,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
 	"github.com/michelroberge/paulette/backend/internal/provider"
+	"github.com/michelroberge/paulette/backend/internal/rag"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -39,6 +40,7 @@ type BeadHandler struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	buildPool        *provider.BuildPool
+	ragClient        *rag.Client
 	logBase          string
 }
 
@@ -56,6 +58,45 @@ func (h *BeadHandler) SetProviderRegistry(reg *provider.Registry, sc *provider.S
 // SetBuildPool wires in the build pool for parallel bead execution.
 func (h *BeadHandler) SetBuildPool(pool *provider.BuildPool) {
 	h.buildPool = pool
+}
+
+// SetRAGClient wires in the RAG client for knowledge retrieval and ingestion.
+func (h *BeadHandler) SetRAGClient(client *rag.Client) {
+	h.ragClient = client
+}
+
+// ragOnBeadClosed fires a non-blocking RAG ingest for a completed bead's code.
+func (h *BeadHandler) ragOnBeadClosed(project *model.Project, bead model.Bead) {
+	if h.ragClient == nil || !h.ragClient.IsHealthy() {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := rag.IngestBeadCode(ctx, h.ragClient, project, bead); err != nil {
+			log.Printf("RAG bead ingest failed for %s/%s: %v", project.Name, bead.ID, err)
+		}
+	}()
+}
+
+// ragOnReviewOutcome fires non-blocking RAG feedback based on code review results.
+func (h *BeadHandler) ragOnReviewOutcome(project *model.Project, bead model.Bead, lgtm bool, findings string) {
+	if h.ragClient == nil || !h.ragClient.IsHealthy() {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if lgtm {
+			if err := rag.RecordPositiveOutcome(ctx, h.ragClient, project, bead); err != nil {
+				log.Printf("RAG positive feedback failed for %s/%s: %v", project.Name, bead.ID, err)
+			}
+		} else {
+			if err := rag.RecordNegativeOutcome(ctx, h.ragClient, project, bead, findings); err != nil {
+				log.Printf("RAG negative feedback failed for %s/%s: %v", project.Name, bead.ID, err)
+			}
+		}
+	}()
 }
 
 // resolveProvider returns the Provider, model ID, and optional stage settings to
@@ -809,6 +850,8 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", b.ID, b.Title)})
 						observer.RecordBead(b, b.Title, b.Description)
+						h.ragOnBeadClosed(project, b)
+						h.ragOnReviewOutcome(project, b, isApproved, findings)
 						return
 					}
 
@@ -1563,6 +1606,8 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 				beadJSON, _ = json.Marshal(bead)
 				run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 				run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", bead.ID, bead.Title)})
+				h.ragOnBeadClosed(project, *bead)
+				h.ragOnReviewOutcome(project, *bead, isApproved, findings)
 				return
 			}
 
