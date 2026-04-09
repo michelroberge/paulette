@@ -68,6 +68,7 @@ type Project struct {
 	SummaryReady      bool                `json:"summaryReady"`
 	SummaryApproved   bool                `json:"summaryApproved,omitempty"`
 	Autonomous        bool                `json:"autonomous"`
+	UseRefinementLoop bool                `json:"useRefinementLoop,omitempty"`
 	BaseBranch        string              `json:"baseBranch,omitempty"`
 	DevCommands       []string            `json:"devCommands,omitempty"`
 	BuildCommands     []string            `json:"buildCommands,omitempty"`

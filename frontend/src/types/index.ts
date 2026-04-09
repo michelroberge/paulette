@@ -14,6 +14,7 @@ export interface Project {
   summaryReady: boolean;
   summaryApproved?: boolean;
   autonomous?: boolean;
+  useRefinementLoop?: boolean;
   baseBranch?: string;
   devCommands?: string[];
   buildCommands?: string[];
@@ -59,7 +60,7 @@ export interface ChatHistory {
 }
 
 export interface StreamEvent {
-  type: 'chunk' | 'artifact' | 'done' | 'error' | 'tokens' | 'plan_limit' | 'rag_sources';
+  type: 'chunk' | 'artifact' | 'done' | 'error' | 'tokens' | 'plan_limit' | 'rag_sources' | 'refinement';
   content: string;
 }
 

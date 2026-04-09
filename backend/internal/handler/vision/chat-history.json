@@ -1,0 +1,95 @@
+{
+  "messages": [
+    {
+      "id": "bc273c1a-4310-4fc4-a073-209c7552d8f4",
+      "role": "user",
+      "content": "Hello from the user",
+      "timestamp": "2026-04-09T13:18:38.9515148-04:00"
+    },
+    {
+      "id": "73ec1506-a49f-48c5-8e79-51e3a3cdf2bb",
+      "role": "user",
+      "content": "Build me a task-tracking application",
+      "timestamp": "2026-04-09T13:18:38.9760375-04:00"
+    },
+    {
+      "id": "9ade3aa5-795b-4c0b-9a3f-2b95d3612c60",
+      "role": "user",
+      "content": "Design a product roadmap tool",
+      "timestamp": "2026-04-09T13:18:39.0032467-04:00"
+    },
+    {
+      "id": "9972e2d7-03b2-4bb6-8b2c-63e00d18f7ab",
+      "role": "user",
+      "content": "What tech stack should I use for a SaaS product?",
+      "timestamp": "2026-04-09T13:18:39.0346132-04:00"
+    },
+    {
+      "id": "00d182b6-d880-43c2-8c16-8aeb199e43a8",
+      "role": "user",
+      "content": "Deep-link test message",
+      "timestamp": "2026-04-09T13:18:39.0611831-04:00"
+    },
+    {
+      "id": "c5023d89-365f-4ee3-bde9-0292bed55670",
+      "role": "user",
+      "content": "Hello from the user",
+      "timestamp": "2026-04-09T13:18:49.2583853-04:00"
+    },
+    {
+      "id": "60cee9af-9be3-429d-b299-68b97f870dc7",
+      "role": "user",
+      "content": "Build me a task-tracking application",
+      "timestamp": "2026-04-09T13:18:49.2822491-04:00"
+    },
+    {
+      "id": "9c8ddbcd-c5fb-4063-8d99-13d1d031dad8",
+      "role": "user",
+      "content": "Design a product roadmap tool",
+      "timestamp": "2026-04-09T13:18:49.302914-04:00"
+    },
+    {
+      "id": "4ebd7402-2f4f-48af-91f2-911adb51743c",
+      "role": "user",
+      "content": "What tech stack should I use for a SaaS product?",
+      "timestamp": "2026-04-09T13:18:49.3305936-04:00"
+    },
+    {
+      "id": "2dc24175-1d70-476f-b281-e7ce74a10914",
+      "role": "user",
+      "content": "Deep-link test message",
+      "timestamp": "2026-04-09T13:18:49.3555384-04:00"
+    },
+    {
+      "id": "448995c6-3318-459a-be12-1dbf42588819",
+      "role": "user",
+      "content": "Hello from the user",
+      "timestamp": "2026-04-09T15:46:43.3193414-04:00"
+    },
+    {
+      "id": "00218529-4a1e-467f-8a3d-b66836564118",
+      "role": "user",
+      "content": "Build me a task-tracking application",
+      "timestamp": "2026-04-09T15:46:43.3397231-04:00"
+    },
+    {
+      "id": "d2b61448-6166-47ca-8559-564d7e45c715",
+      "role": "user",
+      "content": "Design a product roadmap tool",
+      "timestamp": "2026-04-09T15:46:43.358836-04:00"
+    },
+    {
+      "id": "a0f66092-0293-43e0-8281-c6c1a48779ba",
+      "role": "user",
+      "content": "What tech stack should I use for a SaaS product?",
+      "timestamp": "2026-04-09T15:46:43.3851288-04:00"
+    },
+    {
+      "id": "0b1c7e52-f0e8-4fcf-92da-6869fe80cbbd",
+      "role": "user",
+      "content": "Deep-link test message",
+      "timestamp": "2026-04-09T15:46:43.4116117-04:00"
+    }
+  ],
+  "nextTurn": ""
+}

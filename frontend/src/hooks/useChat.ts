@@ -133,6 +133,10 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     }]);
   }, []);
 
+  const seedMessages = useCallback((msgs: Message[]) => {
+    setMessages(msgs);
+  }, []);
+
   const stop = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -183,5 +187,5 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     }, controller.signal);
   }, [projectId, stage, streaming, handleEvent]);
 
-  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, ragSources, loadHistory, send, resume, stop, addLocalMessage };
+  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, ragSources, loadHistory, send, resume, stop, addLocalMessage, seedMessages };
 }

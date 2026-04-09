@@ -19,6 +19,7 @@ import (
 	authmw "github.com/michelroberge/paulette/backend/internal/middleware"
 	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/rag"
+	"github.com/michelroberge/paulette/backend/internal/refinement"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -173,6 +174,7 @@ func (s *Server) Router() http.Handler {
 	vh := handler.NewVersionHandler(s.registry)
 	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs, s.providerRegistry, s.stageConfig)
 	rfh := handler.NewRefineHandler(s.registry, s.artifactRepo, s.chatRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
+	refH := refinement.NewHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, logBase)
 
 	// Wire orchestrator (created once, reused across Router calls)
 	if s.orchestrator == nil {
@@ -181,6 +183,7 @@ func (s *Server) Router() http.Handler {
 			ch, mh, bh, plh, eh,
 		)
 	}
+	s.orchestrator.SetRefinementHandler(refH)
 	ph.SetOrchestrator(s.orchestrator)
 
 	cfgH := handler.NewConfigHandler(s.cfg)
@@ -249,6 +252,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/stages/{stage}/chat", ch.GetHistory)
 		r.Post("/{id}/stages/{stage}/chat", ch.Send)
 		r.Post("/{id}/stages/{stage}/chat/resume", ch.Resume)
+
+		r.Post("/{id}/stages/vision/loop", refH.StartLoop)
+		r.Post("/{id}/stages/vision/loop/answer", refH.AnswerQuestion)
+		r.Get("/{id}/stages/vision/loop/state", refH.GetState)
+		r.Delete("/{id}/stages/vision/loop/state", refH.ResetState)
+		r.Get("/{id}/stages/vision/loop/review", refH.GetReviewItems)
+		r.Post("/{id}/stages/vision/loop/review/{itemId}/discard", refH.DiscardReviewItem)
+		r.Post("/{id}/stages/vision/loop/review/{itemId}/address", refH.AddressReviewItem)
 
 		r.Get("/{id}/stages/ux/mock", mh.Get)
 		r.Post("/{id}/stages/ux/mock", mh.Generate)

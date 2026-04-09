@@ -16,6 +16,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/handler"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/refinement"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -46,6 +47,7 @@ type Orchestrator struct {
 	beadH        *handler.BeadHandler
 	pipelineH    *handler.PipelineHandler
 	enhanceH     *handler.EnhanceHandler
+	refinementH  *refinement.Handler
 }
 
 func NewOrchestrator(
@@ -74,6 +76,11 @@ func NewOrchestrator(
 		pipelineH:    pipelineH,
 		enhanceH:     enhanceH,
 	}
+}
+
+// SetRefinementHandler sets the refinement handler for vision loop support.
+func (o *Orchestrator) SetRefinementHandler(h *refinement.Handler) {
+	o.refinementH = h
 }
 
 // StartAll resumes any in-progress operations and starts autonomous goroutines.
@@ -233,7 +240,13 @@ func (o *Orchestrator) runProject(ctx context.Context, projectID string) {
 
 		var stageErr error
 		switch project.CurrentStage {
-		case model.StageVision, model.StageArchitecture:
+		case model.StageVision:
+			if project.UseRefinementLoop && o.refinementH != nil {
+				stageErr = o.handleVisionLoop(ctx, project)
+			} else {
+				stageErr = o.handleSimpleStage(ctx, project, project.CurrentStage)
+			}
+		case model.StageArchitecture:
 			stageErr = o.handleSimpleStage(ctx, project, project.CurrentStage)
 		case model.StageUX:
 			stageErr = o.handleUXStage(ctx, project)
@@ -282,6 +295,42 @@ func (o *Orchestrator) handleSimpleStage(ctx context.Context, project *model.Pro
 		}
 		if err := o.runChatWithBtw(ctx, project, stage, msg); err != nil {
 			return fmt.Errorf("chat run: %w", err)
+		}
+	}
+
+	select {
+	case <-time.After(2 * time.Second):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	return o.pipelineH.ApproveInternal(project.ID)
+}
+
+func (o *Orchestrator) handleVisionLoop(ctx context.Context, project *model.Project) error {
+	content, _ := o.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
+	if strings.TrimSpace(content) != "" {
+		// Artifact already exists, skip to approval.
+		select {
+		case <-time.After(2 * time.Second):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return o.pipelineH.ApproveInternal(project.ID)
+	}
+
+	idea := kickoffMessages[model.StageVision]
+	if project.EnhancementVision != "" {
+		idea = project.EnhancementVision
+	}
+
+	run, err := o.refinementH.RunAutonomous(ctx, project, idea)
+	if err != nil {
+		return fmt.Errorf("refinement loop: %w", err)
+	}
+	if run != nil {
+		if err := o.waitForRunDone(ctx, run); err != nil {
+			return err
 		}
 	}
 
