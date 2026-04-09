@@ -139,7 +139,7 @@ function ProjectDetailPage() {
     [stageTokens],
   );
 
-  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, ragSources, loadHistory, send, resume, stop } =
+  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, ragSources, loadHistory, send, resume, stop, addLocalMessage } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger, selectedStage ? (n) => addTokens(selectedStage, n) : undefined);
 
   const { active: agentActive, streamingText: agentStreamingText, operation: agentOperation, stage: agentStage } =
@@ -303,6 +303,12 @@ function ProjectDetailPage() {
     if (nextTurn !== 'agent') return;
 
     if (messages.length === 0) {
+      // Fresh vision stage on a new project — greet the user and wait for their input
+      // rather than immediately calling the AI with a generic kickoff message.
+      if (selectedStage === 'vision' && !project?.enhancementVision) {
+        addLocalMessage("Provide a short description of your idea, we'll work it out together.");
+        return;
+      }
       // Fresh stage — send the opening kickoff message.
       const doKickoff = async () => {
         let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;

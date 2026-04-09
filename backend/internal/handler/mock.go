@@ -42,7 +42,7 @@ type plannerComponent struct {
 	Description string `json:"description"`
 }
 
-const mockRelPath = ".paulette/ux/mock.html"
+const mockRelPath = "ux/mock.html"
 
 type MockHandler struct {
 	registry         repository.RegistryRepo
@@ -136,14 +136,14 @@ func (h *MockHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p := filepath.Join(project.HostDir, mockRelPath)
+	p := filepath.Join(project.DataDir, mockRelPath)
 	b, err := os.ReadFile(p)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			http.Error(w, "failed to read mock: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Not in .paulette — fall back to docs/{version}/ux/mock.html
+		// Not in working state — fall back to docs/{version}/ux/mock.html
 		b, err = fsrepo.ReadMockDoc(project.HostDir, project.Version)
 		if err != nil {
 			http.Error(w, "failed to read mock: "+err.Error(), http.StatusInternalServerError)
@@ -183,9 +183,9 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req) // optional body — ignore decode errors
 
 	// Resolve provider early so we can pick the right generation strategy.
-	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
+	uxContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageUX)
 	if uxContent == "" {
-		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
+		uxContent, _ = h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
 	}
 	prov, _, _, _ := h.resolveProviderOp(project.ID, project.HostDir, model.StageUX, provider.OperationUXMock)
 
@@ -216,21 +216,21 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 // provider — not just the Claude CLI — benefits from the same retry mechanism.
 func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*stream.Run, error) {
 	// Use UX artifact if available, fall back to vision artifact
-	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
+	uxContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageUX)
 	if uxContent == "" {
-		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
+		uxContent, _ = h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
 	}
 	if uxContent == "" {
 		return nil, fmt.Errorf("no artifact available — chat with the agent to generate content first")
 	}
 
-	frameworkCfg, _ := fsrepo.ReadFramework(project.HostDir)
+	frameworkCfg, _ := fsrepo.ReadFramework(project.DataDir)
 
 	run := h.runs.Start(project.ID, "ux", "mock")
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
+	writeActivity(h.activityRepo, project.DataDir, model.StageUX, "mock")
 	runLogID := startRunLog(h.logBase, project, model.StageUX, "mock")
 
 	// Resolve the LLM provider for mock generation (ux.mock → ux → Claude CLI fallback).
@@ -238,15 +238,15 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
-		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
+		clearActivity(h.activityRepo, project.DataDir, model.StageUX)
 		run.Finish(h.runs)
 		return run, nil
 	}
 
 	// Gather project context (vision, build plan) so the LLM knows what
 	// the app is about, not just the UX layout.
-	visionContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+	visionContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 
 	// Build the initial user prompt and the shared mock system prompt.
 	var userPromptBuf strings.Builder
@@ -263,7 +263,7 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageUX)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageUX)
 
 		var stageTokensAccum int
 		var rlErr string
@@ -274,14 +274,14 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
-				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageUX, "mock"), stageTokensAccum, "")
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.DataDir, project.HostDir, model.StageUX, "mock"), stageTokensAccum, "")
 			}
 		}()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(model.StageUX, stageTokensAccum)
 				h.registry.Update(project)
-				recordSession(project.HostDir, model.StageUX, model.SessionMock, project.Iteration, runStart, stageTokensAccum)
+				recordSession(project.DataDir, model.StageUX, model.SessionMock, project.Iteration, runStart, stageTokensAccum)
 			}
 		}()
 
@@ -353,7 +353,7 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 			if agent.HasHTMLBlock(fullResponse) {
 				html := agent.ExtractHTML(fullResponse)
 				if html != "" {
-					p := filepath.Join(project.HostDir, mockRelPath)
+					p := filepath.Join(project.DataDir, mockRelPath)
 					if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
 						os.WriteFile(p, []byte(html), 0644)
 					}
@@ -383,7 +383,7 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 				// result persists even without a connected client.
 				html := agent.ExtractHTML(fullResponse)
 				if html != "" {
-					p := filepath.Join(project.HostDir, mockRelPath)
+					p := filepath.Join(project.DataDir, mockRelPath)
 					if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
 						os.WriteFile(p, []byte(html), 0644)
 					}
@@ -991,40 +991,40 @@ func assembleScreenFragment(components []plannerComponent, htmlFragments map[str
 //
 // Returns (nil, nil) on race condition (another run already started).
 func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinement string) (*stream.Run, error) {
-	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
+	uxContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageUX)
 	if uxContent == "" {
-		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
+		uxContent, _ = h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
 	}
 	if uxContent == "" {
 		return nil, fmt.Errorf("no artifact available — chat with the agent to generate content first")
 	}
 
 	// Gather project context for the planner call.
-	visionContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+	visionContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 	projectContext := agent.BuildMockContext(project.Name, visionContent, buildContent)
 
-	frameworkCfg, _ := fsrepo.ReadFramework(project.HostDir)
+	frameworkCfg, _ := fsrepo.ReadFramework(project.DataDir)
 
 	run := h.runs.Start(project.ID, "ux", "mock")
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
+	writeActivity(h.activityRepo, project.DataDir, model.StageUX, "mock")
 	runLogID := startRunLog(h.logBase, project, model.StageUX, "mock")
 
 	prov, modelID, sa, provErr := h.resolveProviderOp(project.ID, project.HostDir, model.StageUX, provider.OperationUXMock)
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
-		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
+		clearActivity(h.activityRepo, project.DataDir, model.StageUX)
 		run.Finish(h.runs)
 		return run, nil
 	}
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageUX)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageUX)
 
 		var tokensAccum int
 		var tokensMu sync.Mutex
@@ -1036,14 +1036,14 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
-				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageUX, "mock"), tokensAccum, "")
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.DataDir, project.HostDir, model.StageUX, "mock"), tokensAccum, "")
 			}
 		}()
 		defer func() {
 			if tokensAccum > 0 {
 				project.AddStageTokens(model.StageUX, tokensAccum)
 				h.registry.Update(project)
-				recordSession(project.HostDir, model.StageUX, model.SessionMock, project.Iteration, runStart, tokensAccum)
+				recordSession(project.DataDir, model.StageUX, model.SessionMock, project.Iteration, runStart, tokensAccum)
 			}
 		}()
 
@@ -1112,7 +1112,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		finalHTML = sanitizeMockClasses(finalHTML, frameworkCfg)
 
 		// Persist + emit done
-		p := filepath.Join(project.HostDir, mockRelPath)
+		p := filepath.Join(project.DataDir, mockRelPath)
 		if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
 			os.WriteFile(p, []byte(finalHTML), 0644)
 		}
@@ -1143,7 +1143,7 @@ func (h *MockHandler) GetFramework(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := fsrepo.ReadFramework(project.HostDir)
+	cfg, err := fsrepo.ReadFramework(project.DataDir)
 	if err != nil {
 		http.Error(w, "failed to read framework: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1188,7 +1188,7 @@ func (h *MockHandler) SetFramework(w http.ResponseWriter, r *http.Request) {
 		Framework:  model.UXFramework(req.Framework),
 		CustomName: req.CustomName,
 	}
-	if err := fsrepo.WriteFramework(project.HostDir, cfg); err != nil {
+	if err := fsrepo.WriteFramework(project.DataDir, cfg); err != nil {
 		http.Error(w, "failed to save framework: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

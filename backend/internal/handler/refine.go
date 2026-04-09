@@ -85,7 +85,7 @@ func (h *RefineHandler) Refine(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read current artifact
-	artifact, err := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
+	artifact, err := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, stage)
 	if err != nil || artifact == "" {
 		http.Error(w, "artifact not found", http.StatusNotFound)
 		return
@@ -190,7 +190,7 @@ SELECTED SECTION TO REWRITE:
 	if totalTokens > 0 {
 		project.AddStageTokens(stage, totalTokens)
 		h.registry.Update(project)
-		recordSession(project.HostDir, stage, model.SessionChat, project.Iteration, runStart, totalTokens)
+		recordSession(project.DataDir, stage, model.SessionChat, project.Iteration, runStart, totalTokens)
 	}
 }
 
@@ -211,7 +211,7 @@ func (h *RefineHandler) ManualEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	artifact, err := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
+	artifact, err := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, stage)
 	if err != nil || artifact == "" {
 		http.Error(w, "artifact not found", http.StatusNotFound)
 		return
@@ -224,7 +224,7 @@ func (h *RefineHandler) ManualEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.artifactRepo.Write(project.HostDir, stage, updated); err != nil {
+	if err := h.artifactRepo.Write(project.DataDir, stage, updated); err != nil {
 		http.Error(w, "failed to save artifact", http.StatusInternalServerError)
 		return
 	}
@@ -253,7 +253,7 @@ func (h *RefineHandler) ApplyRefine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	artifact, err := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
+	artifact, err := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, stage)
 	if err != nil || artifact == "" {
 		http.Error(w, "artifact not found", http.StatusNotFound)
 		return
@@ -265,7 +265,7 @@ func (h *RefineHandler) ApplyRefine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.artifactRepo.Write(project.HostDir, stage, updated); err != nil {
+	if err := h.artifactRepo.Write(project.DataDir, stage, updated); err != nil {
 		http.Error(w, "failed to save artifact", http.StatusInternalServerError)
 		return
 	}

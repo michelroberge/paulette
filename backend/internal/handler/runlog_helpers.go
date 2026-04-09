@@ -105,18 +105,20 @@ func failRunLog(logBase, projectName, runID, errMsg string) string {
 }
 
 // expectedArtifacts returns artifact refs that exist on disk for a given stage+operation.
-func expectedArtifacts(hostDir string, stage model.StageName, op string) []model.ArtifactRef {
+// dataDir is the working-state directory; hostDir is the git repo root (for .beads/).
+func expectedArtifacts(dataDir, hostDir string, stage model.StageName, op string) []model.ArtifactRef {
 	var refs []model.ArtifactRef
 	switch op {
 	case "chat":
-		rel := filepath.Join(".paulette", string(stage), string(stage)+".md")
-		if fileExists(filepath.Join(hostDir, rel)) {
+		abs := filepath.Join(dataDir, string(stage), string(stage)+".md")
+		rel := filepath.Join(string(stage), string(stage)+".md")
+		if fileExists(abs) {
 			refs = append(refs, model.ArtifactRef{Name: string(stage) + ".md", Path: rel})
 		}
 	case "mock":
-		rel := filepath.Join(".paulette", "ux", "mock.html")
-		if fileExists(filepath.Join(hostDir, rel)) {
-			refs = append(refs, model.ArtifactRef{Name: "mock.html", Path: rel})
+		abs := filepath.Join(dataDir, "ux", "mock.html")
+		if fileExists(abs) {
+			refs = append(refs, model.ArtifactRef{Name: "mock.html", Path: filepath.Join("ux", "mock.html")})
 		}
 	case "beads-generate":
 		rel := filepath.Join(".beads", "issues.jsonl")
@@ -124,9 +126,9 @@ func expectedArtifacts(hostDir string, stage model.StageName, op string) []model
 			refs = append(refs, model.ArtifactRef{Name: "issues.jsonl", Path: rel})
 		}
 	case "summary":
-		rel := filepath.Join(".paulette", "summary.md")
-		if fileExists(filepath.Join(hostDir, rel)) {
-			refs = append(refs, model.ArtifactRef{Name: "summary.md", Path: rel})
+		abs := filepath.Join(dataDir, "summary.md")
+		if fileExists(abs) {
+			refs = append(refs, model.ArtifactRef{Name: "summary.md", Path: "summary.md"})
 		}
 	}
 	return refs
@@ -135,6 +137,24 @@ func expectedArtifacts(hostDir string, stage model.StageName, op string) []model
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// attachPromptLog reads the run's meta.json, sets PromptLog to the given filename, and writes it back.
+// Called after writing prompt.json to the run directory.
+func attachPromptLog(logBase, projectName, runID, filename string) {
+	if logBase == "" || runID == "" || filename == "" {
+		return
+	}
+	safeProjectName := fsrepo.SanitizeProjectName(projectName)
+	entry, err := fsrepo.ReadRunMeta(logBase, safeProjectName, runID)
+	if err != nil {
+		log.Printf("runlog: attach prompt log %s: %v", runID, err)
+		return
+	}
+	entry.PromptLog = filename
+	if err := fsrepo.WriteRunMeta(logBase, entry); err != nil {
+		log.Printf("runlog: write prompt log ref %s: %v", runID, err)
+	}
 }
 
 // runTrace carries run-log context through an operation so each agent step

@@ -125,6 +125,14 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     return () => { cancelled = true; };
   }, [projectId, stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const addLocalMessage = useCallback((content: string) => {
+    setMessages(prev => [...prev, {
+      role: 'assistant' as const,
+      content,
+      timestamp: new Date().toISOString(),
+    }]);
+  }, []);
+
   const stop = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -175,5 +183,5 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     }, controller.signal);
   }, [projectId, stage, streaming, handleEvent]);
 
-  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, ragSources, loadHistory, send, resume, stop };
+  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, ragSources, loadHistory, send, resume, stop, addLocalMessage };
 }

@@ -22,7 +22,7 @@ services:
     environment:
       PORT: "8080"
       REGISTRY_PATH: /home/paulette/.paulette
-      REPOS_PATH: /home/paulette/repos
+      GIT_PATH: /home/paulette/repos
       CLAUDE_PATH: claude
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
 

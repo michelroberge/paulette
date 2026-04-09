@@ -9,7 +9,9 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
-const factoryDir = ".paulette"
+// legacyFactoryDir is the old working-state directory inside the git repo.
+// Used only for migration — new code uses project.DataDir exclusively.
+const legacyFactoryDir = ".paulette"
 
 type ProjectRepo struct{}
 
@@ -17,14 +19,14 @@ func NewProjectRepo() *ProjectRepo {
 	return &ProjectRepo{}
 }
 
-func projectFilePath(hostDir string) string {
-	return filepath.Join(hostDir, factoryDir, "project.json")
+func projectFilePath(dataDir string) string {
+	return filepath.Join(dataDir, "project.json")
 }
 
-func (r *ProjectRepo) Init(hostDir string) error {
-	stages := []string{"vision", "ux", "architecture", "build"}
+func (r *ProjectRepo) Init(dataDir string) error {
+	stages := []string{"vision", "ux", "architecture", "build", "skills"}
 	for _, stage := range stages {
-		dir := filepath.Join(hostDir, factoryDir, stage)
+		dir := filepath.Join(dataDir, stage)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("create stage dir %s: %w", stage, err)
 		}
@@ -32,8 +34,8 @@ func (r *ProjectRepo) Init(hostDir string) error {
 	return nil
 }
 
-func (r *ProjectRepo) Load(hostDir string) (*model.Project, error) {
-	b, err := os.ReadFile(projectFilePath(hostDir))
+func (r *ProjectRepo) Load(dataDir string) (*model.Project, error) {
+	b, err := os.ReadFile(projectFilePath(dataDir))
 	if err != nil {
 		return nil, fmt.Errorf("read project.json: %w", err)
 	}
@@ -52,10 +54,13 @@ func (r *ProjectRepo) Load(hostDir string) (*model.Project, error) {
 	return &project, nil
 }
 
-func (r *ProjectRepo) Save(hostDir string, project *model.Project) error {
+func (r *ProjectRepo) Save(dataDir string, project *model.Project) error {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
 	b, err := json.MarshalIndent(project, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal project: %w", err)
 	}
-	return os.WriteFile(projectFilePath(hostDir), b, 0644)
+	return os.WriteFile(projectFilePath(dataDir), b, 0644)
 }

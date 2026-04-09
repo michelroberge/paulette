@@ -122,6 +122,13 @@ func (c OllamaModelCaps) EffectiveNumCtx() int {
 	return defaultNumCtx
 }
 
+// ModelNumCtx returns the context window size for the given model name.
+// It consults the capability table and falls back to defaultNumCtx for unknown models.
+// Callers should prefer a StageAssignment.NumCtx override when set.
+func ModelNumCtx(modelName string) int {
+	return ollamaModelCaps(modelName).EffectiveNumCtx()
+}
+
 // ollamaModelCaps returns the capability profile for the given Ollama model name.
 // The name may include a size/variant tag (e.g. "llama3.2:3b", "qwen2.5-coder:7b-instruct").
 // Matching is case-insensitive and strips the tag suffix before lookup.

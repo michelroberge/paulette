@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"path/filepath"
+	"time"
+)
 
 // BtwMessage is a queued follow-up message the user sent while an agent was running.
 type BtwMessage struct {
@@ -44,12 +47,20 @@ type StageInfo struct {
 	Activity     *StageActivity `json:"activity,omitempty"`
 }
 
+// ComputeDataDir returns the working-state directory for a project version.
+// Layout: {dataPath}/{projectID}/default/{version}
+// The "default" segment is a placeholder for a future user-ID slot.
+func ComputeDataDir(dataPath, projectID, version string) string {
+	return filepath.Join(dataPath, projectID, "default", version)
+}
+
 type Project struct {
 	ID                string              `json:"id"`
 	Name              string              `json:"name"`
 	Author            string              `json:"author"`
 	Version           string              `json:"version"`
 	HostDir           string              `json:"hostDir"`
+	DataDir           string              `json:"dataDir,omitempty"`
 	CurrentStage      StageName           `json:"currentStage"`
 	Iteration         int                 `json:"iteration"`
 	EnhancementVision string              `json:"enhancementVision,omitempty"`

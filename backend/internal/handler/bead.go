@@ -128,7 +128,7 @@ func (h *BeadHandler) GetGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// One-time migration: if old beads-graph.json exists, migrate to bd notes
-	fsrepo.MigrateBeadGraphIfNeeded(r.Context(), project.HostDir)
+	fsrepo.MigrateBeadGraphIfNeeded(r.Context(), project.HostDir, project.DataDir)
 
 	// Reset stale in_progress beads if no execution is currently active (e.g. after a restart)
 	if h.runs.Active(project.ID, "build", "beads-execute") == nil {
@@ -259,23 +259,23 @@ func (h *BeadHandler) Generate(w http.ResponseWriter, r *http.Request) {
 // StartGenerateRun starts the beads generation run without HTTP plumbing.
 // Returns (nil, nil) on race condition.
 func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, error) {
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 	if buildContent == "" {
 		return nil, fmt.Errorf("no build artifact — complete the Build stage first")
 	}
 
-	archContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
+	archContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageArchitecture)
 
 	run := h.runs.Start(project.ID, "build", "beads-generate")
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "beads-generate")
+	writeActivity(h.activityRepo, project.DataDir, model.StageBuild, "beads-generate")
 	runLogID := startRunLog(h.logBase, project, model.StageBuild, "beads-generate")
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageBuild)
 
 		var generateTokens int
 		var rlErr string
@@ -285,14 +285,14 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
-				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageBuild, "beads-generate"), generateTokens, beadNotes)
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.DataDir, project.HostDir, model.StageBuild, "beads-generate"), generateTokens, beadNotes)
 			}
 		}()
 		defer func() {
 			if generateTokens > 0 {
 				project.AddStageTokens(model.StageBuild, generateTokens)
 				h.registry.Update(project)
-				recordSession(project.HostDir, model.StageBuild, model.SessionBeadGenerate, project.Iteration, runStart, generateTokens)
+				recordSession(project.DataDir, model.StageBuild, model.SessionBeadGenerate, project.Iteration, runStart, generateTokens)
 			}
 		}()
 
@@ -581,12 +581,12 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "beads-execute")
+	writeActivity(h.activityRepo, project.DataDir, model.StageBuild, "beads-execute")
 	runLogID := startRunLog(h.logBase, project, model.StageBuild, "beads-execute")
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageBuild)
 
 		var totalBuildTokens atomic.Int64
 		var rlErr string
@@ -602,7 +602,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 			if n := int(totalBuildTokens.Load()); n > 0 {
 				project.AddStageTokens(model.StageBuild, n)
 				h.registry.Update(project)
-				recordSession(project.HostDir, model.StageBuild, model.SessionBeadExecute, project.Iteration, runStart, n)
+				recordSession(project.DataDir, model.StageBuild, model.SessionBeadExecute, project.Iteration, runStart, n)
 			}
 		}()
 
@@ -611,7 +611,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		// Load all artifacts for context injection
 		artifacts := map[model.StageName]string{}
 		for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
-			content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
+			content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, stage)
 			if content != "" {
 				artifacts[stage] = content
 			}
@@ -621,7 +621,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		var enhCtx *agent.EnhancementContext
 		if project.EnhancementVision != "" {
 			enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-			summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+			summaryPath := filepath.Join(project.DataDir, "summary.md")
 			if data, err := os.ReadFile(summaryPath); err == nil {
 				enhCtx.Summary = string(data)
 			}
@@ -655,12 +655,12 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				}
 				skillCache = append(skillCache, cachedSkill{skill: s, prompt: promptText})
 				// Copy to project for local agent access
-				h.skillRepo.CopyToProject(project.HostDir, s.ID)
+				h.skillRepo.CopyToProject(project.DataDir, s.ID)
 			}
 		}
 
 		// Set up skill observer to detect emergent patterns during execution
-		observer := NewSkillObserver(project.HostDir, h.skillRepo, run, project, 5, h.providerRegistry, h.stageConfig)
+		observer := NewSkillObserver(project.DataDir, project.HostDir, h.skillRepo, run, project, 5, h.providerRegistry, h.stageConfig)
 		defer observer.Flush()
 
 		var wg sync.WaitGroup
@@ -1490,7 +1490,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 
 		artifacts := map[model.StageName]string{}
 		for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
-			content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
+			content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, stage)
 			if content != "" {
 				artifacts[stage] = content
 			}
@@ -1499,7 +1499,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 		var enhCtx *agent.EnhancementContext
 		if project.EnhancementVision != "" {
 			enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-			summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+			summaryPath := filepath.Join(project.DataDir, "summary.md")
 			if data, err := os.ReadFile(summaryPath); err == nil {
 				enhCtx.Summary = string(data)
 			}

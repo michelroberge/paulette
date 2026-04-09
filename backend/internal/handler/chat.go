@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/model"
@@ -139,6 +140,62 @@ func (h *ChatHandler) resolveProviderOp(projectID, hostDir string, stage model.S
 	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
+// applyContextStrategy decides what history to send to the LLM:
+//
+//   - Refinement mode (artifact exists): replace full history with a single
+//     synthetic assistant message containing the current artifact. The artifact
+//     IS the state — prior discussion is no longer needed.
+//
+//   - Discussion mode (no artifact yet): trim history when estimated token usage
+//     exceeds 40% of the model's context window (reserves 60% for system prompt,
+//     prior-stage artifacts, and the model's response).
+func (h *ChatHandler) applyContextStrategy(dataDir, hostDir, version string, stage model.StageName, history []model.Message, numCtx int) []model.Message {
+	currentArtifact, _ := h.artifactRepo.ReadWithFallback(dataDir, hostDir, version, stage)
+	if strings.TrimSpace(currentArtifact) != "" {
+		return []model.Message{
+			{
+				Role: model.RoleAssistant,
+				Content: fmt.Sprintf(
+					"<!-- RESPONSE:START -->\n<discussion>Here is the current document:</discussion>\n<artifact>\n%s\n</artifact>\n<!-- RESPONSE:END -->",
+					strings.TrimSpace(currentArtifact),
+				),
+				Timestamp: time.Now(),
+			},
+		}
+	}
+	budget := numCtx * 40 / 100
+	if estimateHistoryTokens(history) > budget {
+		if len(history) > 4 {
+			return history[len(history)-4:]
+		}
+	}
+	return history
+}
+
+// estimateHistoryTokens approximates the token count of history messages
+// using the chars/4 heuristic (no external tokenizer needed).
+func estimateHistoryTokens(msgs []model.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += len(m.Content) / 4
+	}
+	return total
+}
+
+// resolveNumCtx returns the effective context window size for history budgeting.
+// Priority: explicit StageAssignment.NumCtx → model capability table → 4096 fallback.
+func resolveNumCtx(sa *provider.StageAssignment, modelID string) int {
+	if sa != nil && sa.NumCtx != nil && *sa.NumCtx > 0 {
+		return *sa.NumCtx
+	}
+	if modelID != "" {
+		if n := provider.ModelNumCtx(modelID); n > 0 {
+			return n
+		}
+	}
+	return 4096
+}
+
 func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	stage := model.StageName(chi.URLParam(r, "stage"))
@@ -149,7 +206,7 @@ func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	messages, err := h.chatRepo.GetHistory(project.HostDir, stage)
+	messages, err := h.chatRepo.GetHistory(project.DataDir, stage)
 	if err != nil {
 		http.Error(w, "failed to get chat history: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -222,7 +279,7 @@ func (h *ChatHandler) Resume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, err := h.chatRepo.GetHistory(project.HostDir, stage)
+	history, err := h.chatRepo.GetHistory(project.DataDir, stage)
 	if err != nil {
 		http.Error(w, "failed to get chat history: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -256,7 +313,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 		if s == stage {
 			break
 		}
-		content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, s)
+		content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, s)
 		if content != "" {
 			previousArtifacts[s] = content
 		}
@@ -264,19 +321,19 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 
 	var frameworkCfg *model.FrameworkConfig
 	if stage == model.StageUX {
-		frameworkCfg, _ = fsrepo.ReadFramework(project.HostDir)
+		frameworkCfg, _ = fsrepo.ReadFramework(project.DataDir)
 	}
 
 	var enhCtx *agent.EnhancementContext
 	if project.EnhancementVision != "" {
 		enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+		summaryPath := filepath.Join(project.DataDir, "summary.md")
 		if data, err := os.ReadFile(summaryPath); err == nil {
 			enhCtx.Summary = string(data)
 		}
-		prevVersion := findPriorIterationVersion(project.HostDir)
+		prevVersion := findPriorDataVersion(project.DataDir)
 		if prevVersion != "" {
-			priorArtifactPath := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
+			priorArtifactPath := filepath.Join(project.HostDir, "docs", prevVersion, string(stage), string(stage)+".md")
 			if data, err := os.ReadFile(priorArtifactPath); err == nil {
 				enhCtx.PriorArtifact = string(data)
 			}
@@ -291,7 +348,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 	if run == nil {
 		return nil, nil // race
 	}
-	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
+	writeActivity(h.activityRepo, project.DataDir, stage, "chat")
 
 	// Resolve the LLM provider for this stage. For UX we use the operation-specific
 	// "ux.chat" key so mock generation can use a different connection if configured.
@@ -306,10 +363,12 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 	}
 	if provErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
-		clearActivity(h.activityRepo, project.HostDir, stage)
+		clearActivity(h.activityRepo, project.DataDir, stage)
 		run.Finish(h.runs)
 		return run, nil
 	}
+
+	history = h.applyContextStrategy(project.DataDir, project.HostDir, project.Version, stage, history, resolveNumCtx(sa, modelID))
 
 	saTemp, saNumCtx, saStream := sa.Fields()
 	events, chatErr := prov.Chat(run.Context(), provider.ChatRequest{
@@ -325,14 +384,14 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 	})
 	if chatErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
-		clearActivity(h.activityRepo, project.HostDir, stage)
+		clearActivity(h.activityRepo, project.DataDir, stage)
 		run.Finish(h.runs)
 		return run, nil
 	}
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, stage)
+		defer clearActivity(h.activityRepo, project.DataDir, stage)
 
 		var stageTokensAccum int
 		var accumulated strings.Builder
@@ -341,7 +400,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(stage, stageTokensAccum)
 				h.registry.Update(project)
-				recordSession(project.HostDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
+				recordSession(project.DataDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
 			}
 		}()
 
@@ -357,7 +416,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 					fullContent = accumulated.String()
 				}
 				if artifact, found := agent.ExtractArtifact(fullContent); found {
-					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
+					if err := h.artifactRepo.Write(project.DataDir, stage, artifact); err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
 						run.Emit(agent.StreamEvent{Type: "artifact", Content: string(stage) + "/" + string(stage) + ".md"})
@@ -370,7 +429,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 					Content:   chatContent,
 					Timestamp: time.Now(),
 				}
-				h.chatRepo.AppendMessage(project.HostDir, stage, assistantMsg)
+				h.chatRepo.AppendMessage(project.DataDir, stage, assistantMsg)
 
 				run.Emit(agent.StreamEvent{Type: "done", Content: chatContent})
 			} else {
@@ -390,11 +449,12 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName, message string) (*stream.Run, error) {
 	// Save user message
 	userMsg := model.Message{
+		ID:        uuid.NewString(),
 		Role:      model.RoleUser,
 		Content:   message,
 		Timestamp: time.Now(),
 	}
-	if err := h.chatRepo.AppendMessage(project.HostDir, stage, userMsg); err != nil {
+	if err := h.chatRepo.AppendMessage(project.DataDir, stage, userMsg); err != nil {
 		return nil, fmt.Errorf("failed to save message: %w", err)
 	}
 
@@ -404,7 +464,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		if s == stage {
 			break
 		}
-		content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, s)
+		content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, s)
 		if content != "" {
 			previousArtifacts[s] = content
 		}
@@ -412,20 +472,20 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 
 	var frameworkCfg *model.FrameworkConfig
 	if stage == model.StageUX {
-		frameworkCfg, _ = fsrepo.ReadFramework(project.HostDir)
+		frameworkCfg, _ = fsrepo.ReadFramework(project.DataDir)
 	}
 
 	// Build enhancement context if this is an enhancement iteration
 	var enhCtx *agent.EnhancementContext
 	if project.EnhancementVision != "" {
 		enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+		summaryPath := filepath.Join(project.DataDir, "summary.md")
 		if data, err := os.ReadFile(summaryPath); err == nil {
 			enhCtx.Summary = string(data)
 		}
-		prevVersion := findPriorIterationVersion(project.HostDir)
+		prevVersion := findPriorDataVersion(project.DataDir)
 		if prevVersion != "" {
-			priorArtifactPath := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
+			priorArtifactPath := filepath.Join(project.HostDir, "docs", prevVersion, string(stage), string(stage)+".md")
 			if data, err := os.ReadFile(priorArtifactPath); err == nil {
 				enhCtx.PriorArtifact = string(data)
 			}
@@ -437,7 +497,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	systemPrompt := agent.GetSystemPromptWithRAG(stage, project.Version, previousArtifacts, frameworkCfg, ragContext, enhCtx)
 
 	// Get chat history for context
-	history, err := h.chatRepo.GetHistory(project.HostDir, stage)
+	history, err := h.chatRepo.GetHistory(project.DataDir, stage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chat history: %w", err)
 	}
@@ -451,7 +511,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
+	writeActivity(h.activityRepo, project.DataDir, stage, "chat")
 	runLogID := startRunLog(h.logBase, project, stage, "chat")
 
 	// Resolve the LLM provider for this stage. UX chat uses "ux.chat" operation key.
@@ -467,9 +527,19 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
-		clearActivity(h.activityRepo, project.HostDir, stage)
+		clearActivity(h.activityRepo, project.DataDir, stage)
 		run.Finish(h.runs)
 		return run, nil
+	}
+
+	history = h.applyContextStrategy(project.DataDir, project.HostDir, project.Version, stage, history, resolveNumCtx(sa, modelID))
+	// Capture trimmed history for the prompt snapshot (closed over in goroutine).
+	historyForPrompt := history
+
+	// Extract connection ID for the prompt snapshot.
+	var connID string
+	if sa != nil {
+		connID = sa.ConnectionID
 	}
 
 	// Start LLM streaming via the resolved provider (survives client disconnect).
@@ -488,7 +558,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	if chatErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, chatErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
-		clearActivity(h.activityRepo, project.HostDir, stage)
+		clearActivity(h.activityRepo, project.DataDir, stage)
 		run.Finish(h.runs)
 		return run, nil
 	}
@@ -497,7 +567,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	// LIFO defer order: token tracking (1st) → run log (2nd) → clearActivity → run.Finish
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, stage)
+		defer clearActivity(h.activityRepo, project.DataDir, stage)
 
 		// Emit RAG source references before the first LLM chunk so the
 		// frontend can display them immediately.
@@ -516,14 +586,14 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
-				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, stage, "chat"), stageTokensAccum, "")
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.DataDir, project.HostDir, stage, "chat"), stageTokensAccum, "")
 			}
 		}()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(stage, stageTokensAccum)
 				h.registry.Update(project)
-				recordSession(project.HostDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
+				recordSession(project.DataDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
 			}
 		}()
 
@@ -543,7 +613,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 				}
 				// Extract and save artifact if present
 				if artifact, found := agent.ExtractArtifact(fullContent); found {
-					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
+					if err := h.artifactRepo.Write(project.DataDir, stage, artifact); err != nil {
 						rlErr = "failed to save artifact: " + err.Error()
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
@@ -553,12 +623,34 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 
 				// Save assistant response without artifact block
 				chatContent := agent.StripArtifact(fullContent)
+				assistantID := uuid.NewString()
 				assistantMsg := model.Message{
+					ID:        assistantID,
 					Role:      model.RoleAssistant,
 					Content:   chatContent,
 					Timestamp: time.Now(),
 				}
-				h.chatRepo.AppendMessage(project.HostDir, stage, assistantMsg)
+				h.chatRepo.AppendMessage(project.DataDir, stage, assistantMsg)
+
+				// Write full prompt snapshot so the UI can inspect the complete interaction.
+				snapshot := model.PromptSnapshot{
+					MessageID:    assistantID,
+					Stage:        string(stage),
+					Timestamp:    time.Now(),
+					Model:        modelID,
+					ConnectionID: connID,
+					SystemPrompt: systemPrompt,
+					RAGContext:   ragContext,
+					RAGSources:   ragSources,
+					History:      historyForPrompt,
+					UserMessage:  message,
+					RawResponse:  fullContent,
+				}
+				if fname, err := fsrepo.WriteRunPromptLog(h.logBase, project.Name, runLogID, snapshot); err == nil {
+					attachPromptLog(h.logBase, project.Name, runLogID, fname)
+				} else {
+					log.Printf("runlog: write prompt snapshot %s: %v", runLogID, err)
+				}
 
 				run.Emit(agent.StreamEvent{Type: "done", Content: chatContent})
 			} else {
@@ -579,22 +671,33 @@ func sseWrite(w http.ResponseWriter, flusher http.Flusher, event agent.StreamEve
 	flusher.Flush()
 }
 
-// findPriorIterationVersion finds the most recent archived iteration version.
-func findPriorIterationVersion(hostDir string) string {
-	iterDir := filepath.Join(hostDir, ".paulette", "iterations")
-	entries, err := os.ReadDir(iterDir)
+// findPriorDataVersion finds the most recent sibling version directory in the
+// working-state tree. dataDir is `{dataPath}/{id}/default/{version}`; we walk
+// up to `{dataPath}/{id}/default/` and return the highest semver sibling that
+// sorts below the current version.
+func findPriorDataVersion(dataDir string) string {
+	current := filepath.Base(dataDir)
+	parent := filepath.Dir(dataDir)
+	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return ""
 	}
 	var versions []string
 	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "v") {
-			versions = append(versions, e.Name()[1:]) // strip "v" prefix
+		if e.IsDir() && e.Name() != current {
+			versions = append(versions, e.Name())
 		}
 	}
 	if len(versions) == 0 {
 		return ""
 	}
 	sort.Strings(versions)
-	return versions[len(versions)-1]
+	// Return the highest version that is less than current
+	result := ""
+	for _, v := range versions {
+		if v < current {
+			result = v
+		}
+	}
+	return result
 }

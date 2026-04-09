@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -24,14 +23,16 @@ type EnhanceHandler struct {
 	projectRepo  repository.ProjectRepo
 	artifactRepo repository.ArtifactRepo
 	git          *git.Service
+	dataPath     string
 }
 
-func NewEnhanceHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service) *EnhanceHandler {
+func NewEnhanceHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service, dataPath string) *EnhanceHandler {
 	return &EnhanceHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
 		artifactRepo: artifactRepo,
 		git:          gitSvc,
+		dataPath:     dataPath,
 	}
 }
 
@@ -91,14 +92,9 @@ func (h *EnhanceHandler) EnhanceInternal(projectID, vision, versionBump string) 
 		return nil, fmt.Errorf("project must be at complete stage to enhance")
 	}
 
-	summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+	summaryPath := filepath.Join(project.DataDir, "summary.md")
 	if _, err := os.Stat(summaryPath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("summary.md not found — complete the pipeline first")
-	}
-
-	archiveDir := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+project.Version)
-	if err := archiveIteration(project.HostDir, archiveDir); err != nil {
-		return nil, fmt.Errorf("failed to archive iteration: %w", err)
 	}
 
 	newVersion, err := bumpVersion(project.Version, versionBump)
@@ -106,24 +102,16 @@ func (h *EnhanceHandler) EnhanceInternal(projectID, vision, versionBump string) 
 		return nil, fmt.Errorf("failed to bump version: %w", err)
 	}
 
-	for _, s := range pipeline.StageOrder {
-		if s == model.StageComplete {
-			break
-		}
-		stageDir := filepath.Join(project.HostDir, ".paulette", string(s))
-		os.Remove(filepath.Join(stageDir, "chat-history.json"))
-		os.Remove(filepath.Join(stageDir, string(s)+".md"))
-		if s == model.StageUX {
-			os.Remove(filepath.Join(stageDir, "mock.html"))
-			os.Remove(filepath.Join(stageDir, "framework.json"))
-		}
-		if s == model.StageBuild {
-			os.Remove(filepath.Join(stageDir, "beads-graph.json"))
-		}
+	// Version isolation is now implicit: the old DataDir stays as the archive.
+	// Create a fresh DataDir for the new version.
+	newDataDir := model.ComputeDataDir(h.dataPath, project.ID, newVersion)
+	if err := h.projectRepo.Init(newDataDir); err != nil {
+		return nil, fmt.Errorf("failed to init new data dir: %w", err)
 	}
 
 	project.CurrentStage = model.StageVision
 	project.Version = newVersion
+	project.DataDir = newDataDir
 	project.Iteration++
 	project.EnhancementVision = vision
 	project.SummaryReady = false
@@ -133,7 +121,7 @@ func (h *EnhanceHandler) EnhanceInternal(projectID, vision, versionBump string) 
 	if err := h.registry.Update(project); err != nil {
 		return nil, fmt.Errorf("failed to update registry: %w", err)
 	}
-	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
+	if err := h.projectRepo.Save(project.DataDir, project); err != nil {
 		return nil, fmt.Errorf("failed to save project: %w", err)
 	}
 
@@ -153,52 +141,6 @@ func (h *EnhanceHandler) EnhanceInternal(projectID, vision, versionBump string) 
 	}
 
 	return project, nil
-}
-
-// archiveIteration copies current artifacts and summary to the archive directory.
-func archiveIteration(hostDir, archiveDir string) error {
-	if err := os.MkdirAll(archiveDir, 0755); err != nil {
-		return fmt.Errorf("create archive dir: %w", err)
-	}
-
-	factoryBase := filepath.Join(hostDir, ".paulette")
-
-	// Copy summary.md
-	summaryPath := filepath.Join(factoryBase, "summary.md")
-	if data, err := os.ReadFile(summaryPath); err == nil {
-		os.WriteFile(filepath.Join(archiveDir, "summary.md"), data, 0644)
-	}
-
-	// Copy stage artifacts
-	stages := []string{"vision", "ux", "architecture", "build"}
-	for _, stage := range stages {
-		srcDir := filepath.Join(factoryBase, stage)
-		dstDir := filepath.Join(archiveDir, stage)
-		if err := copyDir(srcDir, dstDir); err != nil {
-			return fmt.Errorf("archive %s: %w", stage, err)
-		}
-	}
-
-	return nil
-}
-
-// copyDir copies a directory tree.
-func copyDir(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0755)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, 0644)
-	})
 }
 
 // bumpVersion increments a semver string.

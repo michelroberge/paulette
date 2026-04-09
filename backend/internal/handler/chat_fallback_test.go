@@ -35,7 +35,7 @@ type nopArtifactRepo struct{}
 func (r *nopArtifactRepo) Read(hostDir string, stage model.StageName) (string, error) {
 	return "", nil
 }
-func (r *nopArtifactRepo) ReadWithFallback(hostDir, version string, stage model.StageName) (string, error) {
+func (r *nopArtifactRepo) ReadWithFallback(dataDir, hostDir, version string, stage model.StageName) (string, error) {
 	return "", nil
 }
 func (r *nopArtifactRepo) Write(hostDir string, stage model.StageName, content string) error {

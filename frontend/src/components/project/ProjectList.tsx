@@ -450,8 +450,8 @@ export function ProjectList({ onSelect, onConfigure }: Props) {
         <div className="modal-overlay" onClick={() => setConfirmDelete(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h2>Delete Project</h2>
-            <p style={{ color: '#94a3b8', marginBottom: '1.5rem' }}>
-              This removes the project from the registry. The host directory is not deleted.
+            <p style={{ color: '#f87171', marginBottom: '1.5rem' }}>
+              Warning: this will permanently delete the project directory from disk. This action cannot be undone.
             </p>
             <div className="form-actions">
               <button onClick={() => setConfirmDelete(null)}>Cancel</button>

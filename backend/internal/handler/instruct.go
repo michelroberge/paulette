@@ -111,8 +111,8 @@ func (h *InstructHandler) Plan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load context: build plan, architecture, current bead graph
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
-	archContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
+	archContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageArchitecture)
 
 	graph, _ := fsrepo.ReadBdBeadGraph(r.Context(), project.HostDir)
 	var graphJSON string
@@ -202,9 +202,9 @@ func (h *InstructHandler) Apply(w http.ResponseWriter, r *http.Request) {
 
 	// Apply build plan changes
 	if strings.TrimSpace(plan.BuildPlanChanges) != "" {
-		existing, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+		existing, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 		updated := appendInstructionSection(existing, plan.BuildPlanChanges)
-		if wErr := h.artifactRepo.Write(project.HostDir, model.StageBuild, updated); wErr != nil {
+		if wErr := h.artifactRepo.Write(project.DataDir, model.StageBuild, updated); wErr != nil {
 			http.Error(w, "failed to update build plan: "+wErr.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -212,9 +212,9 @@ func (h *InstructHandler) Apply(w http.ResponseWriter, r *http.Request) {
 
 	// Apply architecture changes
 	if strings.TrimSpace(plan.ArchitectureChanges) != "" {
-		existing, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
+		existing, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageArchitecture)
 		updated := appendInstructionSection(existing, plan.ArchitectureChanges)
-		if wErr := h.artifactRepo.Write(project.HostDir, model.StageArchitecture, updated); wErr != nil {
+		if wErr := h.artifactRepo.Write(project.DataDir, model.StageArchitecture, updated); wErr != nil {
 			http.Error(w, "failed to update architecture: "+wErr.Error(), http.StatusInternalServerError)
 			return
 		}

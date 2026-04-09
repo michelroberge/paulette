@@ -53,6 +53,68 @@ func TestStripThinkBlocks_multipleBlocks(t *testing.T) {
 	}
 }
 
+func TestParseResponse_smallModelInlineArtifactAbuse(t *testing.T) {
+	// llama3.2:1b uses <artifact> as an inline prose marker with no closing tag
+	// and no <!-- RESPONSE:START --> envelope. The parser must NOT enter XML mode
+	// and must NOT extract a mid-document fragment as the artifact.
+	input := "Vision Artifact\nProxy Code\nModel Request Handler\n" +
+		"Catch incoming requests from Ollama\n\n" +
+		"const handler = async (event) => { return event; };\n\n" +
+		"<artifact> ## UI (Web) Development\n" +
+		"Create a web application to view and filter logs.\n\n" +
+		"<artifact> ## Next Steps\n" +
+		"Implement the proxy code in your preferred language.\n" +
+		"<!-- RESPONSE:END -->"
+
+	parsed := ParseResponse(input)
+
+	// The artifact must not start with "## UI" — that would mean mid-document extraction.
+	if parsed.Artifact != "" && len(parsed.Artifact) > 0 {
+		if len(parsed.Artifact) >= 5 && parsed.Artifact[:5] == "## UI" {
+			t.Errorf("artifact starts mid-document with %q; inline <artifact> tag incorrectly triggered XML mode", parsed.Artifact[:40])
+		}
+	}
+}
+
+func TestParseResponse_tokenTruncatedWithEnvelope(t *testing.T) {
+	// Models that hit token limits may output the envelope start + <artifact> but
+	// never reach </artifact>. extractBetween handles this — must keep working.
+	input := "<!-- RESPONSE:START -->\n<discussion>Here you go.</discussion>\n<artifact>\n# My Doc\nContent here that was cut off..."
+	parsed := ParseResponse(input)
+	if parsed.Discussion != "Here you go." {
+		t.Errorf("discussion: got %q, want %q", parsed.Discussion, "Here you go.")
+	}
+	if len(parsed.Artifact) == 0 || parsed.Artifact[:8] != "# My Doc" {
+		t.Errorf("artifact: got %q, want to start with %q", parsed.Artifact, "# My Doc")
+	}
+}
+
+func TestParseResponse_smallModelProperXMLNoEnvelope(t *testing.T) {
+	// A small model that uses proper paired tags but omits <!-- RESPONSE:START -->.
+	// properPairedTags condition must pick this up.
+	input := "<discussion>Done.</discussion>\n<artifact>\n# Plan\nBody text here.\n</artifact>"
+	parsed := ParseResponse(input)
+	if parsed.Discussion != "Done." {
+		t.Errorf("discussion: got %q, want %q", parsed.Discussion, "Done.")
+	}
+	if len(parsed.Artifact) == 0 || parsed.Artifact[:6] != "# Plan" {
+		t.Errorf("artifact: got %q, want to start with %q", parsed.Artifact, "# Plan")
+	}
+}
+
+func TestParseResponse_fullProperResponse(t *testing.T) {
+	// Full well-formed response — regression guard.
+	input := "<!-- RESPONSE:START -->\n<discussion>All done.</discussion>\n<artifact>\n# Result\nBody.\n</artifact>\n<!-- RESPONSE:END -->"
+	parsed := ParseResponse(input)
+	if parsed.Discussion != "All done." {
+		t.Errorf("discussion: got %q, want %q", parsed.Discussion, "All done.")
+	}
+	want := "# Result\nBody."
+	if parsed.Artifact != want {
+		t.Errorf("artifact: got %q, want %q", parsed.Artifact, want)
+	}
+}
+
 func TestParseResponse_jsonplanOnly(t *testing.T) {
 	// Qwen3 and similar models may output <jsonplan> without <discussion> or <artifact>.
 	input := `<think>Let me plan the screens...</think>

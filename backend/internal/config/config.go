@@ -32,7 +32,8 @@ type RAGConfig struct {
 type Config struct {
 	Port         int
 	RegistryPath string
-	ReposPath    string
+	GitPath      string // where git repos live (~/.paulette/git by default)
+	DataPath     string // where paulette working state lives (~/.paulette/repos); derived from RegistryPath
 	ClaudePath   string
 	Version      string
 	Author       string
@@ -42,7 +43,8 @@ type Config struct {
 
 // Settings represents user-persisted configuration saved by "paulette init".
 type Settings struct {
-	ReposPath  string `json:"reposPath,omitempty"`
+	GitPath    string `json:"gitPath,omitempty"`
+	ReposPath  string `json:"reposPath,omitempty"` // deprecated: read as fallback for GitPath
 	ClaudePath string `json:"claudePath,omitempty"`
 }
 
@@ -90,14 +92,20 @@ func Load() *Config {
 		registryPath = filepath.Join(home, ".paulette")
 	}
 
-	// Priority: env var > settings.json > default
-	reposPath := os.Getenv("REPOS_PATH")
-	if reposPath == "" {
-		reposPath = settings.ReposPath
+	// Priority: GIT_PATH env var > settings.json gitPath > settings.json reposPath (deprecated) > default
+	gitPath := os.Getenv("GIT_PATH")
+	if gitPath == "" {
+		gitPath = settings.GitPath
 	}
-	if reposPath == "" {
-		reposPath = filepath.Join(home, ".paulette", "repos")
+	if gitPath == "" {
+		gitPath = settings.ReposPath // deprecated fallback
 	}
+	if gitPath == "" {
+		gitPath = filepath.Join(home, ".paulette", "git")
+	}
+
+	// DataPath is always derived from registryPath — not user-configurable.
+	dataPath := filepath.Join(registryPath, "repos")
 
 	// Priority: env var > settings.json > default ("claude")
 	claudePath := os.Getenv("CLAUDE_PATH")
@@ -107,8 +115,6 @@ func Load() *Config {
 	if claudePath == "" {
 		claudePath = "claude"
 	}
-
-	version, author := loadProjectMeta()
 
 	oidcEnabled := os.Getenv("OIDC_ENABLED") == "true"
 	oidcScopes := strings.Fields(os.Getenv("OIDC_SCOPES"))
@@ -129,10 +135,9 @@ func Load() *Config {
 	return &Config{
 		Port:         port,
 		RegistryPath: registryPath,
-		ReposPath:    reposPath,
+		GitPath:      gitPath,
+		DataPath:     dataPath,
 		ClaudePath:   claudePath,
-		Version:      version,
-		Author:       author,
 		RAG: RAGConfig{
 			Enabled: ragEnabled,
 			BaseURL: ragBaseURL,
@@ -147,23 +152,4 @@ func Load() *Config {
 			SessionSecret: sessionSecret,
 		},
 	}
-}
-
-func loadProjectMeta() (version, author string) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", ""
-	}
-	data, err := os.ReadFile(filepath.Join(cwd, ".paulette", "project.json"))
-	if err != nil {
-		return "", ""
-	}
-	var meta struct {
-		Version string `json:"version"`
-		Author  string `json:"author"`
-	}
-	if json.Unmarshal(data, &meta) != nil {
-		return "", ""
-	}
-	return meta.Version, meta.Author
 }

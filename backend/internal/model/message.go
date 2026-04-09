@@ -10,6 +10,7 @@ const (
 )
 
 type Message struct {
+	ID        string      `json:"id,omitempty"`
 	Role      MessageRole `json:"role"`
 	Content   string      `json:"content"`
 	Timestamp time.Time   `json:"timestamp"`

@@ -89,7 +89,7 @@ func IngestProjectCode(ctx context.Context, client *Client, project *model.Proje
 			Collection: "code",
 			Recursive:  boolPtr(true),
 			ExcludePatterns: []string{
-				"**/.paulette/**",
+				"**/.beads/**",
 				"**/.git/**",
 				"**/node_modules/**",
 				"**/__pycache__/**",
@@ -139,7 +139,7 @@ func IngestBeadCode(ctx context.Context, client *Client, project *model.Project,
 			Recursive:     boolPtr(true),
 			EnableRouting: boolPtr(true),
 			ExcludePatterns: []string{
-				"**/.paulette/**",
+				"**/.beads/**",
 				"**/.git/**",
 				"**/node_modules/**",
 			},

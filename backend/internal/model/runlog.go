@@ -45,4 +45,5 @@ type RunLogEntry struct {
 	TokensTotal  int           `json:"tokensTotal,omitempty"`
 	Notes        string        `json:"notes,omitempty"` // e.g. "3 epics, 12 tasks created"
 	StepLogs     []StepLogRef  `json:"stepLogs,omitempty"`
+	PromptLog    string        `json:"promptLog,omitempty"` // filename within run dir, e.g. "prompt.json"
 }
