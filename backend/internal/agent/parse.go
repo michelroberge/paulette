@@ -106,15 +106,15 @@ func ParseResponse(raw string) ParsedResponse {
 	return ParsedResponse{Discussion: trimmed}
 }
 
-// extractDocumentAfterPreamble detects a short conversational preamble (< 300 chars)
+// extractDocumentAfterPreamble detects a conversational preamble (< 500 chars)
 // followed by a substantial markdown document starting with a heading.
 // Returns (artifact, preamble, true) when found.
 func extractDocumentAfterPreamble(s string) (string, string, bool) {
 	for _, prefix := range []string{"\n# ", "\n## "} {
 		idx := strings.Index(s, prefix)
-		if idx > 0 && idx < 300 {
+		if idx > 0 && idx < 500 {
 			docPart := strings.TrimSpace(s[idx:])
-			if len(docPart) >= 200 {
+			if len(docPart) >= 100 {
 				preamble := strings.TrimSpace(s[:idx])
 				return docPart, preamble, true
 			}
@@ -124,15 +124,20 @@ func extractDocumentAfterPreamble(s string) (string, string, bool) {
 }
 
 // looksLikeDocument reports whether s appears to be a standalone document
-// rather than a conversational reply. The heuristic: the text must be
-// substantial (≥200 bytes) AND must begin with a markdown heading ("# " or "## ").
-// Conversational replies almost never start with a heading; generated documents
-// (vision, UX, architecture, build plans) always do.
+// rather than a conversational reply. Checks: starts with a markdown heading
+// and is substantial (≥100 bytes), OR contains multiple markdown headings
+// indicating structured content regardless of what it starts with.
 func looksLikeDocument(s string) bool {
-	if len(s) < 200 {
+	if len(s) < 100 {
 		return false
 	}
-	return strings.HasPrefix(s, "# ") || strings.HasPrefix(s, "## ")
+	// Starts with heading — classic document pattern
+	if strings.HasPrefix(s, "# ") || strings.HasPrefix(s, "## ") {
+		return true
+	}
+	// Multiple headings indicate structured document even without leading heading
+	headingCount := strings.Count(s, "\n# ") + strings.Count(s, "\n## ") + strings.Count(s, "\n### ")
+	return headingCount >= 2
 }
 
 // parseXMLEnvelope extracts sections from the XML envelope format.

@@ -60,9 +60,17 @@ interface Props {
   onRetry?: () => void;
   /** RAG knowledge sources used for the current/last response. */
   ragSources?: RAGSource[];
+  /**
+   * When provided, shows a "Generate [label]" button above the chat input.
+   * Clicking it sends a directive message asking the LLM to produce the artifact.
+   * Used for UX/Architecture stages to escape the chat loop.
+   */
+  onGenerateArtifact?: () => void;
+  /** Label for the generate button (e.g. "UX Design", "Architecture"). */
+  generateArtifactLabel?: string;
 }
 
-export function ChatPanel({ messages, streaming, streamingContent, onSend, onStop, connectionError, onOpenProjectSettings, onRetry, ragSources }: Props) {
+export function ChatPanel({ messages, streaming, streamingContent, onSend, onStop, connectionError, onOpenProjectSettings, onRetry, ragSources, onGenerateArtifact, generateArtifactLabel }: Props) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const thinkingPhrase = useThinkingPhrase(streaming);
@@ -124,6 +132,18 @@ export function ChatPanel({ messages, streaming, streamingContent, onSend, onSto
       </div>
 
       <form className="chat-input" onSubmit={handleSubmit}>
+        {onGenerateArtifact && messages.length > 1 && !streaming && (
+          <button
+            type="button"
+            onClick={onGenerateArtifact}
+            style={{
+              width: '100%', padding: '0.4rem', marginBottom: '0.4rem',
+              borderRadius: '4px', fontSize: '0.8rem',
+              border: '1px solid #4caf50', background: 'transparent',
+              color: '#4caf50', cursor: 'pointer',
+            }}
+          >Generate {generateArtifactLabel || 'Artifact'}</button>
+        )}
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}

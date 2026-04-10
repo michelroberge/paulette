@@ -719,6 +719,8 @@ function ProjectDetailPage() {
                       onOpenProjectSettings={() => setShowStageSettings(true)}
                       onRetry={resume}
                       ragSources={ragSources}
+                      onGenerateArtifact={selectedStage && ['ux', 'architecture'].includes(selectedStage) ? () => send('Please generate the complete artifact document based on our discussion so far. Wrap it in <artifact> tags.') : undefined}
+                      generateArtifactLabel={selectedStage === 'ux' ? 'UX Design' : selectedStage === 'architecture' ? 'Architecture' : undefined}
                     />
                   )
                 )}
