@@ -2,9 +2,11 @@ package agent
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 )
 
 var systemPrompts = map[model.StageName]string{
@@ -331,35 +333,24 @@ Example task format:
 
 // GetSystemPrompt returns the system prompt for a given stage, injecting previous artifacts and framework config.
 func GetSystemPrompt(stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig, enhancement ...*EnhancementContext) string {
-	return GetSystemPromptWithRAG(stage, version, previousArtifacts, frameworkCfg, "", enhancement...)
+	return GetSystemPromptWithRAG(stage, version, previousArtifacts, frameworkCfg, "", nil, enhancement...)
 }
 
 // GetSystemPromptWithRAG returns the system prompt for a given stage, with
 // optional RAG knowledge context injected between the base prompt and any
 // enhancement context. Pass ragContext="" to get the same result as GetSystemPrompt.
-func GetSystemPromptWithRAG(stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig, ragContext string, enhancement ...*EnhancementContext) string {
-	template, ok := systemPrompts[stage]
-	if !ok {
-		return fmt.Sprintf("You are an AI assistant helping with the %s stage of product development.", stage)
+// When store is non-nil, prompt templates are loaded from the project's
+// .paulette/prompts/ directory instead of the hardcoded defaults.
+func GetSystemPromptWithRAG(stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig, ragContext string, store *promptfiles.PromptStore, enhancement ...*EnhancementContext) string {
+	var prompt string
+
+	if store != nil {
+		prompt = buildPromptFromStore(store, stage, version, previousArtifacts, frameworkCfg)
 	}
 
-	var prompt string
-	switch stage {
-	case model.StageUX:
-		visionArtifact := previousArtifacts[model.StageVision]
-		frameworkNote := buildFrameworkPromptNote(frameworkCfg) + "\n\n" + buildJourneyIDNote(version)
-		prompt = fmt.Sprintf(template, visionArtifact, frameworkNote)
-	case model.StageArchitecture:
-		visionArtifact := previousArtifacts[model.StageVision]
-		uxArtifact := previousArtifacts[model.StageUX] + "\n\n" + buildArchIDNote(version) + "\n\n" + buildValidationCommandsNote()
-		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact)
-	case model.StageBuild:
-		visionArtifact := previousArtifacts[model.StageVision]
-		uxArtifact := previousArtifacts[model.StageUX]
-		archArtifact := previousArtifacts[model.StageArchitecture] + "\n\n" + buildPlanIDNote()
-		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact)
-	default:
-		prompt = template
+	// Fallback to hardcoded prompts if store is nil or returned empty.
+	if prompt == "" {
+		prompt = buildPromptHardcoded(stage, version, previousArtifacts, frameworkCfg)
 	}
 
 	if ragContext != "" {
@@ -367,6 +358,85 @@ func GetSystemPromptWithRAG(stage model.StageName, version string, previousArtif
 	}
 
 	return applyEnhancementContext(stage, prompt, enhancement)
+}
+
+// buildPromptFromStore loads and renders the stage prompt from the PromptStore.
+func buildPromptFromStore(store *promptfiles.PromptStore, stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig) string {
+	tmplName := "stage-" + string(stage) + ".md.tmpl"
+	data := map[string]any{}
+
+	switch stage {
+	case model.StageUX:
+		data["VisionArtifact"] = previousArtifacts[model.StageVision]
+		frameworkNote := renderHelperFromStore(store, "helper-framework-note.md.tmpl", frameworkCfg)
+		journeyNote := renderHelperFromStore(store, "helper-journey-id-note.md.tmpl", map[string]any{"Version": version})
+		data["FrameworkNote"] = frameworkNote + "\n\n" + journeyNote
+	case model.StageArchitecture:
+		data["VisionArtifact"] = previousArtifacts[model.StageVision]
+		archNote := renderHelperFromStore(store, "helper-arch-id-note.md.tmpl", map[string]any{"Version": version})
+		validationNote := renderHelperFromStore(store, "helper-validation-commands.md.tmpl", nil)
+		data["UXArtifact"] = previousArtifacts[model.StageUX] + "\n\n" + archNote + "\n\n" + validationNote
+	case model.StageBuild:
+		data["VisionArtifact"] = previousArtifacts[model.StageVision]
+		data["UXArtifact"] = previousArtifacts[model.StageUX]
+		planNote := renderHelperFromStore(store, "helper-plan-id-note.md.tmpl", nil)
+		data["ArchArtifact"] = previousArtifacts[model.StageArchitecture] + "\n\n" + planNote
+	}
+
+	result, err := store.Render(tmplName, data)
+	if err != nil {
+		log.Printf("promptfiles: failed to render %s, falling back to hardcoded: %v", tmplName, err)
+		return ""
+	}
+	return result
+}
+
+// renderHelperFromStore renders a helper template; falls back gracefully.
+func renderHelperFromStore(store *promptfiles.PromptStore, name string, dataOrCfg any) string {
+	var data map[string]any
+	switch v := dataOrCfg.(type) {
+	case map[string]any:
+		data = v
+	case *model.FrameworkConfig:
+		data = map[string]any{}
+		if v != nil {
+			data["FrameworkName"] = frameworkDisplayName(v)
+		}
+	default:
+		data = nil
+	}
+	result, err := store.Render(name, data)
+	if err != nil {
+		log.Printf("promptfiles: failed to render helper %s: %v", name, err)
+		return ""
+	}
+	return result
+}
+
+// buildPromptHardcoded is the original prompt builder using hardcoded templates.
+func buildPromptHardcoded(stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig) string {
+	template, ok := systemPrompts[stage]
+	if !ok {
+		return fmt.Sprintf("You are an AI assistant helping with the %s stage of product development.", stage)
+	}
+
+	switch stage {
+	case model.StageUX:
+		visionArtifact := previousArtifacts[model.StageVision]
+		frameworkNote := buildFrameworkPromptNote(frameworkCfg) + "\n\n" + buildJourneyIDNote(version)
+		return fmt.Sprintf(template, visionArtifact, frameworkNote)
+	case model.StageArchitecture:
+		visionArtifact := previousArtifacts[model.StageVision]
+		uxArtifact := previousArtifacts[model.StageUX] + "\n\n" + buildArchIDNote(version) + "\n\n" + buildValidationCommandsNote()
+		return fmt.Sprintf(template, visionArtifact, uxArtifact)
+	case model.StageBuild:
+		visionArtifact := previousArtifacts[model.StageVision]
+		uxArtifact := previousArtifacts[model.StageUX]
+		archArtifact := previousArtifacts[model.StageArchitecture] + "\n\n" + buildPlanIDNote()
+		return fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact)
+	default:
+		return template
+	}
 }
 
 // TruncateArtifact reduces an artifact to fit within a rough token budget by

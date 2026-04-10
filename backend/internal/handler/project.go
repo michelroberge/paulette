@@ -14,6 +14,7 @@ import (
 
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 )
 
@@ -30,10 +31,11 @@ type ProjectHandler struct {
 	git          *git.Service
 	gitPath      string // where git repos are created by default
 	dataPath     string // root for Paulette working-state directories
+	ragEnabled   bool   // whether RAG is configured in .env
 	orchestrator OrchestratorI // may be nil before wired
 }
 
-func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service, gitPath, dataPath string) *ProjectHandler {
+func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service, gitPath, dataPath string, ragEnabled bool) *ProjectHandler {
 	return &ProjectHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
@@ -41,6 +43,7 @@ func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.
 		git:          gitSvc,
 		gitPath:      gitPath,
 		dataPath:     dataPath,
+		ragEnabled:   ragEnabled,
 	}
 }
 
@@ -112,6 +115,11 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 			log.Printf("bd init failed in %s: %v: %s", req.HostDir, err, out)
 		}
 	}
+	// Initialize prompt templates in the target repo (Files mode is the default).
+	if err := promptfiles.New(req.HostDir).Init(); err != nil {
+		log.Printf("warning: failed to init prompt templates in %s: %v", req.HostDir, err)
+	}
+
 	// Initialize working-state directory structure
 	if err := h.projectRepo.Init(dataDir); err != nil {
 		http.Error(w, "failed to init project directory: "+err.Error(), http.StatusInternalServerError)
@@ -166,6 +174,7 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 type patchProjectRequest struct {
 	Autonomous *bool   `json:"autonomous"`
 	BaseBranch *string `json:"baseBranch"`
+	AIMode     *string `json:"aiMode"`
 }
 
 func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
@@ -184,6 +193,23 @@ func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
 
 	if req.BaseBranch != nil {
 		project.BaseBranch = *req.BaseBranch
+	}
+
+	if req.AIMode != nil {
+		mode := model.AIMode(*req.AIMode)
+		switch mode {
+		case model.AIModeFiles:
+			project.AIMode = mode
+		case model.AIModeRAG:
+			if !h.ragEnabled {
+				http.Error(w, "RAG is not enabled on this server", http.StatusBadRequest)
+				return
+			}
+			project.AIMode = mode
+		default:
+			http.Error(w, "invalid aiMode: must be \"files\" or \"rag\"", http.StatusBadRequest)
+			return
+		}
 	}
 
 	if req.Autonomous != nil {

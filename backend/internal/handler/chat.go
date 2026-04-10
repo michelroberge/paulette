@@ -47,6 +47,7 @@ type ChatHandler struct {
 	connStore        *provider.ConnectionStore
 	ragClient        *rag.Client
 	logBase          string
+	regPath          string // ~/.paulette — for connection prompt resolution
 }
 
 // NewChatHandler creates a ChatHandler. providerRegistry, stageConfig,
@@ -63,6 +64,7 @@ func NewChatHandler(
 	connStore *provider.ConnectionStore,
 	ragClient *rag.Client,
 	logBase string,
+	regPath string,
 ) *ChatHandler {
 	return &ChatHandler{
 		registry:         registry,
@@ -75,6 +77,7 @@ func NewChatHandler(
 		connStore:        connStore,
 		ragClient:        ragClient,
 		logBase:          logBase,
+		regPath:          regPath,
 	}
 }
 
@@ -340,18 +343,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 		}
 	}
 
-	// Retrieve RAG context (non-blocking, 3s timeout).
-	ragContext, _ := h.fetchRAGContext(stage, message, project.Name)
-	systemPrompt := agent.GetSystemPromptWithRAG(stage, project.Version, previousArtifacts, frameworkCfg, ragContext, enhCtx)
-
-	run := h.runs.Start(project.ID, string(stage), "chat")
-	if run == nil {
-		return nil, nil // race
-	}
-	writeActivity(h.activityRepo, project.DataDir, stage, "chat")
-
-	// Resolve the LLM provider for this stage. For UX we use the operation-specific
-	// "ux.chat" key so mock generation can use a different connection if configured.
+	// Resolve the LLM provider for this stage first (needed for connection-aware prompts).
 	var prov provider.Provider
 	var modelID string
 	var sa *provider.StageAssignment
@@ -361,6 +353,28 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 	} else {
 		prov, modelID, sa, provErr = h.resolveProvider(project.ID, project.HostDir, stage)
 	}
+
+	// Retrieve RAG context (non-blocking, 3s timeout).
+	ragContext, _ := h.fetchRAGContext(stage, message, project.Name)
+	connID := ""
+	if sa != nil {
+		connID = sa.ConnectionID
+	}
+	store := promptStoreWithConnection(project, connID, h.regPath)
+
+	// Synthesize upstream artifacts for architecture/build stages.
+	if prov != nil {
+		applySynthesis(context.Background(), stage, project, previousArtifacts, prov, modelID, sa, store)
+	}
+
+	systemPrompt := agent.GetSystemPromptWithRAG(stage, project.Version, previousArtifacts, frameworkCfg, ragContext, store, enhCtx)
+
+	run := h.runs.Start(project.ID, string(stage), "chat")
+	if run == nil {
+		return nil, nil // race
+	}
+	writeActivity(h.activityRepo, project.DataDir, stage, "chat")
+
 	if provErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
 		clearActivity(h.activityRepo, project.DataDir, stage)
@@ -492,9 +506,31 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		}
 	}
 
+	// Resolve the LLM provider for this stage first (needed for connection-aware prompts).
+	var prov provider.Provider
+	var modelID string
+	var sa *provider.StageAssignment
+	var provErr error
+	if stage == model.StageUX {
+		prov, modelID, sa, provErr = h.resolveProviderOp(project.ID, project.HostDir, stage, provider.OperationUXChat)
+	} else {
+		prov, modelID, sa, provErr = h.resolveProvider(project.ID, project.HostDir, stage)
+	}
+
 	// Retrieve RAG context (non-blocking, 3s timeout).
 	ragContext, ragSources := h.fetchRAGContext(stage, message, project.Name)
-	systemPrompt := agent.GetSystemPromptWithRAG(stage, project.Version, previousArtifacts, frameworkCfg, ragContext, enhCtx)
+	connID2 := ""
+	if sa != nil {
+		connID2 = sa.ConnectionID
+	}
+	store := promptStoreWithConnection(project, connID2, h.regPath)
+
+	// Synthesize upstream artifacts for architecture/build stages.
+	if prov != nil {
+		applySynthesis(context.Background(), stage, project, previousArtifacts, prov, modelID, sa, store)
+	}
+
+	systemPrompt := agent.GetSystemPromptWithRAG(stage, project.Version, previousArtifacts, frameworkCfg, ragContext, store, enhCtx)
 
 	// Get chat history for context
 	history, err := h.chatRepo.GetHistory(project.DataDir, stage)
@@ -514,16 +550,6 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	writeActivity(h.activityRepo, project.DataDir, stage, "chat")
 	runLogID := startRunLog(h.logBase, project, stage, "chat")
 
-	// Resolve the LLM provider for this stage. UX chat uses "ux.chat" operation key.
-	var prov provider.Provider
-	var modelID string
-	var sa *provider.StageAssignment
-	var provErr error
-	if stage == model.StageUX {
-		prov, modelID, sa, provErr = h.resolveProviderOp(project.ID, project.HostDir, stage, provider.OperationUXChat)
-	} else {
-		prov, modelID, sa, provErr = h.resolveProvider(project.ID, project.HostDir, stage)
-	}
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))

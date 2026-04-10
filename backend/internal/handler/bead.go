@@ -22,6 +22,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/rag"
 	"github.com/michelroberge/paulette/backend/internal/repository"
@@ -322,7 +323,7 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 		_, saNumCtx, saStream := sa.Fields()
 		events, err := prov.Chat(ctx, provider.ChatRequest{
 			Model:        modelID,
-			SystemPrompt: agent.ParseBuildPlanSystemPrompt,
+			SystemPrompt: agent.GetParseBuildPlanPrompt(promptStoreForProject(project)),
 			UserMessage:  parseBuildPlanPrompt.String(),
 			ProjectDir:   project.HostDir,
 			Stage:        string(model.StageBuild),
@@ -766,7 +767,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						return
 					}
 				}
-				agentEvents, err := dispatchExecuteBead(beadCtx, prov, modelID, sa, project.HostDir, currentBead, artifacts, enhCtx)
+				agentEvents, err := dispatchExecuteBead(beadCtx, prov, modelID, sa, project.HostDir, currentBead, artifacts, enhCtx, promptStoreForProject(project))
 				if err != nil {
 					run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] execute failed: %v", currentBead.ID, err)})
 					return
@@ -808,7 +809,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 😈 Devil's advocate reviewing (attempt %d/%d)...", currentBead.ID, iteration+1, maxReviewIterations)})
 
 					siblings, openBeads := reviewContext(ctx, project.HostDir, currentBead)
-					findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, reviewProv, reviewModelID, reviewSA, project.HostDir, currentBead, artifacts, siblings, openBeads, enhCtx)
+					findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, reviewProv, reviewModelID, reviewSA, project.HostDir, currentBead, artifacts, siblings, openBeads, enhCtx, promptStoreForProject(project))
 					if reviewTokens > 0 {
 						currentBead.Tokens += reviewTokens
 						totalBuildTokens.Add(int64(reviewTokens))
@@ -910,7 +911,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Starting correction: %s", corrID, corrTitle)})
 
-					corrEvents, err := dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, corrBead, artifacts, enhCtx)
+					corrEvents, err := dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, corrBead, artifacts, enhCtx, promptStoreForProject(project))
 					if err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] correction execute failed: %v", corrID, err)})
 						return
@@ -995,7 +996,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				run.Emit(agent.StreamEvent{Type: "error", Content: "Fix bead resolve provider failed: " + fixProvErr.Error()})
 				break
 			}
-			fixEvents, err := dispatchExecuteBead(ctx, fixProv, fixModelID, fixSA, project.HostDir, fixBead, artifacts, enhCtx)
+			fixEvents, err := dispatchExecuteBead(ctx, fixProv, fixModelID, fixSA, project.HostDir, fixBead, artifacts, enhCtx, promptStoreForProject(project))
 				if err != nil {
 					run.Emit(agent.StreamEvent{Type: "error", Content: "Fix bead execution failed: " + err.Error()})
 					break
@@ -1037,9 +1038,10 @@ func dispatchExecuteBead(
 	bead model.Bead,
 	artifacts map[model.StageName]string,
 	enhCtx *agent.EnhancementContext,
+	store *promptfiles.PromptStore,
 ) (<-chan agent.StreamEvent, error) {
 	if _, ok := prov.(*provider.ClaudeCLIProvider); ok {
-		return agent.ExecuteBead(ctx, projectDir, bead, artifacts, enhCtx)
+		return agent.ExecuteBead(ctx, projectDir, bead, artifacts, store, enhCtx)
 	}
 	// Ollama models lack reliable multi-step tool use; use the multi-level
 	// non-agentic orchestration path (file planner → per-file generator → write).
@@ -1047,7 +1049,7 @@ func dispatchExecuteBead(
 		return dispatchExecuteBeadOrchestrated(ctx, prov, modelID, sa, projectDir, bead, artifacts, enhCtx)
 	}
 	// Build system + user prompts for non-CLI providers.
-	systemPrompt, userMsg := agent.BuildExecuteBeadRequest(ctx, projectDir, bead, artifacts, enhCtx)
+	systemPrompt, userMsg := agent.BuildExecuteBeadRequest(ctx, projectDir, bead, artifacts, enhCtx, store)
 	return prov.ExecuteAgent(ctx, provider.AgentRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
@@ -1069,9 +1071,10 @@ func dispatchReviewBead(
 	siblings []model.Bead,
 	openBeads []model.Bead,
 	enhCtx *agent.EnhancementContext,
+	store *promptfiles.PromptStore,
 ) (string, int, error) {
 	if _, ok := prov.(*provider.ClaudeCLIProvider); ok {
-		return agent.ReviewBead(ctx, projectDir, bead, artifacts, siblings, openBeads, enhCtx)
+		return agent.ReviewBead(ctx, projectDir, bead, artifacts, siblings, openBeads, store, enhCtx)
 	}
 
 	// Ollama: use chat-based review with file contents inlined (no tool use).
@@ -1081,7 +1084,7 @@ func dispatchReviewBead(
 	}
 
 	// Other providers: agentic review with Bash-only tools.
-	systemPrompt, userMsg := agent.BuildReviewBeadRequest(projectDir, bead, artifacts, siblings, openBeads, enhCtx)
+	systemPrompt, userMsg := agent.BuildReviewBeadRequest(projectDir, bead, artifacts, siblings, openBeads, enhCtx, store)
 	ch, err := prov.ExecuteAgent(ctx, provider.AgentRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
@@ -1525,7 +1528,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		agentEvents, err := dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, *bead, artifacts, enhCtx)
+		agentEvents, err := dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, *bead, artifacts, enhCtx, promptStoreForProject(project))
 		if err != nil {
 			run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] execute failed: %v", bead.ID, err)})
 			return
@@ -1564,7 +1567,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 			run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 😈 Devil's advocate reviewing (attempt %d/%d)...", bead.ID, iteration+1, maxReviewIterations)})
 
 			siblings, openBeads := reviewContext(ctx, project.HostDir, *bead)
-			findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, reviewProv, reviewModelID, reviewSA, project.HostDir, *bead, artifacts, siblings, openBeads, enhCtx)
+			findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, reviewProv, reviewModelID, reviewSA, project.HostDir, *bead, artifacts, siblings, openBeads, enhCtx, promptStoreForProject(project))
 			if reviewTokens > 0 {
 				bead.Tokens += reviewTokens
 				totalTokens += reviewTokens
@@ -1613,7 +1616,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 
 			// Issues found — re-execute with feedback (simplified: just close and let next cycle handle)
 			run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 🔄 Re-executing with review feedback...", bead.ID)})
-			agentEvents, err = dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, *bead, artifacts, enhCtx)
+			agentEvents, err = dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, *bead, artifacts, enhCtx, promptStoreForProject(project))
 			if err != nil {
 				run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] re-execute failed: %v", bead.ID, err)})
 				return

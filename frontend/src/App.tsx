@@ -21,6 +21,8 @@ import { VersionHistoryView } from './components/layout/VersionHistoryView';
 import { ConfigurePage } from './components/configure/ConfigurePage';
 import { ProjectStageSettings } from './components/configure/ProjectStageSettings';
 import { RunLogView } from './components/RunLogView';
+import { WorkflowPage } from './components/pipeline/WorkflowPage';
+import { ConnectionWorkflowPage } from './components/pipeline/ConnectionWorkflowPage';
 import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
 import { getArtifact } from './api/artifacts';
 import { getMock } from './api/mock';
@@ -450,6 +452,12 @@ function ProjectDetailPage() {
     setProject(updated);
   };
 
+  const handleChangeAIMode = async (mode: 'files' | 'rag') => {
+    if (!project) return;
+    const updated = await patchProject(project.id, { aiMode: mode });
+    setProject(updated);
+  };
+
   // ── Loading / error states ──
 
   if (loadError) {
@@ -502,6 +510,8 @@ function ProjectDetailPage() {
           onShowRunLog={() => setShowRunLog(v => !v)}
           autonomous={!!project.autonomous}
           onToggleAutonomous={handleToggleAutonomous}
+          onChangeAIMode={handleChangeAIMode}
+          onShowWorkflow={() => navigate(`/projects/${project.id}/workflow`)}
           onVersionClick={() => setVersionSelectorOpen(v => !v)}
           viewingVersion={viewingVersion}
         />
@@ -797,6 +807,8 @@ export default function App() {
     <Routes>
       <Route path="/" element={<ProjectListPage />} />
       <Route path="/projects/:id" element={<ProjectDetailPage />} />
+      <Route path="/projects/:id/workflow" element={<WorkflowPage />} />
+      <Route path="/configure/connections/:connId/workflow" element={<ConnectionWorkflowPage />} />
       <Route path="/configure" element={<ConfigurePage />} />
     </Routes>
   );

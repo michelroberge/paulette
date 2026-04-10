@@ -54,6 +54,16 @@ func ComputeDataDir(dataPath, projectID, version string) string {
 	return filepath.Join(dataPath, projectID, "default", version)
 }
 
+// AIMode controls how the project resolves prompt templates.
+type AIMode string
+
+const (
+	// AIModeFiles uses externalized prompt templates from .paulette/prompts/ in the target repo.
+	AIModeFiles AIMode = "files"
+	// AIModeRAG uses the RAG pipeline for context retrieval (requires RAG_ENABLED=true).
+	AIModeRAG AIMode = "rag"
+)
+
 type Project struct {
 	ID                string              `json:"id"`
 	Name              string              `json:"name"`
@@ -69,6 +79,7 @@ type Project struct {
 	SummaryApproved   bool                `json:"summaryApproved,omitempty"`
 	Autonomous        bool                `json:"autonomous"`
 	UseRefinementLoop bool                `json:"useRefinementLoop,omitempty"`
+	AIMode            AIMode              `json:"aiMode,omitempty"`
 	BaseBranch        string              `json:"baseBranch,omitempty"`
 	DevCommands       []string            `json:"devCommands,omitempty"`
 	BuildCommands     []string            `json:"buildCommands,omitempty"`

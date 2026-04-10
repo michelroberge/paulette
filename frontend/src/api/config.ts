@@ -5,6 +5,7 @@ export interface AppConfig {
   version: string;
   author: string;
   oidcEnabled: boolean;
+  ragEnabled: boolean;
 }
 
 export function getConfig(): Promise<AppConfig> {

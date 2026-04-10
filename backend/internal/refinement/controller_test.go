@@ -472,6 +472,55 @@ func TestValidateFacts(t *testing.T) {
 	}
 }
 
+func TestFilterAndRankKeepsUnscoredQuestions(t *testing.T) {
+	// Simulates soft-failure: all questions left at Score=0 (the fixed default).
+	// Previously Score=0.5 was used, which fell below the 0.6 threshold and got filtered.
+	questions := []Question{
+		{ID: "q1", Text: "Question one?", Score: 0},
+		{ID: "q2", Text: "Question two?", Score: 0},
+		{ID: "q3", Text: "Question three?", Score: 0},
+	}
+	result := FilterAndRankQuestions(questions, 0.6)
+	if len(result) != 3 {
+		t.Errorf("expected 3 unscored questions to be kept, got %d", len(result))
+	}
+}
+
+func TestPruneResolvedKeepsUnanswered(t *testing.T) {
+	state := NewLoopState("test", VisionSections, 10)
+	state.Confidence[SectionProblem] = 0.9 // above threshold
+	state.OpenQuestions = []Question{
+		{ID: "q1", Text: "Answered?", Section: SectionProblem, Answered: true},
+		{ID: "q2", Text: "Still open?", Section: SectionProblem, Answered: false},
+	}
+	PruneResolved(state, 0.85)
+	if len(state.OpenQuestions) != 1 {
+		t.Fatalf("expected 1 question after pruning, got %d", len(state.OpenQuestions))
+	}
+	if state.OpenQuestions[0].ID != "q2" {
+		t.Errorf("expected unanswered q2 to survive pruning, got %s", state.OpenQuestions[0].ID)
+	}
+}
+
+func TestParseQuestionScoresCodeFenced(t *testing.T) {
+	// Reproduces the exact failure from run 575fe871: valid scores wrapped in
+	// code fences with extra JSON garbage appended by llama3.2:1b
+	resp := "```\n[\n  {\"relevance\": 0.7, \"novelty\": 0.2, \"impact\": 0.9},\n  {\"relevance\": 0.8, \"novelty\": 0.1, \"impact\": 0.8}\n]\n```\n\n```\n[\n  {\"target_age_range\": \"10-18\"}\n]\n```"
+	scores, err := parseQuestionScores(resp, 2)
+	if err != nil {
+		t.Fatalf("expected successful parse after code fence stripping, got: %v", err)
+	}
+	if len(scores) != 2 {
+		t.Fatalf("expected 2 scores, got %d", len(scores))
+	}
+	if scores[0].Impact != 0.9 {
+		t.Errorf("expected first impact=0.9, got %f", scores[0].Impact)
+	}
+	if scores[1].Relevance != 0.8 {
+		t.Errorf("expected second relevance=0.8, got %f", scores[1].Relevance)
+	}
+}
+
 func TestDeterministicExtractFacts(t *testing.T) {
 	// Bullet list
 	facts := deterministicExtractFacts("- project name\n- current step\n- entity ID")

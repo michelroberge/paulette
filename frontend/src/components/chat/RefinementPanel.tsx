@@ -16,15 +16,12 @@ const ALL_SECTIONS: SectionName[] = [
   'problem', 'users', 'features', 'ux', 'metrics', 'constraints', 'out_of_scope',
 ];
 
+// Only user-facing phases — deterministic phases are filtered from the log.
 const PHASE_ICONS: Record<string, string> = {
   summarize: 'S',
   generate_questions: '?',
   await_answer: 'A',
-  extract_facts: 'F',
-  update_sections: 'U',
-  score_confidence: '%',
-  find_gaps: 'G',
-  critique: 'C',
+  tension_check: 'T',
   synthesize: 'D',
   complete: 'OK',
 };
@@ -291,6 +288,7 @@ export function RefinementPanel({ loop, onSend, onContinue }: Props) {
         display: 'flex', flexDirection: 'column', gap: '6px',
       }}>
         {loop.log.map((entry, i) => {
+          const isLastEntry = i === loop.log.length - 1;
           // User answer bubble
           if (entry.userAnswer) {
             return (
@@ -333,37 +331,70 @@ export function RefinementPanel({ loop, onSend, onContinue }: Props) {
           }
 
           // Status line (non-Q&A phases)
-          return <LogLine key={i} entry={entry} />;
+          return <LogLine key={i} entry={entry} isActive={isLastEntry && loop.isRunning && entry.phase !== 'await_answer'} />;
         })}
 
         {/* Answer input — question is already visible in the log above */}
         {loop.currentQuestion && loop.phase === 'await_answer' && (
-          <div style={{
-            display: 'flex', gap: '0.5rem', marginTop: '4px',
-            padding: '0 0.5rem',
-          }}>
-            <textarea
-              value={answerValue}
-              onChange={e => setAnswerValue(e.target.value)}
-              onKeyDown={e => handleKeyDown(e, handleAnswer)}
-              placeholder="Your answer..."
-              rows={2}
-              style={{
-                flex: 1, padding: '0.5rem', borderRadius: '6px', fontSize: '0.85rem',
-                border: '1px solid var(--accent, #4a9eff)', background: 'var(--bg-input, #1a1a1a)',
-                color: 'var(--text, #e0e0e0)', resize: 'vertical', fontFamily: 'inherit',
-              }}
-            />
-            <button
-              onClick={handleAnswer}
-              disabled={!answerValue.trim()}
-              style={{
-                padding: '0.4rem 0.8rem', borderRadius: '4px', border: 'none', fontSize: '0.8rem',
-                background: answerValue.trim() ? 'var(--accent, #4a9eff)' : '#333',
-                color: '#fff', cursor: answerValue.trim() ? 'pointer' : 'default',
-                alignSelf: 'flex-end',
-              }}
-            >Answer</button>
+          <div style={{ marginTop: '4px', padding: '0 0.5rem' }}>
+            {/* Finish button — visible after first round of questions */}
+            {loop.iteration > 0 && (
+              <button
+                onClick={loop.finish}
+                style={{
+                  padding: '0.4rem 1rem', borderRadius: '4px', fontSize: '0.8rem',
+                  border: '1px solid #4caf50', background: 'transparent',
+                  color: '#4caf50', cursor: 'pointer', alignSelf: 'flex-start',
+                  marginBottom: '4px',
+                }}
+              >Generate vision with current answers</button>
+            )}
+            {/* Score badge */}
+            {loop.currentQuestion.score != null && loop.currentQuestion.score > 0 && (
+              <div style={{
+                fontSize: '0.65rem', color: 'var(--text-secondary, #888)',
+                marginBottom: '4px', display: 'flex', gap: '8px', alignItems: 'center',
+              }}>
+                <span>Score: <strong style={{ color: 'var(--text, #ccc)' }}>
+                  {Math.round(loop.currentQuestion.score * 100)}%
+                </strong></span>
+                {loop.currentQuestion.impact > 0 && <span>Impact: {Math.round(loop.currentQuestion.impact * 100)}%</span>}
+                {loop.currentQuestion.source && <span style={{ fontStyle: 'italic' }}>{loop.currentQuestion.source}</span>}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <textarea
+                value={answerValue}
+                onChange={e => setAnswerValue(e.target.value)}
+                onKeyDown={e => handleKeyDown(e, handleAnswer)}
+                placeholder="Your answer..."
+                rows={2}
+                style={{
+                  flex: 1, padding: '0.5rem', borderRadius: '6px', fontSize: '0.85rem',
+                  border: '1px solid var(--accent, #4a9eff)', background: 'var(--bg-input, #1a1a1a)',
+                  color: 'var(--text, #e0e0e0)', resize: 'vertical', fontFamily: 'inherit',
+                }}
+              />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignSelf: 'flex-end' }}>
+                <button
+                  onClick={handleAnswer}
+                  disabled={!answerValue.trim()}
+                  style={{
+                    padding: '0.4rem 0.8rem', borderRadius: '4px', border: 'none', fontSize: '0.8rem',
+                    background: answerValue.trim() ? 'var(--accent, #4a9eff)' : '#333',
+                    color: '#fff', cursor: answerValue.trim() ? 'pointer' : 'default',
+                  }}
+                >Answer</button>
+                <button
+                  onClick={loop.dismiss}
+                  style={{
+                    padding: '0.3rem 0.8rem', borderRadius: '4px', fontSize: '0.7rem',
+                    border: '1px solid var(--border, #444)', background: 'transparent',
+                    color: 'var(--text-secondary, #888)', cursor: 'pointer',
+                  }}
+                >Dismiss</button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -515,7 +546,7 @@ export function RefinementPanel({ loop, onSend, onContinue }: Props) {
   );
 }
 
-function LogLine({ entry }: { entry: LogEntry }) {
+function LogLine({ entry, isActive = false }: { entry: LogEntry; isActive?: boolean }) {
   const icon = PHASE_ICONS[entry.phase] || '>';
   const isQuestion = entry.phase === 'await_answer' && entry.question;
 
@@ -531,6 +562,7 @@ function LogLine({ entry }: { entry: LogEntry }) {
         fontSize: '0.6rem', fontWeight: 700, marginTop: '1px',
         background: isQuestion ? 'var(--accent, #4a9eff)' : 'var(--bg-input, #2a2a2a)',
         color: isQuestion ? '#fff' : 'var(--text-secondary, #888)',
+        animation: isActive ? 'pulse 1.5s ease infinite' : undefined,
       }}>
         {icon}
       </span>
@@ -539,6 +571,13 @@ function LogLine({ entry }: { entry: LogEntry }) {
           <span style={{ color: 'var(--accent, #4a9eff)' }}>{entry.question.text}</span>
         ) : (
           entry.message
+        )}
+        {isActive && (
+          <span style={{
+            display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%',
+            background: '#4a9eff', marginLeft: '6px', verticalAlign: 'middle',
+            animation: 'pulse 1.5s ease infinite',
+          }} />
         )}
       </span>
     </div>

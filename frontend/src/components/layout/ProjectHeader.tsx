@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import type { Project } from '../../types';
+import { getConfig } from '../../api/config';
 import { RAGStatusBadge } from './RAGStatusBadge';
 
 function formatTokens(n: number): string {
@@ -17,11 +19,21 @@ interface Props {
   onShowRunLog?: () => void;
   autonomous?: boolean;
   onToggleAutonomous?: () => void;
+  onChangeAIMode?: (mode: 'files' | 'rag') => void;
+  onShowWorkflow?: () => void;
   onVersionClick?: () => void;
   viewingVersion?: string | null;
 }
 
-export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onShowProfile, onShowStageSettings, onShowRunLog, autonomous, onToggleAutonomous, onVersionClick, viewingVersion }: Readonly<Props>) {
+export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onShowProfile, onShowStageSettings, onShowRunLog, autonomous, onToggleAutonomous, onChangeAIMode, onShowWorkflow, onVersionClick, viewingVersion }: Readonly<Props>) {
+  const [ragEnabled, setRagEnabled] = useState(false);
+
+  useEffect(() => {
+    getConfig().then(c => setRagEnabled(c.ragEnabled)).catch(() => {});
+  }, []);
+
+  const aiMode = project.aiMode || 'files';
+
   return (
     <header className="project-header">
       <button className="back-button" onClick={onBack}>&larr;</button>
@@ -44,6 +56,27 @@ export function ProjectHeader({ project, onBack, totalTokens, onShowHistory, onS
         <span className="header-token-total">{formatTokens(totalTokens!)} tok</span>
       )}
       <RAGStatusBadge />
+      {onChangeAIMode && (
+        <select
+          className="ai-mode-select"
+          value={aiMode}
+          onChange={e => onChangeAIMode(e.target.value as 'files' | 'rag')}
+          title="AI prompt mode"
+        >
+          <option value="files">Files</option>
+          <option value="rag" disabled={!ragEnabled}>RAG{!ragEnabled ? ' (not configured)' : ''}</option>
+        </select>
+      )}
+      {onShowWorkflow && (
+        <button
+          className="workflow-button"
+          onClick={onShowWorkflow}
+          title="View workflow & edit prompts"
+          aria-label="Workflow editor"
+        >
+          Workflow
+        </button>
+      )}
       {onToggleAutonomous && (
         <button
           className={`autonomous-toggle ${autonomous ? 'active' : ''}`}

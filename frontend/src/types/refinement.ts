@@ -25,6 +25,10 @@ export interface RefinementQuestion {
   text: string;
   section: SectionName;
   impact: number;
+  relevance?: number;
+  novelty?: number;
+  score?: number;
+  source?: string;
   answered: boolean;
   answer?: string;
 }

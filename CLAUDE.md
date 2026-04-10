@@ -1,50 +1,52 @@
-This repo uses beads. Read AGENTS.md for further instructions.
+**CRITICAL** Track plans
+- ALWAYS write prompt to `plans/yyyy-MM-dd-<increment>-<planName>/prompt.md` (create dir if not exist)
+- ALWAYS write plans to `plans/yyyy-MM-dd-<increment>-<planName>/plan.md` (create dir if not exist)
+- This must be your first task once a plan is approved.
 
-As we mov
+**CRITICAL** Track decisions
+- ALWAYS summarize decisions to `plans/yyyy-MM-dd-<sequential-increment>-<planName>/decisions-<3-digit-increment>.md` (create dir if not exist)
+- This includes:
+  - All questions & decisions done in plan
+  - Architectural decisions
+  - Pattern standardizations
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
+**CRITICAL** Produce summary on plan completion
+- ALWAYS generate a summary of the plan in `plans/yyyy-MM-dd-<sequential-increment>-<planName>/summary.md` (create dir if not exist)
+- This must be concise enough to have value later and be compact enough to not bust context.
 
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+## `decisions.md` format
 
-### Quick Reference
+```md
+## Decision: <short title>
+ID: DEC-XXX
 
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
+- Date: YYYY-MM-DD
+- Status: Proposed | Accepted | Deprecated | Superseded
+
+- Context:
+  <What problem are we solving?>
+
+- Options Considered:
+  - Option A: <short description>
+  - Option B: <short description>
+
+- Decision:
+  <What was chosen?>
+
+- Rationale:
+  <Why this option was chosen>
+
+- Consequences:
+  - Positive:
+    - <benefit>
+  - Negative:
+    - <tradeoff>
+
+- Impact:
+  - Affects: <components / files / systems>
+  - Related Plans: <plan names>
+
+- References:
+  - <links to other decisions or summaries>
 ```
 
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
-## Session Completion
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->

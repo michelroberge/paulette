@@ -14,11 +14,25 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
+
+// promptSetForProject returns a FilePromptSet if the project uses file-based
+// prompts and the prompts directory exists, otherwise a plain VisionPromptSet.
+func promptSetForProject(project *model.Project) PromptSet {
+	if project.AIMode != model.AIModeFiles && project.AIMode != "" {
+		return VisionPromptSet{}
+	}
+	store := promptfiles.New(project.HostDir)
+	if !store.Exists() {
+		return VisionPromptSet{}
+	}
+	return NewFilePromptSet(store)
+}
 
 // Handler handles HTTP requests for the refinement loop.
 type Handler struct {
@@ -143,7 +157,7 @@ func (h *Handler) StartLoop(w http.ResponseWriter, r *http.Request) {
 		NumCtx:        numCtx,
 		ProjectDir:    project.HostDir,
 		Stage:         "vision",
-		Prompts:       VisionPromptSet{},
+		Prompts:       promptSetForProject(project),
 		Trace:         trace,
 		MaxIter:       state.MaxIterations,
 		MinConfidence: 0.85,
@@ -535,7 +549,7 @@ func (h *Handler) RunAutonomous(ctx context.Context, project *model.Project, ide
 		NumCtx:        numCtx,
 		ProjectDir:    project.HostDir,
 		Stage:         "vision",
-		Prompts:       VisionPromptSet{},
+		Prompts:       promptSetForProject(project),
 		Trace:         trace,
 		MaxIter:       state.MaxIterations,
 		MinConfidence: 0.85,

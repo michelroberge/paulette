@@ -153,10 +153,10 @@ func (s *Server) Router() http.Handler {
 		}
 	}
 
-	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.GitPath, s.cfg.DataPath)
+	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.GitPath, s.cfg.DataPath, s.cfg.RAG.Enabled)
 	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.chatRepo, s.runs, gitSvc, s.providerRegistry, s.stageConfig, s.ragClient, logBase)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
-	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, s.ragClient, logBase)
+	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, s.ragClient, logBase, s.cfg.RegistryPath)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
 	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo, logBase)
 	bh.SetProviderRegistry(s.providerRegistry, s.stageConfig)
@@ -193,8 +193,17 @@ func (s *Server) Router() http.Handler {
 	r.Get("/api/rag/status", ragH.Status)
 
 	// Connection CRUD, test, and model-discovery endpoints.
-	connH := handler.NewConnectionHandler(s.connStore, s.providerRegistry, s.stageConfig, s.registry)
-	r.Route("/api/connections", connH.RegisterRoutes)
+	connH := handler.NewConnectionHandler(s.connStore, s.providerRegistry, s.stageConfig, s.registry, s.cfg.RegistryPath)
+	connPromptH := handler.NewConnectionPromptHandler(s.connStore, s.cfg.RegistryPath)
+	r.Route("/api/connections", func(cr chi.Router) {
+		connH.RegisterRoutes(cr)
+		// Per-connection prompt template management.
+		cr.Post("/{id}/prompts/init", connPromptH.Init)
+		cr.Get("/{id}/prompts", connPromptH.List)
+		cr.Get("/{id}/prompts/{name}", connPromptH.Get)
+		cr.Put("/{id}/prompts/{name}", connPromptH.Update)
+		cr.Post("/{id}/prompts/reset/{name}", connPromptH.Reset)
+	})
 
 	// Stage-config global defaults and operation-level overrides
 	scfgH := handler.NewStageConfigHandler(s.stageConfig, s.connStore, s.registry)
@@ -325,6 +334,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/versions/{version}", vh.GetVersionSnapshot)
 		r.Get("/{id}/versions/{version}/beads/{beadId}", vh.GetVersionBeadExecution)
 		r.Get("/{id}/versions/{version}/mock", vh.GetVersionMock)
+
+		// Prompt template management.
+		promptH := handler.NewPromptHandler(s.registry)
+		r.Post("/{id}/prompts/init", promptH.Init)
+		r.Get("/{id}/prompts", promptH.List)
+		r.Get("/{id}/prompts/{name}", promptH.Get)
+		r.Put("/{id}/prompts/{name}", promptH.Update)
+		r.Post("/{id}/prompts/reset/{name}", promptH.Reset)
 	})
 
 	rlh := handler.NewRunLogHandler(s.registry, logBase)

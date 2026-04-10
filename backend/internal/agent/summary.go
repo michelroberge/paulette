@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 )
 
 const summarySystemPrompt = `You are a technical writer summarizing a completed product development iteration.
@@ -54,7 +55,7 @@ Be concise — aim for a document that can be quickly scanned. Avoid repeating f
 // BuildStreamSummaryRequest returns the system prompt and user message for summary generation.
 // Used by non-CLI providers that call provider.Chat directly.
 // maxContextChars limits the total user message size; 0 means no limit.
-func BuildStreamSummaryRequest(artifacts map[model.StageName]string, projectName, version string, maxContextChars int) (systemPrompt, userMsg string) {
+func BuildStreamSummaryRequest(artifacts map[model.StageName]string, projectName, version string, maxContextChars int, store ...*promptfiles.PromptStore) (systemPrompt, userMsg string) {
 	var prompt strings.Builder
 	prompt.WriteString(fmt.Sprintf("Project: %s, Version: %s\n\n", projectName, version))
 	stages := []struct {
@@ -91,12 +92,16 @@ func BuildStreamSummaryRequest(artifacts map[model.StageName]string, projectName
 		}
 		prompt.WriteString(fmt.Sprintf("## %s Artifact\n---\n%s\n---\n\n", s.label, content))
 	}
-	return summarySystemPrompt, prompt.String()
+	sysPrompt := summarySystemPrompt
+	if len(store) > 0 && store[0] != nil {
+		sysPrompt = resolveBeadPrompt(store[0], "summary.md.tmpl", summarySystemPrompt, nil)
+	}
+	return sysPrompt, prompt.String()
 }
 
 // StreamSummary calls Claude to produce a concise summary of all approved artifacts,
 // streaming chunks as StreamEvents. The channel is closed when generation finishes.
-func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, projectName string, version string) (<-chan StreamEvent, error) {
+func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, projectName string, version string, store ...*promptfiles.PromptStore) (<-chan StreamEvent, error) {
 	// Guard against claude CLI hanging forever
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 
@@ -121,13 +126,18 @@ func StreamSummary(ctx context.Context, artifacts map[model.StageName]string, pr
 		prompt.WriteString(fmt.Sprintf("## %s Artifact\n---\n%s\n---\n\n", s.label, content))
 	}
 
+	sysPrompt := summarySystemPrompt
+	if len(store) > 0 && store[0] != nil {
+		sysPrompt = resolveBeadPrompt(store[0], "summary.md.tmpl", summarySystemPrompt, nil)
+	}
+
 	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--include-partial-messages",
 		"--model", "claude-sonnet-4-6",
-		"--system-prompt", summarySystemPrompt,
+		"--system-prompt", sysPrompt,
 	)
 	cmd.Stdin = strings.NewReader(prompt.String())
 

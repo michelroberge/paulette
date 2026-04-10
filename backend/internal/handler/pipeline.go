@@ -325,7 +325,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 
 	// Pass 0 for maxContextChars (no truncation) — the provider's num_ctx
 	// setting handles context limits. Callers can pass a budget for constrained models.
-	systemPrompt, userMsg := agent.BuildStreamSummaryRequest(artifacts, project.Name, project.Version, 0)
+	systemPrompt, userMsg := agent.BuildStreamSummaryRequest(artifacts, project.Name, project.Version, 0, promptStoreForProject(project))
 	saTemp, saNumCtx, saStream := sa.Fields()
 
 	go func() {

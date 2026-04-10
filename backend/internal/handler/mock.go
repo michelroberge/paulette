@@ -13,9 +13,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"log"
+
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/llmparse"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
@@ -43,6 +46,7 @@ type plannerComponent struct {
 }
 
 const mockRelPath = "ux/mock.html"
+const mockSpecsRelPath = "ux/mock-specs.md"
 
 type MockHandler struct {
 	registry         repository.RegistryRepo
@@ -207,6 +211,93 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	run.StreamTo(w, r, 0)
 }
 
+// synthesizeMockSpecs calls the LLM to condense vision + UX into a mock specs
+// document. Returns the specs content. If the synthesis is larger than the
+// originals combined, returns empty string (caller should use originals).
+// The result is cached at {dataDir}/ux/mock-specs.md.
+func (h *MockHandler) synthesizeMockSpecs(
+	project *model.Project,
+	visionContent, uxContent string,
+	prov provider.Provider,
+	modelID string,
+	sa *provider.StageAssignment,
+	run *stream.Run,
+) string {
+	specsPath := filepath.Join(project.DataDir, mockSpecsRelPath)
+
+	// Cache check: if mock-specs.md exists, reuse it.
+	if data, err := os.ReadFile(specsPath); err == nil && len(data) > 0 {
+		specs := string(data)
+		// Size gate: if cached specs is bigger than originals, skip.
+		if len(specs) >= len(visionContent)+len(uxContent) {
+			log.Printf("mock-specs: cached specs larger than originals, using originals")
+			return ""
+		}
+		return specs
+	}
+
+	// Build synthesis prompt.
+	store := promptStoreForProject(project)
+	sysPrompt := promptfiles.Defaults["mock-specs-synthesize.md.tmpl"].Content
+	if store != nil {
+		if loaded, err := store.Load("mock-specs-synthesize.md.tmpl"); err == nil {
+			sysPrompt = loaded
+		}
+	}
+
+	var userMsg strings.Builder
+	userMsg.WriteString("## Product Vision\n---\n")
+	userMsg.WriteString(visionContent)
+	userMsg.WriteString("\n---\n\n## UX Design\n---\n")
+	userMsg.WriteString(uxContent)
+	userMsg.WriteString("\n---\n\nSynthesize these into a concise Mock Specs document.")
+
+	run.Emit(agent.StreamEvent{Type: "log", Content: "Synthesizing mock specs from vision + UX..."})
+
+	saTemp, saNumCtx, saStream := sa.Fields()
+	events, err := prov.Chat(run.Context(), provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: sysPrompt,
+		UserMessage:  userMsg.String(),
+		Stage:        "ux",
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
+	})
+	if err != nil {
+		log.Printf("mock-specs: synthesis LLM call failed: %v", err)
+		return ""
+	}
+
+	var fullResponse strings.Builder
+	for ev := range events {
+		if ev.Type == "chunk" {
+			fullResponse.WriteString(ev.Content)
+		}
+	}
+
+	// Extract artifact from XML envelope.
+	parsed := agent.ParseResponse(fullResponse.String())
+	specs := parsed.Artifact
+	if specs == "" {
+		specs = strings.TrimSpace(fullResponse.String())
+	}
+
+	// Size gate: only use if smaller than originals combined.
+	if len(specs) >= len(visionContent)+len(uxContent) {
+		log.Printf("mock-specs: synthesis (%d bytes) >= originals (%d bytes), skipping", len(specs), len(visionContent)+len(uxContent))
+		return ""
+	}
+
+	// Persist.
+	if err := os.MkdirAll(filepath.Dir(specsPath), 0755); err == nil {
+		os.WriteFile(specsPath, []byte(specs), 0644)
+	}
+
+	run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("Mock specs synthesized (%d bytes, %.0f%% of originals)", len(specs), float64(len(specs))/float64(len(visionContent)+len(uxContent))*100)})
+	return specs
+}
+
 // StartMockRun starts a mock generation run without HTTP plumbing.
 // Returns (nil, nil) on race condition.
 //
@@ -248,12 +339,21 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 	visionContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
 	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 
-	// Build the initial user prompt and the shared mock system prompt.
+	// Try synthesized mock specs (vision + UX condensed into one doc).
+	// If synthesis is smaller, use it as sole context; otherwise use originals.
+	mockSpecs := h.synthesizeMockSpecs(project, visionContent, uxContent, prov, modelID, sa, run)
+
 	var userPromptBuf strings.Builder
-	userPromptBuf.WriteString(agent.BuildMockContext(project.Name, visionContent, buildContent))
-	userPromptBuf.WriteString("UX Design Document:\n---\n")
-	userPromptBuf.WriteString(uxContent)
-	userPromptBuf.WriteString("\n---\n\nGenerate the HTML wireframe mockup for all screens described above.")
+	if mockSpecs != "" {
+		userPromptBuf.WriteString("Mock Specs Document:\n---\n")
+		userPromptBuf.WriteString(mockSpecs)
+		userPromptBuf.WriteString("\n---\n\nGenerate the HTML wireframe mockup for all screens described above.")
+	} else {
+		userPromptBuf.WriteString(agent.BuildMockContext(project.Name, visionContent, buildContent))
+		userPromptBuf.WriteString("UX Design Document:\n---\n")
+		userPromptBuf.WriteString(uxContent)
+		userPromptBuf.WriteString("\n---\n\nGenerate the HTML wireframe mockup for all screens described above.")
+	}
 	if refinement != "" {
 		userPromptBuf.WriteString("\n\nRefinement instruction: ")
 		userPromptBuf.WriteString(refinement)
@@ -1002,7 +1102,6 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 	// Gather project context for the planner call.
 	visionContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
 	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
-	projectContext := agent.BuildMockContext(project.Name, visionContent, buildContent)
 
 	frameworkCfg, _ := fsrepo.ReadFramework(project.DataDir)
 
@@ -1020,6 +1119,15 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		clearActivity(h.activityRepo, project.DataDir, model.StageUX)
 		run.Finish(h.runs)
 		return run, nil
+	}
+
+	// Try synthesized mock specs for a smaller planner input.
+	mockSpecs := h.synthesizeMockSpecs(project, visionContent, uxContent, prov, modelID, sa, run)
+	var plannerInput string
+	if mockSpecs != "" {
+		plannerInput = "Mock Specs:\n---\n" + mockSpecs + "\n---\n"
+	} else {
+		plannerInput = agent.BuildMockContext(project.Name, visionContent, buildContent) + uxContent
 	}
 
 	go func() {
@@ -1049,7 +1157,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 
 		// Step 1: Planner
 		run.Emit(agent.StreamEvent{Type: "chunk", Content: "Planning screens from UX artifact...\n"})
-		screens, err := runPlannerCall(prov, modelID, sa, run, projectContext+uxContent, refinement, &tokensAccum, trace)
+		screens, err := runPlannerCall(prov, modelID, sa, run, plannerInput, refinement, &tokensAccum, trace)
 		if err != nil {
 			rlErr = err.Error()
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})

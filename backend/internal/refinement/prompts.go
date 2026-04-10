@@ -2,7 +2,10 @@ package refinement
 
 import (
 	"fmt"
+	"log"
 	"strings"
+
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 )
 
 // PromptSet defines the micro-prompts used by the refinement controller.
@@ -286,4 +289,130 @@ Do not invent anything. Use this exact markdown format:
 	sb.WriteString(fmt.Sprintf("\nConstraints: %s", state.Sections[SectionConstraints]))
 	sb.WriteString(fmt.Sprintf("\nOut of Scope: %s", state.Sections[SectionOutOfScope]))
 	return sys, sb.String()
+}
+
+// ── FilePromptSet ─────────────────────────────────────────────────
+
+// filePromptMap maps PromptSet method names to template file names.
+var filePromptMap = map[string]string{
+	"Summarize":         "refinement-summarize.md.tmpl",
+	"GenerateQuestions":  "refinement-generate-questions.md.tmpl",
+	"ExtractFacts":       "refinement-extract-facts.md.tmpl",
+	"NormalizeAnswer":    "refinement-normalize-answer.md.tmpl",
+	"ClassifyFact":       "refinement-classify-fact.md.tmpl",
+	"MergeFact":          "refinement-merge-fact.md.tmpl",
+	"ScoreSection":       "refinement-score-section.md.tmpl",
+	"EvaluateQuestions":  "refinement-evaluate-questions.md.tmpl",
+	"RewriteQuestion":    "refinement-rewrite-question.md.tmpl",
+	"CoherenceCheck":     "refinement-coherence-check.md.tmpl",
+	"TensionCheck":       "refinement-tension-check.md.tmpl",
+	"FindGaps":           "refinement-find-gaps.md.tmpl",
+	"SimulateAnswer":     "refinement-simulate-answer.md.tmpl",
+	"Critique":           "refinement-critique.md.tmpl",
+	"Synthesize":         "refinement-synthesize.md.tmpl",
+}
+
+// FilePromptSet wraps VisionPromptSet, overriding system prompts from a
+// PromptStore while keeping user message assembly in Go code.
+type FilePromptSet struct {
+	VisionPromptSet
+	store *promptfiles.PromptStore
+}
+
+// NewFilePromptSet creates a FilePromptSet. If store is nil, behaves
+// identically to VisionPromptSet.
+func NewFilePromptSet(store *promptfiles.PromptStore) FilePromptSet {
+	return FilePromptSet{store: store}
+}
+
+// loadSys loads the system prompt from the store, falling back to the hardcoded default.
+func (f FilePromptSet) loadSys(method, fallback string) string {
+	if f.store == nil {
+		return fallback
+	}
+	name, ok := filePromptMap[method]
+	if !ok {
+		return fallback
+	}
+	content, err := f.store.Load(name)
+	if err != nil {
+		log.Printf("promptfiles: refinement %s load failed, using default: %v", name, err)
+		return fallback
+	}
+	return content
+}
+
+func (f FilePromptSet) Summarize(input string) (string, string) {
+	sys, usr := f.VisionPromptSet.Summarize(input)
+	return f.loadSys("Summarize", sys), usr
+}
+
+func (f FilePromptSet) GenerateQuestions(state *LoopState) (string, string) {
+	sys, usr := f.VisionPromptSet.GenerateQuestions(state)
+	return f.loadSys("GenerateQuestions", sys), usr
+}
+
+func (f FilePromptSet) ExtractFacts(summary, answer string) (string, string) {
+	sys, usr := f.VisionPromptSet.ExtractFacts(summary, answer)
+	return f.loadSys("ExtractFacts", sys), usr
+}
+
+func (f FilePromptSet) NormalizeAnswer(summary, question, answer string) (string, string) {
+	sys, usr := f.VisionPromptSet.NormalizeAnswer(summary, question, answer)
+	return f.loadSys("NormalizeAnswer", sys), usr
+}
+
+func (f FilePromptSet) ClassifyFact(fact string, sections []SectionName) (string, string) {
+	sys, usr := f.VisionPromptSet.ClassifyFact(fact, sections)
+	return f.loadSys("ClassifyFact", sys), usr
+}
+
+func (f FilePromptSet) MergeFact(summary, existingContent, fact string) (string, string) {
+	sys, usr := f.VisionPromptSet.MergeFact(summary, existingContent, fact)
+	return f.loadSys("MergeFact", sys), usr
+}
+
+func (f FilePromptSet) ScoreSection(name SectionName, content string) (string, string) {
+	sys, usr := f.VisionPromptSet.ScoreSection(name, content)
+	return f.loadSys("ScoreSection", sys), usr
+}
+
+func (f FilePromptSet) EvaluateQuestions(state *LoopState, questions []Question) (string, string) {
+	sys, usr := f.VisionPromptSet.EvaluateQuestions(state, questions)
+	return f.loadSys("EvaluateQuestions", sys), usr
+}
+
+func (f FilePromptSet) RewriteQuestion(state *LoopState, question string) (string, string) {
+	sys, usr := f.VisionPromptSet.RewriteQuestion(state, question)
+	return f.loadSys("RewriteQuestion", sys), usr
+}
+
+func (f FilePromptSet) CoherenceCheck(state *LoopState, newFacts []string) (string, string) {
+	sys, usr := f.VisionPromptSet.CoherenceCheck(state, newFacts)
+	return f.loadSys("CoherenceCheck", sys), usr
+}
+
+func (f FilePromptSet) TensionCheck(state *LoopState) (string, string) {
+	sys, usr := f.VisionPromptSet.TensionCheck(state)
+	return f.loadSys("TensionCheck", sys), usr
+}
+
+func (f FilePromptSet) FindGaps(state *LoopState) (string, string) {
+	sys, usr := f.VisionPromptSet.FindGaps(state)
+	return f.loadSys("FindGaps", sys), usr
+}
+
+func (f FilePromptSet) SimulateAnswer(state *LoopState, question string) (string, string) {
+	sys, usr := f.VisionPromptSet.SimulateAnswer(state, question)
+	return f.loadSys("SimulateAnswer", sys), usr
+}
+
+func (f FilePromptSet) Critique(state *LoopState) (string, string) {
+	sys, usr := f.VisionPromptSet.Critique(state)
+	return f.loadSys("Critique", sys), usr
+}
+
+func (f FilePromptSet) Synthesize(state *LoopState) (string, string) {
+	sys, usr := f.VisionPromptSet.Synthesize(state)
+	return f.loadSys("Synthesize", sys), usr
 }

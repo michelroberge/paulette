@@ -284,15 +284,14 @@ func applyEvaluatedScores(state *LoopState, evaluated []Question) {
 	}
 }
 
-// PruneResolved removes questions whose sections have reached the given threshold.
+// PruneResolved removes answered questions from the pool.
+// Unanswered questions are kept regardless of section confidence — they are
+// filtered by the evaluate+rank step, not by pruning.
 func PruneResolved(state *LoopState, threshold float64) {
 	kept := state.OpenQuestions[:0]
 	for _, q := range state.OpenQuestions {
 		if q.Answered {
 			continue // drop answered
-		}
-		if state.Confidence[q.Section] >= threshold {
-			continue // section is confident enough
 		}
 		kept = append(kept, q)
 	}

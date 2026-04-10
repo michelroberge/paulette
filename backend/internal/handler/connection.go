@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,6 +35,7 @@ type ConnectionHandler struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	registry         repository.RegistryRepo
+	registryPath     string // for cleaning up connection prompt dirs on delete
 }
 
 // NewConnectionHandler creates a ConnectionHandler with all required dependencies.
@@ -42,12 +46,14 @@ func NewConnectionHandler(
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
 	registry repository.RegistryRepo,
+	registryPath string,
 ) *ConnectionHandler {
 	return &ConnectionHandler{
 		connStore:        connStore,
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
 		registry:         registry,
+		registryPath:     registryPath,
 	}
 }
 
@@ -243,6 +249,12 @@ func (h *ConnectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusInternalServerError, fmt.Sprintf("delete connection: %s", err.Error()))
 		}
 		return
+	}
+
+	// Clean up connection prompt templates directory if it exists.
+	promptDir := filepath.Join(h.registryPath, "connection-prompts", id)
+	if err := os.RemoveAll(promptDir); err != nil && !os.IsNotExist(err) {
+		log.Printf("warning: failed to remove connection prompts dir %s: %v", promptDir, err)
 	}
 
 	// Normalise nil to an empty slice so the JSON response is always an array.

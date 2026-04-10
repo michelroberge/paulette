@@ -29,6 +29,8 @@ export interface UseRefinementLoopResult {
   pendingReviewCount: number;
   start: (message: string) => void;
   answer: (text: string) => Promise<void>;
+  dismiss: () => Promise<void>;
+  finish: () => Promise<void>;
   reset: () => Promise<void>;
   loadState: () => Promise<void>;
   discardReview: (itemId: string) => Promise<void>;
@@ -55,6 +57,9 @@ export function useRefinementLoop(
   const abortRef = useRef<AbortController | null>(null);
   const onTokensRef = useRef(onTokens);
   onTokensRef.current = onTokens;
+  // Tracks SSE question arrivals so answerFn can detect if a new question
+  // arrived during the POST, avoiding a race that would hide the input.
+  const questionVersionRef = useRef(0);
 
   const handleEvent = useCallback((event: StreamEvent) => {
     switch (event.type) {
@@ -65,8 +70,12 @@ export function useRefinementLoop(
           setIteration(data.iteration);
           setMaxIter(data.maxIter);
           if (data.confidence) setConfidence(data.confidence);
-          if (data.question) setCurrentQuestion(data.question);
-          else setCurrentQuestion(null);
+          if (data.question) {
+            questionVersionRef.current++;
+            setCurrentQuestion(data.question);
+          } else {
+            setCurrentQuestion(null);
+          }
           // Collect review items from SSE
           if (data.reviewItem) {
             setReviewItems(prev => {
@@ -74,16 +83,22 @@ export function useRefinementLoop(
               return [...prev, data.reviewItem!];
             });
           }
-          // Always log questions, even when message is absent
+          // Only log user-facing phases; deterministic phases are instant and just noise.
+          const SILENT_PHASES = new Set([
+            'extract_facts', 'update_sections', 'score_confidence',
+            'evaluate_questions', 'coherence_check', 'critique', 'find_gaps',
+          ]);
           if (data.message || data.question) {
             const msg = data.message || data.question?.text || '';
             setMessage(msg);
-            setLog(prev => [...prev, {
-              phase: data.phase,
-              message: msg,
-              question: data.question,
-              timestamp: Date.now(),
-            }]);
+            if (!SILENT_PHASES.has(data.phase)) {
+              setLog(prev => [...prev, {
+                phase: data.phase,
+                message: msg,
+                question: data.question,
+                timestamp: Date.now(),
+              }]);
+            }
           }
         } catch { /* ignore parse errors */ }
         break;
@@ -147,10 +162,50 @@ export function useRefinementLoop(
         userAnswer: text,
         timestamp: Date.now(),
       }]);
+      const versionBefore = questionVersionRef.current;
       await answerQuestion(projectId, text);
-      setCurrentQuestion(null);
+      // Only hide the input if no new question arrived via SSE during the POST.
+      // If a new question arrived, its SSE event already set currentQuestion.
+      if (questionVersionRef.current === versionBefore) {
+        setCurrentQuestion(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send answer');
+    }
+  }, [projectId]);
+
+  const dismissFn = useCallback(async () => {
+    if (!projectId || !currentQuestion) return;
+    try {
+      setLog(prev => [...prev, {
+        phase: 'await_answer' as LoopPhase,
+        message: `Dismissed: ${currentQuestion.text}`,
+        userAnswer: '[dismissed]',
+        timestamp: Date.now(),
+      }]);
+      const versionBefore = questionVersionRef.current;
+      await answerQuestion(projectId, '[dismissed]');
+      if (questionVersionRef.current === versionBefore) {
+        setCurrentQuestion(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to dismiss question');
+    }
+  }, [projectId, currentQuestion]);
+
+  const finishFn = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      setLog(prev => [...prev, {
+        phase: 'await_answer' as LoopPhase,
+        message: 'Finishing — generating vision with current answers',
+        userAnswer: '[finish]',
+        timestamp: Date.now(),
+      }]);
+      setCurrentQuestion(null);
+      await answerQuestion(projectId, '[finish]');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to finish');
     }
   }, [projectId]);
 
@@ -252,7 +307,7 @@ export function useRefinementLoop(
     phase, iteration, maxIter, confidence, currentQuestion, message,
     isRunning, error, artifactUpdated, knownFacts, state, log,
     reviewItems, pendingReviewCount: pendingItems.length,
-    start, answer: answerFn, reset: resetFn, loadState,
+    start, answer: answerFn, dismiss: dismissFn, finish: finishFn, reset: resetFn, loadState,
     discardReview: discardReviewFn, addressReview: addressReviewFn,
   };
 }

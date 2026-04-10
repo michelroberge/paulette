@@ -15,6 +15,7 @@ export interface Project {
   summaryApproved?: boolean;
   autonomous?: boolean;
   useRefinementLoop?: boolean;
+  aiMode?: 'files' | 'rag';
   baseBranch?: string;
   devCommands?: string[];
   buildCommands?: string[];

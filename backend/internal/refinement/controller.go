@@ -150,23 +150,13 @@ func (c *Controller) RunLoop(
 		}
 		c.currentIteration = state.Iteration
 
-		// ─── EXPLORATION LOOP: evaluate, rewrite, rank questions ───
+		// ─── EXPLORATION LOOP: evaluate and rank questions ───
 		unanswered := collectUnanswered(state)
 		if len(unanswered) > 0 {
 			setPhase(PhaseEvaluateQs)
 			emit(PhaseEvaluateQs, fmt.Sprintf("Evaluating %d questions...", len(unanswered)), nil)
 
-			evaluated, tokens, _ := c.doEvaluateQuestions(ctx, state, unanswered)
-			totalTokens += tokens
-
-			// Rewrite vague high-impact questions
-			for i := range evaluated {
-				if evaluated[i].Impact > 0.7 && len(evaluated[i].Text) < 40 {
-					rewritten, t, _ := c.doRewriteQuestion(ctx, state, evaluated[i].Text)
-					totalTokens += t
-					evaluated[i].Text = rewritten
-				}
-			}
+			evaluated, _, _ := c.doEvaluateQuestions(ctx, state, unanswered)
 
 			// Apply scores back and filter
 			applyEvaluatedScores(state, evaluated)
@@ -175,65 +165,110 @@ func (c *Controller) RunLoop(
 			save()
 		}
 
-		// ─── SELECT + ANSWER ───
-		question := SelectHighestImpactQuestion(state)
-		if question == nil {
-			break // no more questions
-		}
+		// ─── ASK ALL UNANSWERED QUESTIONS ───
+		// Inner loop: ask every unanswered question before processing.
+		// This ensures all generated questions are presented to the user
+		// before critique/gap-finding can inject lower-quality follow-ups.
+		var answeredThisRound []*Question
+		for {
+			if err := ctx.Err(); err != nil {
+				return "", totalTokens, err
+			}
 
-		var answer string
-		if answerCh != nil {
-			setPhase(PhaseAwaitAnswer)
-			emit(PhaseAwaitAnswer, "", question)
-			save()
+			question := SelectHighestImpactQuestion(state)
+			if question == nil {
+				break
+			}
 
-			select {
-			case ans, ok := <-answerCh:
-				if !ok {
-					return "", totalTokens, fmt.Errorf("answer channel closed")
+			var answer string
+			if answerCh != nil {
+				setPhase(PhaseAwaitAnswer)
+				emit(PhaseAwaitAnswer, "", question)
+				save()
+
+				select {
+				case ans, ok := <-answerCh:
+					if !ok {
+						return "", totalTokens, fmt.Errorf("answer channel closed")
+					}
+					answer = ans
+				case <-ctx.Done():
+					return "", totalTokens, ctx.Err()
+				}
+			} else {
+				setPhase(PhaseAwaitAnswer)
+				emit(PhaseAwaitAnswer, "Reasoning about: "+question.Text, question)
+
+				ans, tokens, err := c.doSimulateAnswer(ctx, state, question.Text)
+				totalTokens += tokens
+				if err != nil {
+					return "", totalTokens, fmt.Errorf("simulate answer: %w", err)
 				}
 				answer = ans
-			case <-ctx.Done():
-				return "", totalTokens, ctx.Err()
 			}
-		} else {
-			setPhase(PhaseAwaitAnswer)
-			emit(PhaseAwaitAnswer, "Reasoning about: "+question.Text, question)
 
-			ans, tokens, err := c.doSimulateAnswer(ctx, state, question.Text)
+			// User requested early finish — skip to synthesize
+			if answer == "[finish]" {
+				log.Printf("refinement: user requested finish — skipping to synthesize")
+				question.Answered = true
+				question.Answer = ""
+				goto synthesize
+			}
+
+			question.Answered = true
+			question.Answer = answer
+			answeredThisRound = append(answeredThisRound, question)
+		}
+
+		if len(answeredThisRound) == 0 {
+			// No questions available — try regenerating before giving up
+			log.Printf("refinement: no open questions but not converged (avg=%.2f, target=%.2f) — regenerating",
+				AverageConfidence(state), c.minConfidence)
+			rTokens, rErr := c.doGenerateQuestions(ctx, state)
+			totalTokens += rTokens
+			if rErr != nil || OpenQuestionCount(state) == 0 {
+				log.Printf("refinement: regeneration produced no new questions — exiting loop")
+				break
+			}
+			continue // re-enter the loop to ask the regenerated questions
+		}
+
+		log.Printf("refinement: asked %d questions this round", len(answeredThisRound))
+
+		// ─── REFINEMENT: process all answers ───
+		var allFacts []string
+		for _, question := range answeredThisRound {
+			// Skip dismissed questions — user found them irrelevant
+			if question.Answer == "[dismissed]" {
+				log.Printf("refinement: question dismissed: %s", question.Text)
+				continue
+			}
+
+			normalizedAnswer, tokens, normErr := c.doNormalizeAnswer(ctx, state.IdeaSummary, question.Text, question.Answer)
+			totalTokens += tokens
+			if normErr != nil {
+				log.Printf("refinement: normalize answer error (using raw): %v", normErr)
+				normalizedAnswer = question.Answer
+			}
+
+			setPhase(PhaseExtractFacts)
+			emit(PhaseExtractFacts, fmt.Sprintf("Extracting facts from answer to: %s", question.Text), nil)
+
+			facts, tokens, err := c.doExtractFacts(ctx, state.IdeaSummary, normalizedAnswer)
 			totalTokens += tokens
 			if err != nil {
-				return "", totalTokens, fmt.Errorf("simulate answer: %w", err)
+				log.Printf("refinement: extract facts error (skipping): %v", err)
+				continue
 			}
-			answer = ans
+			state.KnownFacts = append(state.KnownFacts, facts...)
+			allFacts = append(allFacts, facts...)
 		}
-
-		question.Answered = true
-		question.Answer = answer
-
-		// ─── REFINEMENT LOOP: normalize → extract → classify → merge ───
-		normalizedAnswer, tokens, normErr := c.doNormalizeAnswer(ctx, state.IdeaSummary, question.Text, answer)
-		totalTokens += tokens
-		if normErr != nil {
-			log.Printf("refinement: normalize answer error (using raw): %v", normErr)
-			normalizedAnswer = answer
-		}
-
-		setPhase(PhaseExtractFacts)
-		emit(PhaseExtractFacts, "Extracting facts...", nil)
-
-		facts, tokens, err := c.doExtractFacts(ctx, state.IdeaSummary, normalizedAnswer)
-		totalTokens += tokens
-		if err != nil {
-			return "", totalTokens, fmt.Errorf("extract facts: %w", err)
-		}
-		state.KnownFacts = append(state.KnownFacts, facts...)
 		save()
 
 		setPhase(PhaseUpdateSections)
-		emit(PhaseUpdateSections, fmt.Sprintf("Integrating %d facts...", len(facts)), nil)
+		emit(PhaseUpdateSections, fmt.Sprintf("Integrating %d facts...", len(allFacts)), nil)
 
-		for i, fact := range facts {
+		for i, fact := range allFacts {
 			if err := ctx.Err(); err != nil {
 				return "", totalTokens, err
 			}
@@ -257,12 +292,12 @@ func (c *Controller) RunLoop(
 
 		// ─── COHERENCE CHECK: verify new facts don't contradict state ───
 		isCoherent := true
-		if len(facts) > 0 {
+		if len(allFacts) > 0 {
 			setPhase(PhaseCoherence)
 			emit(PhaseCoherence, "Checking coherence...", nil)
 
-			coherent, cohItems, tokens, _ := c.doCoherenceCheck(ctx, state, facts)
-			totalTokens += tokens
+			coherent, cohItems, cohTokens, _ := c.doCoherenceCheck(ctx, state, allFacts)
+			totalTokens += cohTokens
 			isCoherent = coherent
 			if !coherent {
 				emit(PhaseCoherence, "Inconsistencies detected — adding corrective questions", nil)
@@ -280,8 +315,8 @@ func (c *Controller) RunLoop(
 			setPhase(PhaseTension)
 			emit(PhaseTension, "Challenging assumptions...", nil)
 
-			tenItems, tokens, _ := c.doTensionCheck(ctx, state)
-			totalTokens += tokens
+			tenItems, tenTokens, _ := c.doTensionCheck(ctx, state)
+			totalTokens += tenTokens
 			for i := range MergeReviewItems(state, tenItems) {
 				emitReview(PhaseTension, &tenItems[i])
 			}
@@ -292,10 +327,10 @@ func (c *Controller) RunLoop(
 		setPhase(PhaseScoreConfidence)
 		emit(PhaseScoreConfidence, "Evaluating completeness...", nil)
 
-		tokens, err = c.doScoreAllSections(ctx, state)
-		totalTokens += tokens
-		if err != nil {
-			return "", totalTokens, fmt.Errorf("score sections: %w", err)
+		scoreTokens, scoreErr := c.doScoreAllSections(ctx, state)
+		totalTokens += scoreTokens
+		if scoreErr != nil {
+			return "", totalTokens, fmt.Errorf("score sections: %w", scoreErr)
 		}
 		emit(PhaseScoreConfidence, fmt.Sprintf("Average confidence: %.0f%%", AverageConfidence(state)*100), nil)
 		save()
@@ -304,10 +339,10 @@ func (c *Controller) RunLoop(
 		setPhase(PhaseCritique)
 		emit(PhaseCritique, "Running critique...", nil)
 
-		criItems, tokens, err := c.doCritique(ctx, state)
-		totalTokens += tokens
-		if err != nil {
-			log.Printf("refinement: critique error (continuing): %v", err)
+		criItems, criTokens, criErr := c.doCritique(ctx, state)
+		totalTokens += criTokens
+		if criErr != nil {
+			log.Printf("refinement: critique error (continuing): %v", criErr)
 		}
 		for i := range MergeReviewItems(state, criItems) {
 			emitReview(PhaseCritique, &criItems[i])
@@ -318,10 +353,10 @@ func (c *Controller) RunLoop(
 		setPhase(PhaseFindGaps)
 		emit(PhaseFindGaps, "Looking for remaining gaps...", nil)
 
-		gapItems, tokens, err := c.doFindGaps(ctx, state)
-		totalTokens += tokens
-		if err != nil {
-			return "", totalTokens, fmt.Errorf("find gaps: %w", err)
+		gapItems, gapTokens, gapErr := c.doFindGaps(ctx, state)
+		totalTokens += gapTokens
+		if gapErr != nil {
+			return "", totalTokens, fmt.Errorf("find gaps: %w", gapErr)
 		}
 		for i := range MergeReviewItems(state, gapItems) {
 			emitReview(PhaseFindGaps, &gapItems[i])
@@ -329,6 +364,14 @@ func (c *Controller) RunLoop(
 
 		// Prune resolved questions
 		PruneResolved(state, c.minConfidence)
+
+		// Safeguard: if pruning emptied the pool but we haven't converged, refill.
+		if OpenQuestionCount(state) == 0 && !IsConverged(state, c.minConfidence) {
+			log.Printf("refinement: post-prune question pool empty — regenerating")
+			rTokens, _ := c.doGenerateQuestions(ctx, state)
+			totalTokens += rTokens
+		}
+
 		state.Iteration++
 		save()
 
@@ -338,6 +381,7 @@ func (c *Controller) RunLoop(
 	}
 
 	// Step 5: Synthesize final artifact
+synthesize:
 	setPhase(PhaseSynthesize)
 	emit(PhaseSynthesize, "Generating vision document...", nil)
 

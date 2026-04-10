@@ -22,5 +22,6 @@ func (h *ConfigHandler) GetInfo(w http.ResponseWriter, r *http.Request) {
 		"version":     h.cfg.Version,
 		"author":      h.cfg.Author,
 		"oidcEnabled": h.cfg.OIDC.Enabled,
+		"ragEnabled":  h.cfg.RAG.Enabled,
 	})
 }
