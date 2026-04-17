@@ -14,11 +14,9 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
-const beadGraphRelPath = ".paulette/build/beads-graph.json"
-
-// BeadGraphPath returns the absolute path to the legacy beads-graph.json file.
-func BeadGraphPath(hostDir string) string {
-	return filepath.Join(hostDir, beadGraphRelPath)
+// BeadGraphPath returns the absolute path to beads-graph.json in the project data dir.
+func BeadGraphPath(dataDir string) string {
+	return filepath.Join(dataDir, "build", "beads-graph.json")
 }
 
 // BeadMeta holds Paulette-specific metadata stored in a bead's bd notes field.
@@ -245,9 +243,14 @@ func ReadSingleBead(ctx context.Context, hostDir, beadID string) (*model.Bead, e
 }
 
 // MigrateBeadGraphIfNeeded migrates beads-graph.json to bd notes if the file exists.
+// Checks both the new dataDir location and the legacy hostDir/.paulette location.
 // This is a one-time migration; the file is deleted on success.
-func MigrateBeadGraphIfNeeded(ctx context.Context, hostDir string) {
-	p := BeadGraphPath(hostDir)
+func MigrateBeadGraphIfNeeded(ctx context.Context, hostDir, dataDir string) {
+	// Prefer new location; fall back to legacy location inside the git repo.
+	p := BeadGraphPath(dataDir)
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		p = filepath.Join(hostDir, legacyFactoryDir, "build", "beads-graph.json")
+	}
 	b, err := os.ReadFile(p)
 	if err != nil {
 		return // file doesn't exist, nothing to migrate

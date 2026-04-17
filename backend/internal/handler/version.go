@@ -123,7 +123,7 @@ func (h *VersionHandler) GetVersionSnapshot(w http.ResponseWriter, r *http.Reque
 	}
 
 	resp.Meta, _ = fsrepo.ReadVersionMeta(project.HostDir, version)
-	resp.Summary, _ = fsrepo.ReadSummaryDoc(project.HostDir, version)
+	resp.Summary, _ = fsrepo.ReadSummaryDoc("", project.HostDir, version)
 
 	stages := []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild}
 	for _, stage := range stages {

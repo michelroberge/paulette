@@ -22,7 +22,9 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 	"github.com/michelroberge/paulette/backend/internal/provider"
+	"github.com/michelroberge/paulette/backend/internal/rag"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -39,6 +41,7 @@ type BeadHandler struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	buildPool        *provider.BuildPool
+	ragClient        *rag.Client
 	logBase          string
 }
 
@@ -56,6 +59,45 @@ func (h *BeadHandler) SetProviderRegistry(reg *provider.Registry, sc *provider.S
 // SetBuildPool wires in the build pool for parallel bead execution.
 func (h *BeadHandler) SetBuildPool(pool *provider.BuildPool) {
 	h.buildPool = pool
+}
+
+// SetRAGClient wires in the RAG client for knowledge retrieval and ingestion.
+func (h *BeadHandler) SetRAGClient(client *rag.Client) {
+	h.ragClient = client
+}
+
+// ragOnBeadClosed fires a non-blocking RAG ingest for a completed bead's code.
+func (h *BeadHandler) ragOnBeadClosed(project *model.Project, bead model.Bead) {
+	if h.ragClient == nil || !h.ragClient.IsHealthy() {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := rag.IngestBeadCode(ctx, h.ragClient, project, bead); err != nil {
+			log.Printf("RAG bead ingest failed for %s/%s: %v", project.Name, bead.ID, err)
+		}
+	}()
+}
+
+// ragOnReviewOutcome fires non-blocking RAG feedback based on code review results.
+func (h *BeadHandler) ragOnReviewOutcome(project *model.Project, bead model.Bead, lgtm bool, findings string) {
+	if h.ragClient == nil || !h.ragClient.IsHealthy() {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if lgtm {
+			if err := rag.RecordPositiveOutcome(ctx, h.ragClient, project, bead); err != nil {
+				log.Printf("RAG positive feedback failed for %s/%s: %v", project.Name, bead.ID, err)
+			}
+		} else {
+			if err := rag.RecordNegativeOutcome(ctx, h.ragClient, project, bead, findings); err != nil {
+				log.Printf("RAG negative feedback failed for %s/%s: %v", project.Name, bead.ID, err)
+			}
+		}
+	}()
 }
 
 // resolveProvider returns the Provider, model ID, and optional stage settings to
@@ -87,7 +129,7 @@ func (h *BeadHandler) GetGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// One-time migration: if old beads-graph.json exists, migrate to bd notes
-	fsrepo.MigrateBeadGraphIfNeeded(r.Context(), project.HostDir)
+	fsrepo.MigrateBeadGraphIfNeeded(r.Context(), project.HostDir, project.DataDir)
 
 	// Reset stale in_progress beads if no execution is currently active (e.g. after a restart)
 	if h.runs.Active(project.ID, "build", "beads-execute") == nil {
@@ -218,23 +260,23 @@ func (h *BeadHandler) Generate(w http.ResponseWriter, r *http.Request) {
 // StartGenerateRun starts the beads generation run without HTTP plumbing.
 // Returns (nil, nil) on race condition.
 func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, error) {
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 	if buildContent == "" {
 		return nil, fmt.Errorf("no build artifact — complete the Build stage first")
 	}
 
-	archContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
+	archContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageArchitecture)
 
 	run := h.runs.Start(project.ID, "build", "beads-generate")
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "beads-generate")
+	writeActivity(h.activityRepo, project.DataDir, model.StageBuild, "beads-generate")
 	runLogID := startRunLog(h.logBase, project, model.StageBuild, "beads-generate")
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageBuild)
 
 		var generateTokens int
 		var rlErr string
@@ -244,14 +286,14 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
-				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageBuild, "beads-generate"), generateTokens, beadNotes)
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.DataDir, project.HostDir, model.StageBuild, "beads-generate"), generateTokens, beadNotes)
 			}
 		}()
 		defer func() {
 			if generateTokens > 0 {
 				project.AddStageTokens(model.StageBuild, generateTokens)
 				h.registry.Update(project)
-				recordSession(project.HostDir, model.StageBuild, model.SessionBeadGenerate, project.Iteration, runStart, generateTokens)
+				recordSession(project.DataDir, model.StageBuild, model.SessionBeadGenerate, project.Iteration, runStart, generateTokens)
 			}
 		}()
 
@@ -281,7 +323,7 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 		_, saNumCtx, saStream := sa.Fields()
 		events, err := prov.Chat(ctx, provider.ChatRequest{
 			Model:        modelID,
-			SystemPrompt: agent.ParseBuildPlanSystemPrompt,
+			SystemPrompt: agent.GetParseBuildPlanPrompt(promptStoreForProject(project)),
 			UserMessage:  parseBuildPlanPrompt.String(),
 			ProjectDir:   project.HostDir,
 			Stage:        string(model.StageBuild),
@@ -540,12 +582,12 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "beads-execute")
+	writeActivity(h.activityRepo, project.DataDir, model.StageBuild, "beads-execute")
 	runLogID := startRunLog(h.logBase, project, model.StageBuild, "beads-execute")
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageBuild)
 
 		var totalBuildTokens atomic.Int64
 		var rlErr string
@@ -561,7 +603,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 			if n := int(totalBuildTokens.Load()); n > 0 {
 				project.AddStageTokens(model.StageBuild, n)
 				h.registry.Update(project)
-				recordSession(project.HostDir, model.StageBuild, model.SessionBeadExecute, project.Iteration, runStart, n)
+				recordSession(project.DataDir, model.StageBuild, model.SessionBeadExecute, project.Iteration, runStart, n)
 			}
 		}()
 
@@ -570,7 +612,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		// Load all artifacts for context injection
 		artifacts := map[model.StageName]string{}
 		for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
-			content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
+			content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, stage)
 			if content != "" {
 				artifacts[stage] = content
 			}
@@ -580,7 +622,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		var enhCtx *agent.EnhancementContext
 		if project.EnhancementVision != "" {
 			enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-			summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+			summaryPath := filepath.Join(project.DataDir, "summary.md")
 			if data, err := os.ReadFile(summaryPath); err == nil {
 				enhCtx.Summary = string(data)
 			}
@@ -614,12 +656,12 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				}
 				skillCache = append(skillCache, cachedSkill{skill: s, prompt: promptText})
 				// Copy to project for local agent access
-				h.skillRepo.CopyToProject(project.HostDir, s.ID)
+				h.skillRepo.CopyToProject(project.DataDir, s.ID)
 			}
 		}
 
 		// Set up skill observer to detect emergent patterns during execution
-		observer := NewSkillObserver(project.HostDir, h.skillRepo, run, project, 5, h.providerRegistry, h.stageConfig)
+		observer := NewSkillObserver(project.DataDir, project.HostDir, h.skillRepo, run, project, 5, h.providerRegistry, h.stageConfig)
 		defer observer.Flush()
 
 		var wg sync.WaitGroup
@@ -725,7 +767,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						return
 					}
 				}
-				agentEvents, err := dispatchExecuteBead(beadCtx, prov, modelID, sa, project.HostDir, currentBead, artifacts, enhCtx)
+				agentEvents, err := dispatchExecuteBead(beadCtx, prov, modelID, sa, project.HostDir, currentBead, artifacts, enhCtx, promptStoreForProject(project))
 				if err != nil {
 					run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] execute failed: %v", currentBead.ID, err)})
 					return
@@ -767,7 +809,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 😈 Devil's advocate reviewing (attempt %d/%d)...", currentBead.ID, iteration+1, maxReviewIterations)})
 
 					siblings, openBeads := reviewContext(ctx, project.HostDir, currentBead)
-					findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, reviewProv, reviewModelID, reviewSA, project.HostDir, currentBead, artifacts, siblings, openBeads, enhCtx)
+					findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, reviewProv, reviewModelID, reviewSA, project.HostDir, currentBead, artifacts, siblings, openBeads, enhCtx, promptStoreForProject(project))
 					if reviewTokens > 0 {
 						currentBead.Tokens += reviewTokens
 						totalBuildTokens.Add(int64(reviewTokens))
@@ -809,6 +851,8 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", b.ID, b.Title)})
 						observer.RecordBead(b, b.Title, b.Description)
+						h.ragOnBeadClosed(project, b)
+						h.ragOnReviewOutcome(project, b, isApproved, findings)
 						return
 					}
 
@@ -867,7 +911,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Starting correction: %s", corrID, corrTitle)})
 
-					corrEvents, err := dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, corrBead, artifacts, enhCtx)
+					corrEvents, err := dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, corrBead, artifacts, enhCtx, promptStoreForProject(project))
 					if err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] correction execute failed: %v", corrID, err)})
 						return
@@ -952,7 +996,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				run.Emit(agent.StreamEvent{Type: "error", Content: "Fix bead resolve provider failed: " + fixProvErr.Error()})
 				break
 			}
-			fixEvents, err := dispatchExecuteBead(ctx, fixProv, fixModelID, fixSA, project.HostDir, fixBead, artifacts, enhCtx)
+			fixEvents, err := dispatchExecuteBead(ctx, fixProv, fixModelID, fixSA, project.HostDir, fixBead, artifacts, enhCtx, promptStoreForProject(project))
 				if err != nil {
 					run.Emit(agent.StreamEvent{Type: "error", Content: "Fix bead execution failed: " + err.Error()})
 					break
@@ -994,9 +1038,10 @@ func dispatchExecuteBead(
 	bead model.Bead,
 	artifacts map[model.StageName]string,
 	enhCtx *agent.EnhancementContext,
+	store *promptfiles.PromptStore,
 ) (<-chan agent.StreamEvent, error) {
 	if _, ok := prov.(*provider.ClaudeCLIProvider); ok {
-		return agent.ExecuteBead(ctx, projectDir, bead, artifacts, enhCtx)
+		return agent.ExecuteBead(ctx, projectDir, bead, artifacts, store, enhCtx)
 	}
 	// Ollama models lack reliable multi-step tool use; use the multi-level
 	// non-agentic orchestration path (file planner → per-file generator → write).
@@ -1004,7 +1049,7 @@ func dispatchExecuteBead(
 		return dispatchExecuteBeadOrchestrated(ctx, prov, modelID, sa, projectDir, bead, artifacts, enhCtx)
 	}
 	// Build system + user prompts for non-CLI providers.
-	systemPrompt, userMsg := agent.BuildExecuteBeadRequest(ctx, projectDir, bead, artifacts, enhCtx)
+	systemPrompt, userMsg := agent.BuildExecuteBeadRequest(ctx, projectDir, bead, artifacts, enhCtx, store)
 	return prov.ExecuteAgent(ctx, provider.AgentRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
@@ -1026,9 +1071,10 @@ func dispatchReviewBead(
 	siblings []model.Bead,
 	openBeads []model.Bead,
 	enhCtx *agent.EnhancementContext,
+	store *promptfiles.PromptStore,
 ) (string, int, error) {
 	if _, ok := prov.(*provider.ClaudeCLIProvider); ok {
-		return agent.ReviewBead(ctx, projectDir, bead, artifacts, siblings, openBeads, enhCtx)
+		return agent.ReviewBead(ctx, projectDir, bead, artifacts, siblings, openBeads, store, enhCtx)
 	}
 
 	// Ollama: use chat-based review with file contents inlined (no tool use).
@@ -1038,7 +1084,7 @@ func dispatchReviewBead(
 	}
 
 	// Other providers: agentic review with Bash-only tools.
-	systemPrompt, userMsg := agent.BuildReviewBeadRequest(projectDir, bead, artifacts, siblings, openBeads, enhCtx)
+	systemPrompt, userMsg := agent.BuildReviewBeadRequest(projectDir, bead, artifacts, siblings, openBeads, enhCtx, store)
 	ch, err := prov.ExecuteAgent(ctx, provider.AgentRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
@@ -1447,7 +1493,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 
 		artifacts := map[model.StageName]string{}
 		for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
-			content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
+			content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, stage)
 			if content != "" {
 				artifacts[stage] = content
 			}
@@ -1456,7 +1502,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 		var enhCtx *agent.EnhancementContext
 		if project.EnhancementVision != "" {
 			enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-			summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+			summaryPath := filepath.Join(project.DataDir, "summary.md")
 			if data, err := os.ReadFile(summaryPath); err == nil {
 				enhCtx.Summary = string(data)
 			}
@@ -1482,7 +1528,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		agentEvents, err := dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, *bead, artifacts, enhCtx)
+		agentEvents, err := dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, *bead, artifacts, enhCtx, promptStoreForProject(project))
 		if err != nil {
 			run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] execute failed: %v", bead.ID, err)})
 			return
@@ -1521,7 +1567,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 			run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 😈 Devil's advocate reviewing (attempt %d/%d)...", bead.ID, iteration+1, maxReviewIterations)})
 
 			siblings, openBeads := reviewContext(ctx, project.HostDir, *bead)
-			findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, reviewProv, reviewModelID, reviewSA, project.HostDir, *bead, artifacts, siblings, openBeads, enhCtx)
+			findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, reviewProv, reviewModelID, reviewSA, project.HostDir, *bead, artifacts, siblings, openBeads, enhCtx, promptStoreForProject(project))
 			if reviewTokens > 0 {
 				bead.Tokens += reviewTokens
 				totalTokens += reviewTokens
@@ -1563,12 +1609,14 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 				beadJSON, _ = json.Marshal(bead)
 				run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 				run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", bead.ID, bead.Title)})
+				h.ragOnBeadClosed(project, *bead)
+				h.ragOnReviewOutcome(project, *bead, isApproved, findings)
 				return
 			}
 
 			// Issues found — re-execute with feedback (simplified: just close and let next cycle handle)
 			run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 🔄 Re-executing with review feedback...", bead.ID)})
-			agentEvents, err = dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, *bead, artifacts, enhCtx)
+			agentEvents, err = dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, *bead, artifacts, enhCtx, promptStoreForProject(project))
 			if err != nil {
 				run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] re-execute failed: %v", bead.ID, err)})
 				return

@@ -139,7 +139,9 @@ func buildRecoveryHandler(t *testing.T) (
 		provRegistry,
 		stageConfig,
 		connStore,
-		"", // logBase empty in tests
+		nil, // ragClient
+		"",  // logBase empty in tests
+		"",  // regPath empty in tests
 	)
 	return
 }

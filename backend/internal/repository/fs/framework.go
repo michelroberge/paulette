@@ -9,17 +9,15 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
-const frameworkRelPath = ".paulette/ux/framework.json"
-
 // FrameworkPath returns the absolute path to framework.json for a project.
-func FrameworkPath(hostDir string) string {
-	return filepath.Join(hostDir, frameworkRelPath)
+func FrameworkPath(dataDir string) string {
+	return filepath.Join(dataDir, "ux", "framework.json")
 }
 
 // ReadFramework reads the framework config from disk.
 // Returns the default (Tailwind) config when the file doesn't exist.
-func ReadFramework(hostDir string) (*model.FrameworkConfig, error) {
-	p := FrameworkPath(hostDir)
+func ReadFramework(dataDir string) (*model.FrameworkConfig, error) {
+	p := FrameworkPath(dataDir)
 	b, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -35,8 +33,8 @@ func ReadFramework(hostDir string) (*model.FrameworkConfig, error) {
 }
 
 // WriteFramework writes the framework config atomically (tmp file + rename).
-func WriteFramework(hostDir string, cfg *model.FrameworkConfig) error {
-	p := FrameworkPath(hostDir)
+func WriteFramework(dataDir string, cfg *model.FrameworkConfig) error {
+	p := FrameworkPath(dataDir)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}

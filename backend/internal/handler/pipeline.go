@@ -20,6 +20,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
 	"github.com/michelroberge/paulette/backend/internal/provider"
+	"github.com/michelroberge/paulette/backend/internal/rag"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -35,10 +36,11 @@ type PipelineHandler struct {
 	git              *git.Service
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
+	ragClient        *rag.Client
 	logBase          string
 }
 
-func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, chatRepo repository.ChatRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore, logBase string) *PipelineHandler {
+func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, chatRepo repository.ChatRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore, ragClient *rag.Client, logBase string) *PipelineHandler {
 	return &PipelineHandler{
 		registry:         registry,
 		projectRepo:      projectRepo,
@@ -49,6 +51,7 @@ func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository
 		git:              gitSvc,
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
+		ragClient:        ragClient,
 		logBase:          logBase,
 	}
 }
@@ -78,7 +81,7 @@ func (h *PipelineHandler) GetPipeline(w http.ResponseWriter, r *http.Request) {
 // buildState assembles pipeline state enriched with per-stage activity.
 func (h *PipelineHandler) buildState(project *model.Project) model.PipelineState {
 	liveRuns := h.runs.ActiveForProject(project.ID)
-	persisted, _ := h.activityRepo.ReadActivity(project.HostDir)
+	persisted, _ := h.activityRepo.ReadActivity(project.DataDir)
 	activities := mergeActivities(liveRuns, persisted)
 	return pipeline.BuildPipelineState(project.CurrentStage, activities, project.SummaryApproved)
 }
@@ -171,8 +174,8 @@ func (h *PipelineHandler) ApproveInternal(projectID string) error {
 		return fmt.Errorf("project not found: %w", err)
 	}
 
-	// Check artifact exists for current stage (check both .paulette and docs/)
-	artifactContent, err := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, project.CurrentStage)
+	// Check artifact exists for current stage (check both dataDir and docs/)
+	artifactContent, err := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, project.CurrentStage)
 	if err != nil {
 		return fmt.Errorf("failed to check artifact: %w", err)
 	}
@@ -225,25 +228,25 @@ func (h *PipelineHandler) ApproveInternal(projectID string) error {
 	}); err != nil {
 		return fmt.Errorf("failed to update registry: %w", err)
 	}
-	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
+	if err := h.projectRepo.Save(project.DataDir, project); err != nil {
 		return fmt.Errorf("failed to save project: %w", err)
 	}
 
-	// Promote artifact from .paulette to docs
-	if artifact, readErr := h.artifactRepo.Read(project.HostDir, previousStage); readErr == nil && artifact != "" {
+	// Promote artifact from dataDir to docs
+	if artifact, readErr := h.artifactRepo.Read(project.DataDir, previousStage); readErr == nil && artifact != "" {
 		if docErr := fsrepo.WriteStageDoc(project.HostDir, project.Version, previousStage, artifact); docErr != nil {
 			log.Printf("docs promotion failed for %s: %v", previousStage, docErr)
 		} else {
-			aiFactoryPath := filepath.Join(project.HostDir, ".paulette", string(previousStage), string(previousStage)+".md")
-			if rmErr := os.Remove(aiFactoryPath); rmErr != nil {
-				log.Printf("failed to remove .paulette artifact %s: %v", aiFactoryPath, rmErr)
+			artifactPath := filepath.Join(project.DataDir, string(previousStage), string(previousStage)+".md")
+			if rmErr := os.Remove(artifactPath); rmErr != nil {
+				log.Printf("failed to remove working-state artifact %s: %v", artifactPath, rmErr)
 			}
 		}
 	}
 
 	// Promote UX mock.html to docs
 	if previousStage == model.StageUX {
-		mockPath := filepath.Join(project.HostDir, ".paulette", "ux", "mock.html")
+		mockPath := filepath.Join(project.DataDir, "ux", "mock.html")
 		if mockBytes, readErr := os.ReadFile(mockPath); readErr == nil && len(mockBytes) > 0 {
 			if docErr := fsrepo.WriteMockDoc(project.HostDir, project.Version, mockBytes); docErr != nil {
 				log.Printf("mock.html promotion failed: %v", docErr)
@@ -256,8 +259,33 @@ func (h *PipelineHandler) ApproveInternal(projectID string) error {
 		log.Printf("git commit failed for %s: %v", previousStage, err)
 	}
 
+	// Fire-and-forget: ingest approved artifact into RAG knowledge base.
+	if h.ragClient != nil && h.ragClient.IsHealthy() {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := rag.IngestArtifact(ctx, h.ragClient, project, previousStage, artifactContent); err != nil {
+				log.Printf("RAG ingest failed for %s/%s: %v", project.Name, previousStage, err)
+			}
+		}()
+	}
+
 	if nextStage == model.StageComplete {
 		h.startSummaryRun(project)
+
+		// Fire-and-forget: ingest all project code and promote artifacts on completion.
+		if h.ragClient != nil && h.ragClient.IsHealthy() {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				if err := rag.IngestProjectCode(ctx, h.ragClient, project); err != nil {
+					log.Printf("RAG bulk code ingest failed for %s: %v", project.Name, err)
+				}
+				if err := rag.PromoteProjectArtifacts(ctx, h.ragClient, project); err != nil {
+					log.Printf("RAG artifact promotion failed for %s: %v", project.Name, err)
+				}
+			}()
+		}
 	}
 
 	return nil
@@ -269,7 +297,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 	if run == nil {
 		return // already running
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary")
+	writeActivity(h.activityRepo, project.DataDir, model.StageComplete, "summary")
 	runLogID := startRunLog(h.logBase, project, model.StageComplete, "summary")
 
 	// Collect artifacts before entering the goroutine.
@@ -278,7 +306,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		if s == model.StageComplete {
 			break
 		}
-		content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, s)
+		content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, s)
 		if content != "" {
 			artifacts[s] = content
 		}
@@ -288,22 +316,22 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageComplete)
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
-		failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", provErr.Error())
+		failActivity(h.activityRepo, project.DataDir, model.StageComplete, "summary", provErr.Error())
 		run.Emit(agent.StreamEvent{Type: "error", Content: provErr.Error()})
-		clearActivity(h.activityRepo, project.HostDir, model.StageComplete)
+		clearActivity(h.activityRepo, project.DataDir, model.StageComplete)
 		run.Finish(h.runs)
 		return
 	}
 
 	// Pass 0 for maxContextChars (no truncation) — the provider's num_ctx
 	// setting handles context limits. Callers can pass a budget for constrained models.
-	systemPrompt, userMsg := agent.BuildStreamSummaryRequest(artifacts, project.Name, project.Version, 0)
+	systemPrompt, userMsg := agent.BuildStreamSummaryRequest(artifacts, project.Name, project.Version, 0, promptStoreForProject(project))
 	saTemp, saNumCtx, saStream := sa.Fields()
 
 	go func() {
 		// LIFO defer: clearActivity runs first, then run.Finish (so watcher sees clean state)
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageComplete)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageComplete)
 
 		var rlErr string
 		var tokens int
@@ -311,7 +339,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
-				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageComplete, "summary"), tokens, "")
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.DataDir, project.HostDir, model.StageComplete, "summary"), tokens, "")
 			}
 		}()
 
@@ -327,7 +355,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		})
 		if err != nil {
 			rlErr = err.Error()
-			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", err.Error())
+			failActivity(h.activityRepo, project.DataDir, model.StageComplete, "summary", err.Error())
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
 			return
 		}
@@ -350,12 +378,12 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		summary := parsed
 		if summary == "" {
 			rlErr = "summary generation produced no output"
-			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", rlErr)
+			failActivity(h.activityRepo, project.DataDir, model.StageComplete, "summary", rlErr)
 			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
 
-		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+		summaryPath := filepath.Join(project.DataDir, "summary.md")
 		if err := os.WriteFile(summaryPath, []byte(summary), 0644); err != nil {
 			rlErr = "failed to write summary: " + err.Error()
 			log.Printf("failed to write summary: %v", err)
@@ -365,19 +393,15 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		project.SummaryReady = true
 		project.SummaryTokens = tokens
 		project.AddStageTokens(model.StageComplete, tokens)
-		recordSession(project.HostDir, model.StageComplete, model.SessionSummaryKind, project.Iteration, runStart, tokens)
+		recordSession(project.DataDir, model.StageComplete, model.SessionSummaryKind, project.Iteration, runStart, tokens)
 		project.UpdatedAt = time.Now()
 		if err := h.registry.Update(project); err != nil {
 			log.Printf("failed to update registry after summary: %v", err)
 		}
-		if err := h.projectRepo.Save(project.HostDir, project); err != nil {
+		if err := h.projectRepo.Save(project.DataDir, project); err != nil {
 			log.Printf("failed to save project after summary: %v", err)
 		}
 
-		commitMsg := fmt.Sprintf("complete(v%s): iteration summary", project.Version)
-		if err := h.git.AddAndCommit(project.HostDir, []string{".paulette/summary.md"}, commitMsg); err != nil {
-			log.Printf("git commit summary failed: %v", err)
-		}
 		// Tag the completed version
 		tagName := "v" + project.Version
 		if err := h.git.CreateTag(project.HostDir, tagName, fmt.Sprintf("Iteration %d complete", project.Iteration)); err != nil {
@@ -418,7 +442,7 @@ func (h *PipelineHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	approved := project.SummaryApproved
-	summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+	summaryPath := filepath.Join(project.DataDir, "summary.md")
 	b, err := os.ReadFile(summaryPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -460,7 +484,7 @@ func (h *PipelineHandler) RegenerateSummary(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "failed to update registry: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
+	if err := h.projectRepo.Save(project.DataDir, project); err != nil {
 		http.Error(w, "failed to save project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -481,7 +505,7 @@ func (h *PipelineHandler) ApproveSummary(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+	summaryPath := filepath.Join(project.DataDir, "summary.md")
 	b, err := os.ReadFile(summaryPath)
 	if err != nil {
 		http.Error(w, "failed to read summary: "+err.Error(), http.StatusInternalServerError)
@@ -496,7 +520,7 @@ func (h *PipelineHandler) ApproveSummary(w http.ResponseWriter, r *http.Request)
 	// Archive stage chat histories into the versioned docs directory.
 	archiveStages := []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild}
 	for _, stage := range archiveStages {
-		msgs, err := h.chatRepo.GetHistory(project.HostDir, stage)
+		msgs, err := h.chatRepo.GetHistory(project.DataDir, stage)
 		if err != nil {
 			log.Printf("failed to read chat history for stage %s: %v", stage, err)
 			continue
@@ -511,7 +535,7 @@ func (h *PipelineHandler) ApproveSummary(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Snapshot the beads graph if present.
-	beadGraphBytes, err := os.ReadFile(fsrepo.BeadGraphPath(project.HostDir))
+	beadGraphBytes, err := os.ReadFile(fsrepo.BeadGraphPath(project.DataDir))
 	if err == nil && len(beadGraphBytes) > 0 {
 		if err := fsrepo.WriteBeadsGraphSnapshot(project.HostDir, project.Version, beadGraphBytes); err != nil {
 			log.Printf("failed to snapshot beads graph: %v", err)
@@ -578,7 +602,7 @@ func (h *PipelineHandler) ApproveSummary(w http.ResponseWriter, r *http.Request)
 	if err := h.registry.Update(project); err != nil {
 		log.Printf("failed to update registry after summary approve: %v", err)
 	}
-	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
+	if err := h.projectRepo.Save(project.DataDir, project); err != nil {
 		log.Printf("failed to save project after summary approve: %v", err)
 	}
 

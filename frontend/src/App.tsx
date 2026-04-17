@@ -21,6 +21,8 @@ import { VersionHistoryView } from './components/layout/VersionHistoryView';
 import { ConfigurePage } from './components/configure/ConfigurePage';
 import { ProjectStageSettings } from './components/configure/ProjectStageSettings';
 import { RunLogView } from './components/RunLogView';
+import { WorkflowPage } from './components/pipeline/WorkflowPage';
+import { ConnectionWorkflowPage } from './components/pipeline/ConnectionWorkflowPage';
 import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
 import { getArtifact } from './api/artifacts';
 import { getMock } from './api/mock';
@@ -29,11 +31,14 @@ import { startEnhancement } from './api/enhance';
 import { getProject, patchProject } from './api/projects';
 import { getActiveRuns, sendBtw } from './api/activity';
 import type { ActiveRun } from './api/activity';
-import { getProjectOverrides } from './api/stageConfig';
+import { getProjectOverrides, getGlobalDefaults } from './api/stageConfig';
+import { getConnection } from './api/connections';
 import { useChat } from './hooks/useChat';
+import { useRefinementLoop } from './hooks/useRefinementLoop';
 import { useAgentStream } from './hooks/useAgentStream';
+import { RefinementPanel, SECTION_LABELS } from './components/chat/RefinementPanel';
 import { AgentStreamingView } from './components/layout/AgentStreamingView';
-import type { Project, PipelineState, StageName, VersionBump } from './types';
+import type { Project, PipelineState, StageName, VersionBump, Message } from './types';
 import './App.css';
 
 const KICKOFF_MESSAGES: Partial<Record<StageName, string>> = {
@@ -71,6 +76,10 @@ function getTabsForStage(stage: StageName | null, hasVisionArtifact: boolean): S
       { id: 'execute', label: 'Implement' },
     ];
   }
+  if (stage === 'vision') return [
+    { id: 'chat', label: 'Chat' },
+    { id: 'artifact', label: 'Artifact' },
+  ];
   return [
     { id: 'chat', label: 'Chat' },
     { id: 'artifact', label: 'Artifact', dimmed: stage === 'vision' && !hasVisionArtifact },
@@ -119,6 +128,7 @@ function ProjectDetailPage() {
   const [btwInput, setBtwInput] = useState('');
   const [btwSending, setBtwSending] = useState(false);
   const [showRunLog, setShowRunLog] = useState(false);
+  const [guidedMode, setGuidedMode] = useState(false);
 
   // Load project from URL param on mount / ID change
   useEffect(() => {
@@ -141,8 +151,41 @@ function ProjectDetailPage() {
     [stageTokens],
   );
 
-  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, loadHistory, send, seed, resume, stop } =
+  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, ragSources, loadHistory, send, seed, resume, stop, addLocalMessage, seedMessages } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger, selectedStage ? (n) => addTokens(selectedStage, n) : undefined);
+
+  const refinementLoop = useRefinementLoop(
+    project?.id ?? null,
+    (n) => addTokens('vision', n),
+  );
+
+  const handleContinueFromRefinement = useCallback((followUpMessage: string) => {
+    const chatMessages: Message[] = [];
+    for (const entry of refinementLoop.log) {
+      if (entry.phase === 'await_answer' && entry.question && !entry.userAnswer) {
+        chatMessages.push({
+          role: 'assistant',
+          content: `**${SECTION_LABELS[entry.question.section] ?? entry.question.section}**: ${entry.question.text}`,
+          timestamp: new Date(entry.timestamp).toISOString(),
+        });
+      }
+      if (entry.userAnswer) {
+        chatMessages.push({
+          role: 'user',
+          content: entry.userAnswer,
+          timestamp: new Date(entry.timestamp).toISOString(),
+        });
+      }
+    }
+    chatMessages.push({
+      role: 'assistant',
+      content: 'Vision document generated. You can continue refining it here.',
+      timestamp: new Date().toISOString(),
+    });
+    seedMessages(chatMessages);
+    setGuidedMode(false);
+    setTimeout(() => send(followUpMessage), 0);
+  }, [refinementLoop.log, seedMessages, send]);
 
   const { active: agentActive, streamingText: agentStreamingText, operation: agentOperation, stage: agentStage } =
     useAgentStream(project?.id ?? null, activeRuns);
@@ -195,6 +238,27 @@ function ProjectDetailPage() {
       loadStageOverrides();
     }
   }, [project, loadPipeline, loadStageOverrides]);
+
+  // Detect Ollama connection for vision stage → default guided mode
+  useEffect(() => {
+    if (!project || selectedStage !== 'vision') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [overrides, defaults] = await Promise.all([
+          getProjectOverrides(project.id),
+          getGlobalDefaults(),
+        ]);
+        const assignment = overrides.overrides.vision ?? defaults.stageDefaults?.vision;
+        if (!assignment?.connectionId) return;
+        const conn = await getConnection(assignment.connectionId);
+        if (!cancelled) setGuidedMode(conn.providerType === 'ollama');
+      } catch {
+        // Non-critical; leave default (false)
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [project?.id, selectedStage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subscribe to live pipeline updates via SSE
   useEffect(() => {
@@ -311,6 +375,12 @@ function ProjectDetailPage() {
     if (nextTurn !== 'agent') return;
 
     if (messages.length === 0) {
+      // Fresh vision stage on a new project — greet the user and wait for their input
+      // rather than immediately calling the AI with a generic kickoff message.
+      if (selectedStage === 'vision' && !project?.enhancementVision) {
+        addLocalMessage("Provide a short description of your idea, we'll work it out together.");
+        return;
+      }
       // Fresh stage — send the opening kickoff message.
       const doKickoff = async () => {
         // Vision (non-enhancement) opens with a local assistant greeting and waits for the
@@ -396,6 +466,12 @@ function ProjectDetailPage() {
     setProject(updated);
   };
 
+  const handleChangeAIMode = async (mode: 'files' | 'rag') => {
+    if (!project) return;
+    const updated = await patchProject(project.id, { aiMode: mode });
+    setProject(updated);
+  };
+
   // ── Loading / error states ──
 
   if (loadError) {
@@ -448,6 +524,8 @@ function ProjectDetailPage() {
           onShowRunLog={() => setShowRunLog(v => !v)}
           autonomous={!!project.autonomous}
           onToggleAutonomous={handleToggleAutonomous}
+          onChangeAIMode={handleChangeAIMode}
+          onShowWorkflow={() => navigate(`/projects/${project.id}/workflow`)}
           onVersionClick={() => setVersionSelectorOpen(v => !v)}
           viewingVersion={viewingVersion}
         />
@@ -516,7 +594,7 @@ function ProjectDetailPage() {
                   This artifact was auto-generated from your codebase. Review and refine via chat, then approve.
                 </div>
               )}
-              {agentActive && agentOperation !== 'chat' && agentStage === selectedStage && selectedStage !== 'ux' && selectedStage !== 'build' ? (
+              {agentActive && agentOperation !== 'chat' && agentOperation !== 'refinement' && agentStage === selectedStage && selectedStage !== 'ux' && selectedStage !== 'build' ? (
                 <AgentStreamingView
                   streamingText={agentStreamingText}
                   operation={agentOperation}
@@ -564,6 +642,7 @@ function ProjectDetailPage() {
                       connectionError={connectionError}
                       onOpenProjectSettings={() => setShowStageSettings(true)}
                       onRetry={resume}
+                      ragSources={ragSources}
                     />
                   )
                 )}
@@ -593,7 +672,42 @@ function ProjectDetailPage() {
               ) : (
               <StageView tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab}>
                 {activeTab === 'chat' && (
-                  streaming && selectedStage && ['ux', 'architecture'].includes(selectedStage) ? (
+                  selectedStage === 'vision' ? (
+                    <div className="vision-chat-container">
+                      <div className="guided-toggle-bar">
+                        <label className={`guided-toggle${guidedMode ? ' active' : ''}`}>
+                          <span className="toggle-label">Guided</span>
+                          <input
+                            type="checkbox"
+                            checked={guidedMode}
+                            onChange={() => setGuidedMode(g => !g)}
+                          />
+                          <span className="guided-toggle-track">
+                            <span className="guided-toggle-thumb" />
+                          </span>
+                        </label>
+                      </div>
+                      {guidedMode ? (
+                        <RefinementPanel
+                          loop={refinementLoop}
+                          onSend={(msg) => refinementLoop.start(msg)}
+                          onContinue={handleContinueFromRefinement}
+                        />
+                      ) : (
+                        <ChatPanel
+                          messages={messages}
+                          streaming={streaming}
+                          streamingContent={streamingContent}
+                          onSend={send}
+                          onStop={stop}
+                          connectionError={connectionError}
+                          onOpenProjectSettings={() => setShowStageSettings(true)}
+                          onRetry={resume}
+                          ragSources={ragSources}
+                        />
+                      )}
+                    </div>
+                  ) : streaming && selectedStage && ['ux', 'architecture'].includes(selectedStage) ? (
                     <div className="mock-split-layout">
                       <div className="mock-main-column">
                         <BuildingAnimation />
@@ -618,6 +732,9 @@ function ProjectDetailPage() {
                       connectionError={connectionError}
                       onOpenProjectSettings={() => setShowStageSettings(true)}
                       onRetry={resume}
+                      ragSources={ragSources}
+                      onGenerateArtifact={selectedStage && ['ux', 'architecture'].includes(selectedStage) ? () => send('Please generate the complete artifact document based on our discussion so far. Wrap it in <artifact> tags.') : undefined}
+                      generateArtifactLabel={selectedStage === 'ux' ? 'UX Design' : selectedStage === 'architecture' ? 'Architecture' : undefined}
                     />
                   )
                 )}
@@ -626,7 +743,7 @@ function ProjectDetailPage() {
                   <ArtifactPreview
                     projectId={project.id}
                     stage={selectedStage}
-                    refreshTrigger={artifactUpdated}
+                    refreshTrigger={artifactUpdated + refinementLoop.artifactUpdated}
                     onArtifactUpdated={() => setChatReloadTrigger(t => t + 1)}
                   />
                 )}
@@ -706,6 +823,8 @@ export default function App() {
     <Routes>
       <Route path="/" element={<ProjectListPage />} />
       <Route path="/projects/:id" element={<ProjectDetailPage />} />
+      <Route path="/projects/:id/workflow" element={<WorkflowPage />} />
+      <Route path="/configure/connections/:connId/workflow" element={<ConnectionWorkflowPage />} />
       <Route path="/configure" element={<ConfigurePage />} />
     </Routes>
   );

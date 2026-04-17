@@ -11,11 +11,11 @@ import (
 
 // recordSession writes a session record to the project's session log.
 // Call this from deferred token-flush functions in handlers.
-func recordSession(hostDir string, stage model.StageName, kind model.SessionKind, iteration int, startedAt time.Time, totalTokens int) {
+func recordSession(dataDir string, stage model.StageName, kind model.SessionKind, iteration int, startedAt time.Time, totalTokens int) {
 	if totalTokens <= 0 {
 		return
 	}
-	sw := fsrepo.GetSessionWriter(hostDir)
+	sw := fsrepo.GetSessionWriter(dataDir)
 	sw.Append(model.Session{
 		ID:          uuid.NewString(),
 		Stage:       stage,

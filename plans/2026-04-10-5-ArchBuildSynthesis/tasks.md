@@ -1,0 +1,6 @@
+- [ ] Task: Add arch-specs-synthesize and build-specs-synthesize prompts to defaults.go
+- [ ] Task: Create reusable synthesizeSpecs helper in chat handler
+- [ ] Task: Wire arch synthesis before architecture prompt assembly
+- [ ] Task: Wire build synthesis before build prompt assembly
+- [ ] Task: Add arch-specs and build-specs nodes to workflow graph
+- [ ] Task: Update NODE_PROMPT_MAP, NODE_CONTEXT_MAP, NODE_DESCRIPTION_MAP

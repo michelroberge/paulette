@@ -139,9 +139,9 @@ func Slugify(name string) string {
 	return strings.Trim(s, "-")
 }
 
-// CopyToProject copies a skill into the project's .paulette/skills/ directory
+// CopyToProject copies a skill into the project's {dataDir}/skills/ directory
 // so agents working in that repo have local access without external paths.
-func (r *SkillRepo) CopyToProject(hostDir string, skillID string) error {
+func (r *SkillRepo) CopyToProject(dataDir string, skillID string) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -153,7 +153,7 @@ func (r *SkillRepo) CopyToProject(hostDir string, skillID string) error {
 	promptPath := filepath.Join(r.baseDir, skillID, "prompt.md")
 	promptData, _ := os.ReadFile(promptPath)
 
-	projectSkillDir := filepath.Join(hostDir, ".paulette", "skills", skillID)
+	projectSkillDir := filepath.Join(dataDir, "skills", skillID)
 	if err := os.MkdirAll(projectSkillDir, 0755); err != nil {
 		return fmt.Errorf("create project skill dir: %w", err)
 	}
@@ -173,9 +173,9 @@ func (r *SkillRepo) CopyToProject(hostDir string, skillID string) error {
 	return nil
 }
 
-// ReadProjectSkills reads skills that have been copied into a project's .paulette/skills/.
-func ReadProjectSkills(hostDir string) ([]model.Skill, error) {
-	dir := filepath.Join(hostDir, ".paulette", "skills")
+// ReadProjectSkills reads skills that have been copied into a project's {dataDir}/skills/.
+func ReadProjectSkills(dataDir string) ([]model.Skill, error) {
+	dir := filepath.Join(dataDir, "skills")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -204,8 +204,8 @@ func ReadProjectSkills(hostDir string) ([]model.Skill, error) {
 }
 
 // ReadProjectSkillPrompt reads a skill's prompt template from the project copy.
-func ReadProjectSkillPrompt(hostDir, skillID string) (string, error) {
-	p := filepath.Join(hostDir, ".paulette", "skills", skillID, "prompt.md")
+func ReadProjectSkillPrompt(dataDir, skillID string) (string, error) {
+	p := filepath.Join(dataDir, "skills", skillID, "prompt.md")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return "", err
@@ -227,8 +227,8 @@ func hasOverlap(a, b []string) bool {
 }
 
 // ReadSkillSuggestions loads pending suggestions from a project's build directory.
-func ReadSkillSuggestions(hostDir string) (*model.SkillSuggestions, error) {
-	p := filepath.Join(hostDir, ".paulette", "build", "skill-suggestions.json")
+func ReadSkillSuggestions(dataDir string) (*model.SkillSuggestions, error) {
+	p := filepath.Join(dataDir, "build", "skill-suggestions.json")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -244,8 +244,8 @@ func ReadSkillSuggestions(hostDir string) (*model.SkillSuggestions, error) {
 }
 
 // WriteSkillSuggestions saves pending suggestions to a project's build directory.
-func WriteSkillSuggestions(hostDir string, suggestions *model.SkillSuggestions) error {
-	dir := filepath.Join(hostDir, ".paulette", "build")
+func WriteSkillSuggestions(dataDir string, suggestions *model.SkillSuggestions) error {
+	dir := filepath.Join(dataDir, "build")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
@@ -257,8 +257,8 @@ func WriteSkillSuggestions(hostDir string, suggestions *model.SkillSuggestions) 
 }
 
 // ReadObservedSkills loads observer-detected suggestions.
-func ReadObservedSkills(hostDir string) (*model.SkillSuggestions, error) {
-	p := filepath.Join(hostDir, ".paulette", "build", "observed-skills.json")
+func ReadObservedSkills(dataDir string) (*model.SkillSuggestions, error) {
+	p := filepath.Join(dataDir, "build", "observed-skills.json")
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -274,8 +274,8 @@ func ReadObservedSkills(hostDir string) (*model.SkillSuggestions, error) {
 }
 
 // WriteObservedSkills saves observer-detected suggestions.
-func WriteObservedSkills(hostDir string, suggestions *model.SkillSuggestions) error {
-	dir := filepath.Join(hostDir, ".paulette", "build")
+func WriteObservedSkills(dataDir string, suggestions *model.SkillSuggestions) error {
+	dir := filepath.Join(dataDir, "build")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}

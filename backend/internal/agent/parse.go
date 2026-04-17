@@ -67,7 +67,23 @@ func StripThinkBlocks(s string) string {
 // saved artifact rather than dumping everything into the chat discussion.
 func ParseResponse(raw string) ParsedResponse {
 	raw = StripThinkBlocks(raw)
-	if strings.Contains(raw, "<"+TagDiscussion+">") || strings.Contains(raw, "<"+TagArtifact+">") || strings.Contains(raw, "<"+TagJSON+">") {
+	hasStartMarker := strings.Contains(raw, markerStart)
+	hasArtTag      := strings.Contains(raw, "<"+TagArtifact+">")
+	hasDiscTag     := strings.Contains(raw, "<"+TagDiscussion+">")
+	hasJSONTag     := strings.Contains(raw, "<"+TagJSON+">")
+
+	// Require either (a) properly paired open+close tags, or (b) the envelope
+	// start marker combined with any structural tag. Prevents false positives
+	// when small models (e.g. llama3.2:1b) use <artifact> as an inline prose
+	// marker — those outputs have no closing tag and no envelope marker, so
+	// neither condition fires and the response falls through to the
+	// looksLikeDocument / extractDocumentAfterPreamble fallbacks.
+	properPairedTags := (hasArtTag  && strings.Contains(raw, "</"+TagArtifact+">")) ||
+		(hasDiscTag && strings.Contains(raw, "</"+TagDiscussion+">")) ||
+		hasJSONTag
+	envelopedTags := hasStartMarker && (hasArtTag || hasDiscTag || hasJSONTag)
+
+	if properPairedTags || envelopedTags {
 		return parseXMLEnvelope(raw)
 	}
 	lower := strings.ToLower(raw)
@@ -82,19 +98,46 @@ func ParseResponse(raw string) ParsedResponse {
 	if looksLikeDocument(trimmed) {
 		return ParsedResponse{Artifact: trimmed}
 	}
+	// Check for a short preamble before the actual document (common with small models
+	// that add "Sure! Here's the regenerated artifact:" before the markdown content).
+	if artifact, preamble, ok := extractDocumentAfterPreamble(trimmed); ok {
+		return ParsedResponse{Discussion: preamble, Artifact: artifact}
+	}
 	return ParsedResponse{Discussion: trimmed}
 }
 
+// extractDocumentAfterPreamble detects a conversational preamble (< 500 chars)
+// followed by a substantial markdown document starting with a heading.
+// Returns (artifact, preamble, true) when found.
+func extractDocumentAfterPreamble(s string) (string, string, bool) {
+	for _, prefix := range []string{"\n# ", "\n## "} {
+		idx := strings.Index(s, prefix)
+		if idx > 0 && idx < 500 {
+			docPart := strings.TrimSpace(s[idx:])
+			if len(docPart) >= 100 {
+				preamble := strings.TrimSpace(s[:idx])
+				return docPart, preamble, true
+			}
+		}
+	}
+	return "", "", false
+}
+
 // looksLikeDocument reports whether s appears to be a standalone document
-// rather than a conversational reply. The heuristic: the text must be
-// substantial (≥200 bytes) AND must begin with a markdown heading ("# " or "## ").
-// Conversational replies almost never start with a heading; generated documents
-// (vision, UX, architecture, build plans) always do.
+// rather than a conversational reply. Checks: starts with a markdown heading
+// and is substantial (≥100 bytes), OR contains multiple markdown headings
+// indicating structured content regardless of what it starts with.
 func looksLikeDocument(s string) bool {
-	if len(s) < 200 {
+	if len(s) < 100 {
 		return false
 	}
-	return strings.HasPrefix(s, "# ") || strings.HasPrefix(s, "## ")
+	// Starts with heading — classic document pattern
+	if strings.HasPrefix(s, "# ") || strings.HasPrefix(s, "## ") {
+		return true
+	}
+	// Multiple headings indicate structured document even without leading heading
+	headingCount := strings.Count(s, "\n# ") + strings.Count(s, "\n## ") + strings.Count(s, "\n### ")
+	return headingCount >= 2
 }
 
 // parseXMLEnvelope extracts sections from the XML envelope format.
