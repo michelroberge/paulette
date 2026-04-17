@@ -371,6 +371,16 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 			run.Emit(ev)
 		}
 
+		// Record full prompt snapshot for tuning/inspection.
+		writePromptSnapshot(h.logBase, project.Name, runLogID, model.PromptSnapshot{
+			Stage:        string(model.StageComplete),
+			Timestamp:    time.Now(),
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  userMsg,
+			RawResponse:  fullText.String(),
+		})
+
 		parsed := agent.ParseResponse(fullText.String()).Discussion
 		if parsed == "" {
 			parsed = strings.TrimSpace(fullText.String())

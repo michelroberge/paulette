@@ -26,14 +26,16 @@ type InstructHandler struct {
 	runs             *stream.Manager
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
+	logBase          string
 }
 
-func NewInstructHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager) *InstructHandler {
+func NewInstructHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, logBase string) *InstructHandler {
 	return &InstructHandler{
 		registry:     registry,
 		artifactRepo: artifactRepo,
 		activityRepo: activityRepo,
 		runs:         runs,
+		logBase:      logBase,
 	}
 }
 
@@ -136,6 +138,8 @@ func (h *InstructHandler) Plan(w http.ResponseWriter, r *http.Request) {
 		temp, numCtx, streamFlag = sa.Fields()
 	}
 
+	runLogID := startRunLog(h.logBase, project, model.StageBuild, "instruct")
+
 	go func() {
 		defer run.Finish(h.runs)
 
@@ -151,6 +155,7 @@ func (h *InstructHandler) Plan(w http.ResponseWriter, r *http.Request) {
 			Stream:       streamFlag,
 		})
 		if err != nil {
+			failRunLog(h.logBase, project.Name, runLogID, err.Error())
 			run.Emit(agent.StreamEvent{Type: "error", Content: "failed to start planning: " + err.Error()})
 			return
 		}
@@ -172,6 +177,17 @@ func (h *InstructHandler) Plan(w http.ResponseWriter, r *http.Request) {
 				run.Emit(ev)
 			}
 		}
+
+		// Record full prompt snapshot for tuning/inspection.
+		writePromptSnapshot(h.logBase, project.Name, runLogID, model.PromptSnapshot{
+			Stage:        string(model.StageBuild),
+			Timestamp:    time.Now(),
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  req.Message,
+			RawResponse:  fullContent.String(),
+		})
+		successRunLog(h.logBase, project.Name, runLogID, nil, 0, "instruct planning")
 	}()
 
 	run.StreamTo(w, r, 0)

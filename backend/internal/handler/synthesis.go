@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/model"
@@ -17,6 +18,7 @@ import (
 // synthesizeSpecs is a reusable helper that condenses multiple artifacts into
 // a single specs document via an LLM call. It caches the result on disk.
 // Returns the synthesized content, or "" if synthesis was skipped (larger than originals).
+// When trace is non-nil, the full LLM exchange is recorded for tuning/inspection.
 func synthesizeSpecs(
 	ctx context.Context,
 	prov provider.Provider,
@@ -26,6 +28,7 @@ func synthesizeSpecs(
 	promptName string, // e.g. "arch-specs-synthesize.md.tmpl"
 	cachePath string, // full path for caching
 	inputs map[string]string, // labeled inputs for the user message
+	trace *runTrace, // optional: records the LLM exchange
 ) string {
 	// Cache check: if file exists, reuse.
 	if data, err := os.ReadFile(cachePath); err == nil && len(data) > 0 {
@@ -69,10 +72,21 @@ func synthesizeSpecs(
 	}
 
 	var fullResponse strings.Builder
+	runStart := time.Now()
 	for ev := range events {
 		if ev.Type == "chunk" {
 			fullResponse.WriteString(ev.Content)
 		}
+	}
+
+	// Record the LLM exchange for tuning/inspection.
+	if trace != nil {
+		dur := time.Since(runStart)
+		trace.logStep("synthesis_"+promptName, "ok",
+			fmt.Sprintf("resp=%d chars", fullResponse.Len()),
+			fmt.Sprintf("## System Prompt\n%s\n\n## User Message\n%s\n\n## Raw Response\n%s",
+				sysPrompt, userMsg.String(), fullResponse.String()),
+			dur)
 	}
 
 	// Extract artifact from XML envelope.
@@ -109,6 +123,7 @@ func totalInputSize(inputs map[string]string) int {
 // applySynthesis checks if synthesis should run for the current stage and
 // replaces previousArtifacts entries with synthesized versions when smaller.
 // Requires a running context and resolved provider.
+// When trace is non-nil, the full LLM exchange is recorded for tuning/inspection.
 func applySynthesis(
 	ctx context.Context,
 	stage model.StageName,
@@ -118,9 +133,15 @@ func applySynthesis(
 	modelID string,
 	sa *provider.StageAssignment,
 	store *promptfiles.PromptStore,
+	trace ...*runTrace,
 ) {
 	if prov == nil || sa == nil {
 		return
+	}
+
+	var t *runTrace
+	if len(trace) > 0 {
+		t = trace[0]
 	}
 
 	switch stage {
@@ -134,6 +155,7 @@ func applySynthesis(
 		specs := synthesizeSpecs(ctx, prov, modelID, sa, store,
 			"arch-specs-synthesize.md.tmpl", cachePath,
 			map[string]string{"Product Vision": vision, "UX Design": ux},
+			t,
 		)
 		if specs != "" {
 			// Replace both artifacts with the single synthesis.
@@ -176,6 +198,7 @@ func applySynthesis(
 		cachePath := filepath.Join(project.DataDir, "build", "build-specs.md")
 		specs := synthesizeSpecs(ctx, prov, modelID, sa, store,
 			"build-specs-synthesize.md.tmpl", cachePath, inputs,
+			t,
 		)
 		if specs != "" {
 			// Replace all upstream artifacts with the single synthesis.

@@ -157,6 +157,20 @@ func attachPromptLog(logBase, projectName, runID, filename string) {
 	}
 }
 
+// writePromptSnapshot writes a PromptSnapshot to the run directory and attaches
+// it to the run's meta.json. This is the canonical way to record a full LLM
+// exchange (system prompt, history, user message, raw response) for any operation.
+func writePromptSnapshot(logBase, projectName, runID string, snapshot model.PromptSnapshot) {
+	if logBase == "" || runID == "" {
+		return
+	}
+	if fname, err := fsrepo.WriteRunPromptLog(logBase, projectName, runID, snapshot); err == nil {
+		attachPromptLog(logBase, projectName, runID, fname)
+	} else {
+		log.Printf("runlog: write prompt snapshot %s: %v", runID, err)
+	}
+}
+
 // runTrace carries run-log context through an operation so each agent step
 // can write its raw LLM output and parse diagnostics into the run directory.
 // Safe for concurrent use from parallel goroutines.

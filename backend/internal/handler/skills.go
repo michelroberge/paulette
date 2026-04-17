@@ -25,6 +25,7 @@ type SkillHandler struct {
 	runs             *stream.Manager
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
+	logBase          string
 }
 
 func NewSkillHandler(
@@ -35,6 +36,7 @@ func NewSkillHandler(
 	runs *stream.Manager,
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
+	logBase string,
 ) *SkillHandler {
 	return &SkillHandler{
 		registry:         registry,
@@ -44,6 +46,7 @@ func NewSkillHandler(
 		runs:             runs,
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
+		logBase:          logBase,
 	}
 }
 
@@ -100,6 +103,8 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	// Build system prompt and user message outside the goroutine.
 	systemPrompt, userMsg := agent.BuildAnalyzeSkillsRequest(buildContent, archContent, existingSkills)
 
+	runLogID := startRunLog(h.logBase, project, model.StageBuild, "skills-analyze")
+
 	go func() {
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.DataDir, model.StageBuild)
@@ -117,6 +122,7 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 			Stream:       saStream,
 		})
 		if err != nil {
+			failRunLog(h.logBase, project.Name, runLogID, err.Error())
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
 			return
 		}
@@ -149,8 +155,20 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if hadError {
+			failRunLog(h.logBase, project.Name, runLogID, "skill analysis had errors")
 			return
 		}
+
+		// Record full prompt snapshot for tuning/inspection.
+		writePromptSnapshot(h.logBase, project.Name, runLogID, model.PromptSnapshot{
+			Stage:        string(model.StageBuild),
+			Timestamp:    time.Now(),
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  userMsg,
+			RawResponse:  fullText.String(),
+		})
+		successRunLog(h.logBase, project.Name, runLogID, nil, tokens, "skill analysis")
 
 		// Record session
 		if tokens > 0 {

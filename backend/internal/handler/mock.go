@@ -222,6 +222,7 @@ func (h *MockHandler) synthesizeMockSpecs(
 	modelID string,
 	sa *provider.StageAssignment,
 	run *stream.Run,
+	trace *runTrace,
 ) string {
 	specsPath := filepath.Join(project.DataDir, mockSpecsRelPath)
 
@@ -270,10 +271,20 @@ func (h *MockHandler) synthesizeMockSpecs(
 	}
 
 	var fullResponse strings.Builder
+	synthStart := time.Now()
 	for ev := range events {
 		if ev.Type == "chunk" {
 			fullResponse.WriteString(ev.Content)
 		}
+	}
+
+	// Record mock-specs synthesis exchange for tuning/inspection.
+	if trace != nil {
+		trace.logStep("mock_specs_synthesis", "ok",
+			fmt.Sprintf("resp=%d chars", fullResponse.Len()),
+			fmt.Sprintf("## System Prompt\n%s\n\n## User Message\n%s\n\n## Raw Response\n%s",
+				sysPrompt, userMsg.String(), fullResponse.String()),
+			time.Since(synthStart))
 	}
 
 	// Extract artifact from XML envelope.
@@ -339,9 +350,12 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 	visionContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
 	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 
+	// Create trace early so synthesis logging can use it.
+	trace := newRunTrace(h.logBase, project.Name, runLogID)
+
 	// Try synthesized mock specs (vision + UX condensed into one doc).
 	// If synthesis is smaller, use it as sole context; otherwise use originals.
-	mockSpecs := h.synthesizeMockSpecs(project, visionContent, uxContent, prov, modelID, sa, run)
+	mockSpecs := h.synthesizeMockSpecs(project, visionContent, uxContent, prov, modelID, sa, run, trace)
 
 	var userPromptBuf strings.Builder
 	if mockSpecs != "" {
@@ -368,7 +382,6 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 		var stageTokensAccum int
 		var rlErr string
 		runStart := time.Now()
-		trace := newRunTrace(h.logBase, project.Name, runLogID)
 		defer func() {
 			trace.flush()
 			if rlErr != "" {
@@ -1121,8 +1134,11 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		return run, nil
 	}
 
+	// Create trace for orchestrated mock generation.
+	orchTrace := newRunTrace(h.logBase, project.Name, runLogID)
+
 	// Try synthesized mock specs for a smaller planner input.
-	mockSpecs := h.synthesizeMockSpecs(project, visionContent, uxContent, prov, modelID, sa, run)
+	mockSpecs := h.synthesizeMockSpecs(project, visionContent, uxContent, prov, modelID, sa, run, orchTrace)
 	var plannerInput string
 	if mockSpecs != "" {
 		plannerInput = "Mock Specs:\n---\n" + mockSpecs + "\n---\n"
@@ -1138,9 +1154,8 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		var tokensMu sync.Mutex
 		var rlErr string
 		runStart := time.Now()
-		trace := newRunTrace(h.logBase, project.Name, runLogID)
 		defer func() {
-			trace.flush()
+			orchTrace.flush()
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
@@ -1157,7 +1172,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 
 		// Step 1: Planner
 		run.Emit(agent.StreamEvent{Type: "chunk", Content: "Planning screens from UX artifact...\n"})
-		screens, err := runPlannerCall(prov, modelID, sa, run, plannerInput, refinement, &tokensAccum, trace)
+		screens, err := runPlannerCall(prov, modelID, sa, run, plannerInput, refinement, &tokensAccum, orchTrace)
 		if err != nil {
 			rlErr = err.Error()
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
@@ -1180,7 +1195,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 
 				// 2a. Component planner
 				run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Launching component planner...\n", sc.Title)})
-				components, compPlanErr := runComponentPlannerCall(prov, modelID, sa, run, frameworkCfg, sc, &tokensAccum, &tokensMu, trace)
+				components, compPlanErr := runComponentPlannerCall(prov, modelID, sa, run, frameworkCfg, sc, &tokensAccum, &tokensMu, orchTrace)
 				if compPlanErr != nil {
 					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Component planner failed — using fallback.\n", sc.Title)})
 					components = []plannerComponent{{
@@ -1195,7 +1210,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 				htmlFragments := make(map[string]string, len(components))
 				for _, comp := range components {
 					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Launching component agent (%s, %s)...\n", sc.Title, comp.ID, comp.Type, comp.LayoutRole)})
-					compHTML, compErr := runComponentCall(prov, modelID, sa, run, frameworkCfg, comp, &tokensAccum, &tokensMu, trace)
+					compHTML, compErr := runComponentCall(prov, modelID, sa, run, frameworkCfg, comp, &tokensAccum, &tokensMu, orchTrace)
 					if compErr != nil {
 						run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Warning: %s\n", sc.Title, comp.ID, compErr.Error())})
 						compHTML = fmt.Sprintf(`<div class="mock-component"><p style="color:#f87171">Component failed: %s</p></div>`, comp.ID)

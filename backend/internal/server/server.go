@@ -162,7 +162,7 @@ func (s *Server) Router() http.Handler {
 	bh.SetProviderRegistry(s.providerRegistry, s.stageConfig)
 	bh.SetBuildPool(buildPool)
 	bh.SetRAGClient(s.ragClient)
-	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
+	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, logBase)
 	instructH.SetProviderRegistry(s.providerRegistry, s.stageConfig)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
 	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.DataPath)
@@ -172,7 +172,7 @@ func (s *Server) Router() http.Handler {
 	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.GitPath, s.cfg.DataPath, s.gitIdentity)
 	sh := handler.NewSessionHandler(s.registry)
 	vh := handler.NewVersionHandler(s.registry)
-	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs, s.providerRegistry, s.stageConfig)
+	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs, s.providerRegistry, s.stageConfig, logBase)
 	rfh := handler.NewRefineHandler(s.registry, s.artifactRepo, s.chatRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
 	refH := refinement.NewHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, logBase)
 

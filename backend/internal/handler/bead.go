@@ -320,10 +320,13 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 		}
 		parseBuildPlanPrompt.WriteString("Extract all milestones and tasks from this build plan into the required JSON format. Include tags and targetFiles for each task.")
 
+		parseSystemPrompt := agent.GetParseBuildPlanPrompt(promptStoreForProject(project))
+		trace := newRunTrace(h.logBase, project.Name, runLogID)
+
 		_, saNumCtx, saStream := sa.Fields()
 		events, err := prov.Chat(ctx, provider.ChatRequest{
 			Model:        modelID,
-			SystemPrompt: agent.GetParseBuildPlanPrompt(promptStoreForProject(project)),
+			SystemPrompt: parseSystemPrompt,
 			UserMessage:  parseBuildPlanPrompt.String(),
 			ProjectDir:   project.HostDir,
 			Stage:        string(model.StageBuild),
@@ -351,6 +354,15 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 			} else if event.Type == "chunk" {
 				run.Emit(event)
 			}
+		}
+
+		// Record the parse LLM exchange for tuning/inspection.
+		if trace != nil {
+			trace.logStep("bead_parse", "ok",
+				fmt.Sprintf("resp=%d chars", len(fullResponse)),
+				fmt.Sprintf("## System Prompt\n%s\n\n## User Message\n%s\n\n## Raw Response\n%s",
+					parseSystemPrompt, parseBuildPlanPrompt.String(), fullResponse),
+				time.Since(runStart))
 		}
 
 		fixer := func(fixCtx context.Context, badJSON []byte, schema []byte) ([]byte, error) {
@@ -394,6 +406,8 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
+
+		trace.flush()
 
 		// Step 2: Ensure bd is initialized
 		run.Emit(agent.StreamEvent{Type: "log", Content: "Checking bd status..."})
@@ -585,6 +599,8 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 	writeActivity(h.activityRepo, project.DataDir, model.StageBuild, "beads-execute")
 	runLogID := startRunLog(h.logBase, project, model.StageBuild, "beads-execute")
 
+	beadTrace := newRunTrace(h.logBase, project.Name, runLogID)
+
 	go func() {
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.DataDir, model.StageBuild)
@@ -593,6 +609,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		var rlErr string
 		runStart := time.Now()
 		defer func() {
+			beadTrace.flush()
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
@@ -788,6 +805,12 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 					}
 				}
+				// Record bead execution exchange.
+				beadTrace.logStep("bead_execute_"+currentBead.ID, "ok",
+					fmt.Sprintf("tokens=%d resp=%d chars", currentBead.Tokens, len(execContent)),
+					execContent,
+					time.Since(runStart))
+
 				if execContent != "" {
 					if docErr := fsrepo.WriteBeadDoc(project.HostDir, project.Version, currentBead.ID, execContent); docErr != nil {
 						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] warn: docs mirror failed: %v", currentBead.ID, docErr)})
@@ -816,6 +839,16 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						beadJSON, _ := json.Marshal(currentBead)
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 					}
+					// Record review exchange.
+					reviewStatus := "ok"
+					if reviewErr != nil {
+						reviewStatus = "error"
+					}
+					beadTrace.logStep(fmt.Sprintf("bead_review_%s_iter%d", currentBead.ID, iteration), reviewStatus,
+						fmt.Sprintf("tokens=%d approved=%v", reviewTokens, findings == ""),
+						findings,
+						time.Since(runStart))
+
 					if reviewErr != nil {
 						if errors.Is(reviewErr, agent.ErrPlanLimit) {
 							run.Emit(agent.StreamEvent{Type: "plan_limit", Content: reviewErr.Error()})

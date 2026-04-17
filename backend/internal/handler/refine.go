@@ -178,6 +178,16 @@ SELECTED SECTION TO REWRITE:
 			if content == "" {
 				content = accumulated.String()
 			}
+			// Record full prompt snapshot for tuning/inspection.
+			writePromptSnapshot(h.logBase, project.Name, runLogID, model.PromptSnapshot{
+				Stage:        string(stage),
+				Timestamp:    time.Now(),
+				Model:        modelID,
+				SystemPrompt: systemPrompt,
+				History:      history,
+				UserMessage:  userMessage,
+				RawResponse:  accumulated.String(),
+			})
 			sseWrite(w, flusher, agent.StreamEvent{Type: "done", Content: content})
 			successRunLog(h.logBase, project.Name, runLogID, nil, totalTokens, fmt.Sprintf("refine selection (%d chars)", len(req.Selection)))
 		case "error":
