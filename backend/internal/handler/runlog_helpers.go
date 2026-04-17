@@ -160,6 +160,14 @@ func newRunTrace(logBase, projectName, runID string) *runTrace {
 	}
 }
 
+// LogStep writes a step trace file and records it in the step list. Exported
+// so it satisfies agent.StepLogger; delegates to the internal logStep.
+// content is the full exchange (prompt + raw response) as formatted by the
+// caller; detail is a short summary shown in the UI's step table.
+func (t *runTrace) LogStep(stepName, status, detail, content string, dur time.Duration) {
+	t.logStep(stepName, status, detail, content, dur)
+}
+
 // logStep writes a step trace file and records it in the step list.
 // content is the raw LLM response; detail is a short parse summary (ok or error info).
 func (t *runTrace) logStep(stepName, status, detail, content string, dur time.Duration) {

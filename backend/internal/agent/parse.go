@@ -191,26 +191,6 @@ func extractCDATA(s string) string {
 // reCodeFenceJSON matches a ```json ... ``` code fence.
 var reCodeFenceJSON = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.*?)\\n\\s*```")
 
-// ExtractJSON locates and returns the first complete JSON object or array in raw.
-// It tolerates markdown code fences (```json ... ```) and prose surrounding the
-// JSON, and applies lightweight repairs via repairJSON. Returns nil if no
-// plausible JSON is found.
-//
-// Unlike extractJSONPlan it does not look for <jsonplan> tags — callers use
-// this when the response is expected to be pure JSON (e.g. structured-output
-// phases of the Vision turn runner).
-func ExtractJSON(raw string) []byte {
-	start := strings.IndexAny(raw, "{[")
-	if start < 0 {
-		return nil
-	}
-	end := strings.LastIndexAny(raw, "}]")
-	if end <= start {
-		return nil
-	}
-	return repairJSON([]byte(raw[start : end+1]))
-}
-
 // extractJSONPlan pulls <jsonplan> content as a byte slice for json.Unmarshal.
 // Falls back through multiple strategies for models that ignore envelope instructions:
 // 1. <jsonplan> tags (preferred)

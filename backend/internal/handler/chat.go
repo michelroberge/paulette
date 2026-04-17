@@ -41,6 +41,7 @@ func (a providerChatAdapter) Chat(ctx context.Context, req agent.ChatExecutorReq
 		Temperature:  req.Temperature,
 		NumCtx:       req.NumCtx,
 		Stream:       req.Stream,
+		Format:       req.Format,
 	})
 }
 
@@ -450,6 +451,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	}
 	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
 	runLogID := startRunLog(h.logBase, project, stage, "chat")
+	trace := newRunTrace(h.logBase, project.Name, runLogID)
 
 	// Resolve the LLM provider for this stage. UX chat uses "ux.chat" operation key.
 	var prov provider.Provider
@@ -473,7 +475,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	// structured draft→critique runner (more reliable on small models). All other
 	// cases go straight to prov.Chat.
 	saTemp, saNumCtx, saStream := sa.Fields()
-	events, chatErr := h.startChatEvents(run.Context(), prov, modelID, systemPrompt, history, message, project.HostDir, stage, saTemp, saNumCtx, saStream)
+	events, chatErr := h.startChatEvents(run.Context(), prov, modelID, systemPrompt, history, message, project.HostDir, stage, saTemp, saNumCtx, saStream, trace)
 	if chatErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, chatErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
@@ -492,8 +494,10 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		var accumulated strings.Builder
 		var rlErr string
 		runStart := time.Now()
-		// Run log completion — runs after token tracking (declared before it, so runs after in LIFO)
+		// Run log completion — runs after token tracking (declared before it, so runs after in LIFO).
+		// trace.flush() must run before success/fail so the step entries appear in meta.json.
 		defer func() {
+			trace.flush()
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
@@ -563,7 +567,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 //   - PAULETTE_VISION_TURN_RUNNER is not "off".
 //
 // Any other stage or provider falls through to prov.Chat unchanged.
-func (h *ChatHandler) startChatEvents(ctx context.Context, prov provider.Provider, modelID, systemPrompt string, history []model.Message, message, projectDir string, stage model.StageName, temp *float64, numCtx *int, stream *bool) (<-chan agent.StreamEvent, error) {
+func (h *ChatHandler) startChatEvents(ctx context.Context, prov provider.Provider, modelID, systemPrompt string, history []model.Message, message, projectDir string, stage model.StageName, temp *float64, numCtx *int, stream *bool, trace *runTrace) (<-chan agent.StreamEvent, error) {
 	if visionRunnerEnabled(stage, prov) {
 		return agent.RunVisionTurn(ctx, agent.VisionTurnOptions{
 			Executor:    providerChatAdapter{prov: prov},
@@ -575,6 +579,7 @@ func (h *ChatHandler) startChatEvents(ctx context.Context, prov provider.Provide
 			Temperature: temp,
 			NumCtx:      numCtx,
 			Stream:      stream,
+			Logger:      visionLoggerFor(trace),
 		})
 	}
 	return prov.Chat(ctx, provider.ChatRequest{
@@ -588,6 +593,17 @@ func (h *ChatHandler) startChatEvents(ctx context.Context, prov provider.Provide
 		NumCtx:       numCtx,
 		Stream:       stream,
 	})
+}
+
+// visionLoggerFor returns a non-nil agent.StepLogger only when trace is set.
+// Direct assignment of a nil *runTrace to the interface would produce a
+// non-nil interface whose underlying value is nil — the classic Go pitfall.
+// The agent package then calls LogStep on a nil receiver and panics.
+func visionLoggerFor(trace *runTrace) agent.StepLogger {
+	if trace == nil {
+		return nil
+	}
+	return trace
 }
 
 // visionRunnerEnabled decides whether to use the structured draft→critique
