@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,6 +21,28 @@ import (
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
+
+// providerChatAdapter adapts a provider.Provider to agent.ChatExecutor. The
+// two interfaces share the same shape but different concrete types — agent
+// cannot import provider (provider already imports agent), so this thin
+// adapter bridges the two at the handler layer.
+type providerChatAdapter struct {
+	prov provider.Provider
+}
+
+func (a providerChatAdapter) Chat(ctx context.Context, req agent.ChatExecutorRequest) (<-chan agent.StreamEvent, error) {
+	return a.prov.Chat(ctx, provider.ChatRequest{
+		Model:        req.Model,
+		SystemPrompt: req.SystemPrompt,
+		History:      req.History,
+		UserMessage:  req.UserMessage,
+		ProjectDir:   req.ProjectDir,
+		Stage:        req.Stage,
+		Temperature:  req.Temperature,
+		NumCtx:       req.NumCtx,
+		Stream:       req.Stream,
+	})
+}
 
 // connectionErrorPayload is the structured JSON payload embedded in a
 // StreamEvent{Type: "error"} Content field when the error originates from a
@@ -446,19 +469,11 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		return run, nil
 	}
 
-	// Start LLM streaming via the resolved provider (survives client disconnect).
+	// Start LLM streaming. For the Vision stage with an Ollama provider, use the
+	// structured draft→critique runner (more reliable on small models). All other
+	// cases go straight to prov.Chat.
 	saTemp, saNumCtx, saStream := sa.Fields()
-	events, chatErr := prov.Chat(run.Context(), provider.ChatRequest{
-		Model:        modelID,
-		SystemPrompt: systemPrompt,
-		History:      history,
-		UserMessage:  message,
-		ProjectDir:   project.HostDir,
-		Stage:        string(stage),
-		Temperature:  saTemp,
-		NumCtx:       saNumCtx,
-		Stream:       saStream,
-	})
+	events, chatErr := h.startChatEvents(run.Context(), prov, modelID, systemPrompt, history, message, project.HostDir, stage, saTemp, saNumCtx, saStream)
 	if chatErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, chatErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
@@ -537,6 +552,56 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	}()
 
 	return run, nil
+}
+
+// startChatEvents picks between the structured Vision runner and the
+// single-shot provider Chat call, returning the event channel to drain.
+//
+// The Vision runner activates only when:
+//   - stage is Vision, AND
+//   - the resolved provider is an Ollama provider, AND
+//   - PAULETTE_VISION_TURN_RUNNER is not "off".
+//
+// Any other stage or provider falls through to prov.Chat unchanged.
+func (h *ChatHandler) startChatEvents(ctx context.Context, prov provider.Provider, modelID, systemPrompt string, history []model.Message, message, projectDir string, stage model.StageName, temp *float64, numCtx *int, stream *bool) (<-chan agent.StreamEvent, error) {
+	if visionRunnerEnabled(stage, prov) {
+		return agent.RunVisionTurn(ctx, agent.VisionTurnOptions{
+			Executor:    providerChatAdapter{prov: prov},
+			Model:       modelID,
+			History:     history,
+			UserMessage: message,
+			ProjectDir:  projectDir,
+			Stage:       string(stage),
+			Temperature: temp,
+			NumCtx:      numCtx,
+			Stream:      stream,
+		})
+	}
+	return prov.Chat(ctx, provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: systemPrompt,
+		History:      history,
+		UserMessage:  message,
+		ProjectDir:   projectDir,
+		Stage:        string(stage),
+		Temperature:  temp,
+		NumCtx:       numCtx,
+		Stream:       stream,
+	})
+}
+
+// visionRunnerEnabled decides whether to use the structured draft→critique
+// runner for this call. Defaults on for Ollama providers at the Vision stage;
+// can be disabled globally via PAULETTE_VISION_TURN_RUNNER=off.
+func visionRunnerEnabled(stage model.StageName, prov provider.Provider) bool {
+	if stage != model.StageVision {
+		return false
+	}
+	if os.Getenv("PAULETTE_VISION_TURN_RUNNER") == "off" {
+		return false
+	}
+	_, isOllama := prov.(*provider.OllamaProvider)
+	return isOllama
 }
 
 func sseWrite(w http.ResponseWriter, flusher http.Flusher, event agent.StreamEvent) {
