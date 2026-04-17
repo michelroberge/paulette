@@ -17,9 +17,10 @@ func NewConfigHandler(cfg *config.Config) *ConfigHandler {
 
 func (h *ConfigHandler) GetInfo(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"reposPath": h.cfg.ReposPath,
-		"version":   h.cfg.Version,
-		"author":    h.cfg.Author,
+	json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+		"reposPath":   h.cfg.ReposPath,
+		"version":     h.cfg.Version,
+		"author":      h.cfg.Author,
+		"oidcEnabled": h.cfg.OIDC.Enabled,
 	})
 }

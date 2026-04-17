@@ -69,7 +69,25 @@ type ChatRequest struct {
 	// ProjectDir is the working directory context. Required by the Claude CLI
 	// provider; ignored by HTTP-based providers.
 	ProjectDir string
+
+	// Stage is an optional label used for debug logging (e.g. "architecture", "ux").
+	Stage string
+
+	// Temperature overrides the provider's default/heuristic temperature.
+	// When nil, the provider uses its own logic (e.g. Ollama's stage-based default).
+	Temperature *float64
+
+	// NumCtx overrides the context window size sent to the provider.
+	// When nil, the provider uses its own default (e.g. Ollama's model capability table).
+	NumCtx *int
+
+	// Stream controls whether the response is streamed.
+	// When nil, the provider defaults to streaming where supported.
+	Stream *bool
 }
+
+// TempLow returns a pointer to 0.3, suitable for structured output prompts.
+func TempLow() *float64 { v := 0.3; return &v }
 
 // Provider is the interface every LLM backend must implement.
 // Implementations convert their native streaming format (NDJSON, SSE, etc.)
@@ -201,6 +219,20 @@ func (r *Registry) ResolveForStage(
 	stageConfig *StageConfigStore,
 	hostDir string,
 ) (Provider, string, error) {
+	prov, model, _, err := r.ResolveForStageWithSettings(projectID, stage, stageConfig, hostDir)
+	return prov, model, err
+}
+
+// ResolveForStageWithSettings is identical to ResolveForStage but additionally
+// returns the full *StageAssignment (which includes optional inference settings
+// such as Temperature, NumCtx, and Stream). The assignment is nil when no
+// configuration exists (level-3 Claude CLI fallback).
+func (r *Registry) ResolveForStageWithSettings(
+	projectID string,
+	stage model.StageName,
+	stageConfig *StageConfigStore,
+	hostDir string,
+) (Provider, string, *StageAssignment, error) {
 	if stageConfig != nil {
 		// Levels 1 & 2: single read-lock acquisition via ResolveStage.
 		// This avoids the double lock-release cycle that would occur if
@@ -208,9 +240,9 @@ func (r *Registry) ResolveForStage(
 		if assignment := stageConfig.ResolveStage(hostDir, stage); assignment != nil {
 			p, err := r.ForConnection(assignment.ConnectionID)
 			if err != nil {
-				return nil, "", fmt.Errorf("stage %q: configured connection error: %w", stage, err)
+				return nil, "", nil, fmt.Errorf("stage %q: configured connection error: %w", stage, err)
 			}
-			return p, assignment.Model, nil
+			return p, assignment.Model, assignment, nil
 		}
 	}
 
@@ -219,5 +251,38 @@ func (r *Registry) ResolveForStage(
 	if !ok {
 		claudeModel = "claude-sonnet-4-6"
 	}
-	return NewClaudeCLIProvider(), claudeModel, nil
+	return NewClaudeCLIProvider(), claudeModel, nil, nil
+}
+
+// ResolveForStageOperation resolves the provider and model for a specific
+// sub-step operation (e.g. "ux.mock", "build.generate") using a five-level
+// fallback hierarchy:
+//
+//  1. Per-project operation override
+//  2. Global operation default
+//  3. Per-project stage override
+//  4. Global stage default
+//  5. Hardcoded Claude CLI fallback
+//
+// Falls back to ResolveForStageWithSettings when stageConfig is nil or when
+// operation is empty.
+func (r *Registry) ResolveForStageOperation(
+	projectID string,
+	stage model.StageName,
+	operation OperationKey,
+	stageConfig *StageConfigStore,
+	hostDir string,
+) (Provider, string, *StageAssignment, error) {
+	if stageConfig != nil && operation != "" {
+		if assignment := stageConfig.ResolveOperation(hostDir, stage, operation); assignment != nil {
+			p, err := r.ForConnection(assignment.ConnectionID)
+			if err != nil {
+				return nil, "", nil, fmt.Errorf("operation %q: configured connection error: %w", operation, err)
+			}
+			return p, assignment.Model, assignment, nil
+		}
+	}
+
+	// No operation-level config — fall through to stage-level resolution.
+	return r.ResolveForStageWithSettings(projectID, stage, stageConfig, hostDir)
 }

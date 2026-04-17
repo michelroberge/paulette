@@ -2,10 +2,24 @@ package config
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
+
+// OIDCConfig holds optional OIDC authentication settings loaded from env vars.
+// When Enabled is false, all fields are ignored and no auth is enforced.
+type OIDCConfig struct {
+	Enabled       bool
+	IssuerURL     string
+	ClientID      string
+	ClientSecret  string
+	RedirectURI   string
+	Scopes        []string // defaults to ["openid", "profile", "email"]
+	SessionSecret string
+}
 
 type Config struct {
 	Port         int
@@ -14,6 +28,7 @@ type Config struct {
 	ClaudePath   string
 	Version      string
 	Author       string
+	OIDC         OIDCConfig
 }
 
 // Settings represents user-persisted configuration saved by "paulette init".
@@ -86,6 +101,16 @@ func Load() *Config {
 
 	version, author := loadProjectMeta()
 
+	oidcEnabled := os.Getenv("OIDC_ENABLED") == "true"
+	oidcScopes := strings.Fields(os.Getenv("OIDC_SCOPES"))
+	if len(oidcScopes) == 0 {
+		oidcScopes = []string{"openid", "profile", "email"}
+	}
+	sessionSecret := os.Getenv("SESSION_SECRET")
+	if oidcEnabled && len(sessionSecret) < 32 {
+		log.Println("WARNING: SESSION_SECRET is not set or is shorter than 32 characters; OIDC sessions will be insecure")
+	}
+
 	return &Config{
 		Port:         port,
 		RegistryPath: registryPath,
@@ -93,6 +118,15 @@ func Load() *Config {
 		ClaudePath:   claudePath,
 		Version:      version,
 		Author:       author,
+		OIDC: OIDCConfig{
+			Enabled:       oidcEnabled,
+			IssuerURL:     os.Getenv("OIDC_ISSUER_URL"),
+			ClientID:      os.Getenv("OIDC_CLIENT_ID"),
+			ClientSecret:  os.Getenv("OIDC_CLIENT_SECRET"),
+			RedirectURI:   os.Getenv("OIDC_REDIRECT_URI"),
+			Scopes:        oidcScopes,
+			SessionSecret: sessionSecret,
+		},
 	}
 }
 

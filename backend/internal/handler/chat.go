@@ -41,6 +41,7 @@ type ChatHandler struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	connStore        *provider.ConnectionStore
+	logBase          string
 }
 
 // NewChatHandler creates a ChatHandler. providerRegistry, stageConfig, and
@@ -55,6 +56,7 @@ func NewChatHandler(
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
 	connStore *provider.ConnectionStore,
+	logBase string,
 ) *ChatHandler {
 	return &ChatHandler{
 		registry:         registry,
@@ -65,6 +67,7 @@ func NewChatHandler(
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
 		connStore:        connStore,
+		logBase:          logBase,
 	}
 }
 
@@ -93,15 +96,25 @@ func (h *ChatHandler) buildProviderErrorEvent(hostDir string, stage model.StageN
 	return agent.StreamEvent{Type: "error", Content: string(content)}
 }
 
-// resolveProvider returns the Provider and model ID to use for a stage. It
-// delegates to the Registry when one is available; otherwise it falls back to
-// the Claude CLI provider using the hardcoded stage-model map (v0.1.0 behaviour).
-func (h *ChatHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
+// resolveProvider returns the Provider, model ID, and optional stage settings to
+// use for a stage. It delegates to the Registry when one is available; otherwise
+// it falls back to the Claude CLI provider using the hardcoded stage-model map
+// (v0.1.0 behaviour). The returned *StageAssignment may be nil for the fallback.
+func (h *ChatHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, *provider.StageAssignment, error) {
 	if h.providerRegistry != nil {
-		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+		return h.providerRegistry.ResolveForStageWithSettings(projectID, stage, h.stageConfig, hostDir)
 	}
 	// Nil registry — construct a bare Claude CLI provider as a safe fallback.
-	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
+}
+
+// resolveProviderOp resolves the provider for a specific sub-step operation
+// using the five-level fallback hierarchy.
+func (h *ChatHandler) resolveProviderOp(projectID, hostDir string, stage model.StageName, operation provider.OperationKey) (provider.Provider, string, *provider.StageAssignment, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStageOperation(projectID, stage, operation, h.stageConfig, hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
 func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
@@ -256,8 +269,17 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 	}
 	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
 
-	// Resolve the LLM provider for this stage (project override → global default → Claude CLI).
-	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
+	// Resolve the LLM provider for this stage. For UX we use the operation-specific
+	// "ux.chat" key so mock generation can use a different connection if configured.
+	var prov provider.Provider
+	var modelID string
+	var sa *provider.StageAssignment
+	var provErr error
+	if stage == model.StageUX {
+		prov, modelID, sa, provErr = h.resolveProviderOp(project.ID, project.HostDir, stage, provider.OperationUXChat)
+	} else {
+		prov, modelID, sa, provErr = h.resolveProvider(project.ID, project.HostDir, stage)
+	}
 	if provErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
 		clearActivity(h.activityRepo, project.HostDir, stage)
@@ -265,12 +287,17 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 		return run, nil
 	}
 
+	saTemp, saNumCtx, saStream := sa.Fields()
 	events, chatErr := prov.Chat(run.Context(), provider.ChatRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
 		History:      history,
 		UserMessage:  message,
 		ProjectDir:   project.HostDir,
+		Stage:        string(stage),
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
 	})
 	if chatErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
@@ -399,10 +426,20 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		return nil, nil // race: already started
 	}
 	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
+	runLogID := startRunLog(h.logBase, project, stage, "chat")
 
-	// Resolve the LLM provider for this stage (project override → global default → Claude CLI).
-	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, stage)
+	// Resolve the LLM provider for this stage. UX chat uses "ux.chat" operation key.
+	var prov provider.Provider
+	var modelID string
+	var sa *provider.StageAssignment
+	var provErr error
+	if stage == model.StageUX {
+		prov, modelID, sa, provErr = h.resolveProviderOp(project.ID, project.HostDir, stage, provider.OperationUXChat)
+	} else {
+		prov, modelID, sa, provErr = h.resolveProvider(project.ID, project.HostDir, stage)
+	}
 	if provErr != nil {
+		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
 		clearActivity(h.activityRepo, project.HostDir, stage)
 		run.Finish(h.runs)
@@ -410,14 +447,20 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	}
 
 	// Start LLM streaming via the resolved provider (survives client disconnect).
+	saTemp, saNumCtx, saStream := sa.Fields()
 	events, chatErr := prov.Chat(run.Context(), provider.ChatRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
 		History:      history,
 		UserMessage:  message,
 		ProjectDir:   project.HostDir,
+		Stage:        string(stage),
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
 	})
 	if chatErr != nil {
+		failRunLog(h.logBase, project.Name, runLogID, chatErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
 		clearActivity(h.activityRepo, project.HostDir, stage)
 		run.Finish(h.runs)
@@ -425,14 +468,23 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	}
 
 	// Background goroutine: process agent events, emit through run.
-	// LIFO defer: clearActivity runs first, then run.Finish — watcher sees clean state.
+	// LIFO defer order: token tracking (1st) → run log (2nd) → clearActivity → run.Finish
 	go func() {
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.HostDir, stage)
 
 		var stageTokensAccum int
 		var accumulated strings.Builder
+		var rlErr string
 		runStart := time.Now()
+		// Run log completion — runs after token tracking (declared before it, so runs after in LIFO)
+		defer func() {
+			if rlErr != "" {
+				failRunLog(h.logBase, project.Name, runLogID, rlErr)
+			} else {
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, stage, "chat"), stageTokensAccum, "")
+			}
+		}()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(stage, stageTokensAccum)
@@ -447,6 +499,9 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 				fmt.Sscanf(event.Content, "%d", &n)
 				stageTokensAccum += n
 			}
+			if event.Type == "error" {
+				rlErr = event.Content
+			}
 			if event.Type == "done" {
 				fullContent := event.Content
 				if fullContent == "" {
@@ -455,6 +510,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 				// Extract and save artifact if present
 				if artifact, found := agent.ExtractArtifact(fullContent); found {
 					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
+						rlErr = "failed to save artifact: " + err.Error()
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
 						run.Emit(agent.StreamEvent{Type: "artifact", Content: string(stage) + "/" + string(stage) + ".md"})

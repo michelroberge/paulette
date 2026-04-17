@@ -13,6 +13,13 @@ services:
       REPOS_PATH: /home/paulette/repos
       CLAUDE_PATH: claude
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OIDC_ENABLED: "${OIDC_ENABLED:-}"
+      OIDC_ISSUER_URL: "${OIDC_ISSUER_URL:-}"
+      OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
+      OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
+      OIDC_REDIRECT_URI: "${OIDC_REDIRECT_URI:-}"
+      OIDC_SCOPES: "${OIDC_SCOPES:-}"
+      SESSION_SECRET: "${SESSION_SECRET:-}"
     volumes:
       # paulette registry — persists project list and settings across restarts
       - registry-data:/home/paulette/.paulette

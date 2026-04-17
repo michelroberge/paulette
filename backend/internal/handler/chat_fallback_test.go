@@ -86,6 +86,7 @@ func TestChatHandler_NilRegistry_ResolveProviderFallback(t *testing.T) {
 		nil, // providerRegistry — nil triggers v0.1.0 fallback path
 		nil, // stageConfig
 		nil, // connStore
+		"",  // logBase empty in tests
 	)
 
 	cases := []struct {
@@ -101,7 +102,7 @@ func TestChatHandler_NilRegistry_ResolveProviderFallback(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(string(tc.stage), func(t *testing.T) {
-			prov, modelID, err := h.resolveProvider("proj-1", "/tmp/testproject", tc.stage)
+			prov, modelID, _, err := h.resolveProvider("proj-1", "/tmp/testproject", tc.stage)
 
 			if err != nil {
 				t.Fatalf("resolveProvider(%s) with nil registry: unexpected error: %v", tc.stage, err)
@@ -141,6 +142,7 @@ func TestChatHandler_WithRegistryNoConfig_ResolveProviderFallback(t *testing.T) 
 		provRegistry,
 		stageConfig,
 		connStore,
+		"", // logBase empty in tests
 	)
 
 	cases := []struct {
@@ -154,7 +156,7 @@ func TestChatHandler_WithRegistryNoConfig_ResolveProviderFallback(t *testing.T) 
 
 	for _, tc := range cases {
 		t.Run(string(tc.stage), func(t *testing.T) {
-			prov, modelID, err := h.resolveProvider("proj-1", projectDir, tc.stage)
+			prov, modelID, _, err := h.resolveProvider("proj-1", projectDir, tc.stage)
 
 			if err != nil {
 				t.Fatalf("resolveProvider(%s) with empty registry: unexpected error: %v", tc.stage, err)

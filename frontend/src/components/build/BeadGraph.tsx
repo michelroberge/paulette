@@ -1,16 +1,19 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   ReactFlow,
   Background,
   Controls,
+  Panel,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   type Node,
   type Edge,
 } from '@xyflow/react';
 import dagre from '@dagrejs/dagre';
 import '@xyflow/react/dist/style.css';
 import type { Bead, BeadGraph } from '../../types';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -71,7 +74,80 @@ function getNodeStyle(bead: Bead, isReady: boolean) {
   };
 }
 
-function layoutGraph(beads: Bead[]): { nodes: Node[]; edges: Edge[] } {
+function computeReadySet(beads: Bead[]): Set<string> {
+  const closedIds = new Set(beads.filter(b => b.status === 'closed').map(b => b.id));
+  return new Set(
+    beads
+      .filter(b => b.status === 'open' && (b.deps ?? []).every(d => closedIds.has(d)))
+      .map(b => b.id),
+  );
+}
+
+function beadSortKey(bead: Bead, readySet: Set<string>): number {
+  switch (bead.status) {
+    case 'reviewing':   return 0;
+    case 'in_progress': return 1;
+    case 'open':        return readySet.has(bead.id) ? 2 : 3;
+    case 'blocked':     return 4;
+    case 'closed':      return 5;
+    default:            return 6;
+  }
+}
+
+function statusLabel(bead: Bead, readySet: Set<string>): string {
+  if (bead.status === 'open' && readySet.has(bead.id)) return 'ready';
+  return bead.status.replace('_', ' ');
+}
+
+function BeadListView({
+  beads,
+  onBeadClick,
+}: {
+  beads: Bead[];
+  onBeadClick?: (id: string) => void;
+}) {
+  const readySet = useMemo(() => computeReadySet(beads), [beads]);
+
+  const sorted = useMemo(() => {
+    return [...beads].sort((a, b) => {
+      const ka = beadSortKey(a, readySet);
+      const kb = beadSortKey(b, readySet);
+      if (ka !== kb) return ka - kb;
+      return a.title.localeCompare(b.title);
+    });
+  }, [beads, readySet]);
+
+  return (
+    <div className="bead-graph-container">
+    <div className="bead-list-view">
+      {sorted.map(bead => {
+        const isReady = readySet.has(bead.id);
+        const style = getNodeStyle(bead, isReady);
+        const nodeClass =
+          bead.status === 'in_progress' ? 'bead-node-active' :
+          bead.status === 'reviewing'   ? 'bead-node-reviewing' :
+          undefined;
+        return (
+          <div
+            key={bead.id}
+            className={`bead-list-item${nodeClass ? ` ${nodeClass}` : ''}`}
+            style={style}
+            onClick={() => onBeadClick?.(bead.id)}
+          >
+            <div style={{ fontSize: '10px', opacity: 0.6, marginBottom: 2 }}>
+              {bead.type.toUpperCase()} · {statusLabel(bead, readySet)}
+              {(bead.tokens ?? 0) > 0 && ` · ${formatTokens(bead.tokens!)} tok`}
+            </div>
+            <div>{bead.title}</div>
+          </div>
+        );
+      })}
+    </div>
+    </div>
+  );
+}
+
+function layoutGraph(beads: Bead[], readySet: Set<string>): { nodes: Node[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   // LR for left-to-right within a rank; TB gives us the layered top-down view
@@ -123,14 +199,6 @@ function layoutGraph(beads: Bead[]): { nodes: Node[]; edges: Edge[] } {
   }
 
   dagre.layout(g);
-
-  // Compute ready set: open beads whose all deps are closed
-  const closedIds = new Set(beads.filter(b => b.status === 'closed').map(b => b.id));
-  const readySet = new Set(
-    beads
-      .filter(b => b.status === 'open' && (b.deps ?? []).every(d => closedIds.has(d)))
-      .map(b => b.id),
-  );
 
   const nodes: Node[] = beads.flatMap(bead => {
     const pos = g.node(bead.id);
@@ -209,18 +277,57 @@ function DevilIcon({ delay }: { delay: number }) {
   );
 }
 
+function FindInProgressButton({ nodes }: { nodes: Node[] }) {
+  const { setCenter, getZoom } = useReactFlow();
+  const indexRef = useRef(0);
+
+  const inProgressNodes = useMemo(
+    () => nodes.filter(n => n.className?.includes('bead-node-active')),
+    [nodes],
+  );
+
+  const handleClick = useCallback(() => {
+    if (inProgressNodes.length === 0) return;
+    const idx = indexRef.current % inProgressNodes.length;
+    const node = inProgressNodes[idx];
+    const w = parseFloat(String(node.style?.width ?? NODE_WIDTH_TASK));
+    const h = parseFloat(String(node.style?.height ?? NODE_HEIGHT_TASK));
+    setCenter(node.position.x + w / 2, node.position.y + h / 2, {
+      zoom: getZoom(),
+      duration: 400,
+    });
+    indexRef.current = idx + 1;
+  }, [inProgressNodes, setCenter, getZoom]);
+
+  if (inProgressNodes.length === 0) return null;
+
+  return (
+    <Panel position="top-right">
+      <button className="find-in-progress-btn" onClick={handleClick}>
+        Find in progress
+      </button>
+    </Panel>
+  );
+}
+
 interface Props {
   graph: BeadGraph;
   onBeadClick?: (beadId: string) => void;
 }
 
 export function BeadGraph({ graph, onBeadClick }: Props) {
+  const isMobile = useIsMobile();
   const activeCount = graph.beads.filter(b => b.status === 'in_progress').length;
   const reviewingCount = graph.beads.filter(b => b.status === 'reviewing').length;
   const totalTokens = graph.beads.reduce((sum, b) => sum + (b.tokens ?? 0), 0);
 
+  const readySet = useMemo(() => computeReadySet(graph.beads), [
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    graph.beads.map(b => `${b.status}:${(b.deps ?? []).join('|')}`).join(','),
+  ]);
+
   const { nodes: layoutNodes, edges: layoutEdges } = useMemo(
-    () => layoutGraph(graph.beads),
+    () => layoutGraph(graph.beads, readySet),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       graph.beads.length,
@@ -251,9 +358,13 @@ export function BeadGraph({ graph, onBeadClick }: Props) {
         <span className="bead-legend-item bead-legend-progress">● in progress</span>
         <span className="bead-legend-item bead-legend-done">● done</span>
         <span className="bead-legend-item bead-legend-blocked">● blocked</span>
-        <span className="bead-legend-sep" />
-        <span className="bead-legend-item bead-legend-edge-member">— member of epic</span>
-        <span className="bead-legend-item bead-legend-edge-dep">╌ depends on</span>
+        {!isMobile && (
+          <>
+            <span className="bead-legend-sep" />
+            <span className="bead-legend-item bead-legend-edge-member">— member of epic</span>
+            <span className="bead-legend-item bead-legend-edge-dep">╌ depends on</span>
+          </>
+        )}
         {activeCount > 0 && (
           <span className="agent-activity-indicator">
             {Array.from({ length: activeCount }, (_, i) => (
@@ -272,22 +383,27 @@ export function BeadGraph({ graph, onBeadClick }: Props) {
           <span className="bead-token-total">{formatTokens(totalTokens)} tok</span>
         )}
       </div>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeClick={(_event, node) => onBeadClick?.(node.id)}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={!!onBeadClick}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background color="#334155" gap={16} />
-        <Controls showInteractive={false} />
-      </ReactFlow>
+      {isMobile ? (
+        <BeadListView beads={graph.beads} onBeadClick={onBeadClick} />
+      ) : (
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={(_event, node) => onBeadClick?.(node.id)}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={!!onBeadClick}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background color="#334155" gap={16} />
+          <Controls showInteractive={false} />
+          <FindInProgressButton nodes={nodes} />
+        </ReactFlow>
+      )}
     </div>
   );
 }

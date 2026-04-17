@@ -11,6 +11,10 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/model"
 )
 
+// sourceCodePreamble is prepended to every import prompt so Claude knows it has
+// direct file-system tool access and can read source files for additional detail.
+const sourceCodePreamble = `You have direct access to the project source code files via your file system tools. Use them to read specific files when you need more detail than what is provided below.`
+
 // importStep describes one stage of the import artifact generation.
 type importStep struct {
 	label string
@@ -20,6 +24,7 @@ type importStep struct {
 var importSteps = []importStep{
 	{"Generating architecture artifact...", model.StageArchitecture},
 	{"Generating UX artifact...", model.StageUX},
+	{"Detecting UI framework and design system...", model.StageUI},
 	{"Updating architecture with journey cross-references...", model.StageArchitecture},
 	{"Generating vision document...", model.StageVision},
 }
@@ -111,13 +116,39 @@ func StreamImport(ctx context.Context, hostDir, version, projectName string, emi
 	artifacts[model.StageUX] = uxContent
 	emit(StreamEvent{Type: "artifact", Content: "ux"})
 
+	// Step 2.5: UI framework / design system detection
+	var uiContent string
+	if existing, ok := readExistingDoc(hostDir, version, model.StageUI); ok {
+		emit(StreamEvent{Type: "log", Content: "Using existing UI document from disk."})
+		uiContent = existing
+	} else {
+		if err := ensureDigest(); err != nil {
+			return nil, fmt.Errorf("build codebase digest: %w", err)
+		}
+		emit(StreamEvent{Type: "log", Content: importSteps[2].label})
+		uiPrompt := buildImportUIPrompt(version, digest, archContent, uxContent)
+		var err error
+		uiContent, err = runImportAgent(ctx, uiPrompt, projectName, hostDir)
+		if err != nil {
+			return nil, fmt.Errorf("ui agent: %w", err)
+		}
+		if extracted, ok := ExtractArtifact(uiContent); ok {
+			uiContent = extracted
+		}
+	}
+	artifacts[model.StageUI] = uiContent
+	emit(StreamEvent{Type: "artifact", Content: "ui"})
+
 	// Step 3: Update architecture with JRN cross-references
 	// Skip if architecture was loaded from disk (already finalized).
 	if archFromDisk {
 		emit(StreamEvent{Type: "log", Content: "Architecture loaded from disk, skipping cross-reference update."})
 	} else {
-		emit(StreamEvent{Type: "log", Content: importSteps[2].label})
-		archUpdatePrompt := buildImportArchCrossRefPrompt(version, archContent, uxContent)
+		if err := ensureDigest(); err != nil {
+			return nil, fmt.Errorf("build codebase digest: %w", err)
+		}
+		emit(StreamEvent{Type: "log", Content: importSteps[3].label})
+		archUpdatePrompt := buildImportArchCrossRefPrompt(version, digest, archContent, uxContent)
 		updatedArch, err := runImportAgent(ctx, archUpdatePrompt, projectName, hostDir)
 		if err != nil {
 			return nil, fmt.Errorf("architecture cross-ref agent: %w", err)
@@ -136,8 +167,11 @@ func StreamImport(ctx context.Context, hostDir, version, projectName string, emi
 		emit(StreamEvent{Type: "log", Content: "Using existing vision document from disk."})
 		visionContent = existing
 	} else {
-		emit(StreamEvent{Type: "log", Content: importSteps[3].label})
-		visionPrompt := buildImportVisionPrompt(projectName, archContent, uxContent)
+		if err := ensureDigest(); err != nil {
+			return nil, fmt.Errorf("build codebase digest: %w", err)
+		}
+		emit(StreamEvent{Type: "log", Content: importSteps[4].label})
+		visionPrompt := buildImportVisionPrompt(projectName, digest, archContent, uxContent)
 		var err error
 		visionContent, err = runImportAgent(ctx, visionPrompt, projectName, hostDir)
 		if err != nil {
@@ -341,7 +375,9 @@ func isBinary(data []byte) bool {
 // --- Import-specific system prompts ---
 
 func buildImportArchitecturePrompt(version, digest string) string {
-	return fmt.Sprintf(`You are analyzing an existing codebase to reverse-engineer its architecture documentation.
+	return fmt.Sprintf(`%s
+
+You are analyzing an existing codebase to reverse-engineer its architecture documentation.
 
 Here is the codebase structure and source code:
 ---
@@ -374,11 +410,13 @@ Note any deployment, CI/CD, or infrastructure patterns observed.
 </artifact>
 <!-- RESPONSE:END -->
 
-Always wrap the document in exactly those tags. Be thorough — document what actually exists, not what should exist.`, digest, buildArchIDNote(version))
+Always wrap the document in exactly those tags. Be thorough — document what actually exists, not what should exist.`, sourceCodePreamble, digest, buildArchIDNote(version))
 }
 
 func buildImportUXPrompt(version, digest, archContent string) string {
-	return fmt.Sprintf(`You are analyzing an existing codebase to reverse-engineer its UX documentation.
+	return fmt.Sprintf(`%s
+
+You are analyzing an existing codebase to reverse-engineer its UX documentation.
 
 Here is the codebase structure and source code:
 ---
@@ -413,11 +451,13 @@ What UI patterns and interactions are used?
 </artifact>
 <!-- RESPONSE:END -->
 
-Always wrap the document in exactly those tags. Document what actually exists in the code.`, digest, archContent, buildJourneyIDNote(version))
+Always wrap the document in exactly those tags. Document what actually exists in the code.`, sourceCodePreamble, digest, archContent, buildJourneyIDNote(version))
 }
 
-func buildImportArchCrossRefPrompt(version, archContent, uxContent string) string {
-	return fmt.Sprintf(`You are updating an architecture document to add cross-references to user journey IDs.
+func buildImportArchCrossRefPrompt(version, digest, archContent, uxContent string) string {
+	return fmt.Sprintf(`%s
+
+You are updating an architecture document to add cross-references to user journey IDs.
 
 Here is the current architecture document:
 ---
@@ -425,6 +465,11 @@ Here is the current architecture document:
 ---
 
 Here is the UX document with journey IDs:
+---
+%s
+---
+
+Here is the original codebase structure (for reference):
 ---
 %s
 ---
@@ -440,11 +485,13 @@ Produce the COMPLETE updated architecture document using this format:
 </artifact>
 <!-- RESPONSE:END -->
 
-Always wrap the document in exactly those tags.`, archContent, uxContent, version, buildArchIDNote(version))
+Always wrap the document in exactly those tags.`, sourceCodePreamble, archContent, uxContent, digest, version, buildArchIDNote(version))
 }
 
-func buildImportVisionPrompt(projectName, archContent, uxContent string) string {
-	return fmt.Sprintf(`You are analyzing an existing codebase to reverse-engineer its product vision.
+func buildImportVisionPrompt(projectName, digest, archContent, uxContent string) string {
+	return fmt.Sprintf(`%s
+
+You are analyzing an existing codebase to reverse-engineer its product vision.
 
 Here is the architecture analysis:
 ---
@@ -452,6 +499,11 @@ Here is the architecture analysis:
 ---
 
 Here is the UX analysis:
+---
+%s
+---
+
+Here is the original codebase structure (for reference):
 ---
 %s
 ---
@@ -486,7 +538,57 @@ What is explicitly not included in the current version.
 </artifact>
 <!-- RESPONSE:END -->
 
-Always wrap the document in exactly those tags. Infer the vision from what the code actually does.`, archContent, uxContent, projectName)
+Always wrap the document in exactly those tags. Infer the vision from what the code actually does.`, sourceCodePreamble, archContent, uxContent, digest, projectName)
+}
+
+func buildImportUIPrompt(version, digest, archContent, uxContent string) string {
+	return fmt.Sprintf(`%s
+
+You are analyzing an existing codebase to document its UI framework and design system.
+
+Here is the codebase structure and source code:
+---
+%s
+---
+
+Here is the architecture analysis:
+---
+%s
+---
+
+Here is the UX analysis:
+---
+%s
+---
+
+Analyze the frontend source code (components, stylesheets, package.json, configuration files) and produce a UI Framework document.
+
+When ready, produce the document using this format:
+<!-- RESPONSE:START -->
+<artifact>
+# UI Framework: {Product Name} (v%s)
+
+## Framework & Runtime
+Identify the frontend framework (React, Vue, Angular, Svelte, etc.) and version.
+
+## Component Library
+Document the component library or design system in use (Material UI, Tailwind, Shadcn, Ant Design, Bootstrap, custom, etc.).
+
+## Styling Approach
+Describe the styling methodology (CSS Modules, Styled Components, Tailwind classes, plain CSS, SCSS, etc.).
+
+## Design Tokens
+Document observed color palette, typography scale, spacing, and any theme variables.
+
+## Key UI Patterns
+Describe recurring UI patterns and component conventions used across the codebase.
+
+## Build Tooling
+Note the frontend build tools (Vite, Webpack, Next.js, etc.).
+</artifact>
+<!-- RESPONSE:END -->
+
+Always wrap the document in exactly those tags. Document what actually exists in the code.`, sourceCodePreamble, digest, archContent, uxContent, version)
 }
 
 func buildImportBuildArtifact(projectName, version string) string {

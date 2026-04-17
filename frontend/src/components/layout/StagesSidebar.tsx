@@ -22,6 +22,7 @@ interface Props {
 const stageLabels: Record<StageName, string> = {
   vision: 'Vision',
   ux: 'UX Design',
+  ui: 'UI Framework',
   architecture: 'Architecture',
   build: 'Build',
   complete: 'Complete',

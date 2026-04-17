@@ -1,5 +1,23 @@
 import { apiFetch, apiStreamUrl } from './client';
 
+export interface OIDCUser {
+  sub: string;
+  email: string;
+  name: string;
+}
+
+export function getOIDCUser(): Promise<OIDCUser> {
+  return apiFetch<OIDCUser>('/auth/oidc/me');
+}
+
+export function oidcLogout(): void {
+  globalThis.location.href = '/api/auth/oidc/logout';
+}
+
+export function redirectToOIDCLogin(): void {
+  globalThis.location.href = '/api/auth/oidc/login';
+}
+
 export interface AuthStatus {
   authenticated: boolean;
   account?: string;
@@ -49,9 +67,12 @@ export function startLogin(
   };
 
   es.onerror = () => {
-    // Do NOT close — EventSource will auto-reconnect, which triggers a new
-    // backend session.  The reconnect will stream a fresh OAuth URL.
-    onError('Connection lost — reconnecting… you may need to re-authorize with the new URL.');
+    // EventSource auto-reconnects; the backend will create a fresh session
+    // if the previous one finished.  Don't surface transient reconnects as
+    // errors — only report if the connection is permanently closed.
+    if (es.readyState === EventSource.CLOSED) {
+      onError('Connection lost — please reopen the login panel.');
+    }
   };
 
   return () => es.close();

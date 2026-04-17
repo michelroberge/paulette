@@ -357,6 +357,56 @@ func GetSystemPrompt(stage model.StageName, version string, previousArtifacts ma
 	return applyEnhancementContext(stage, prompt, enhancement)
 }
 
+// TruncateArtifact reduces an artifact to fit within a rough token budget by
+// preserving markdown headings and the first linesPerSection lines of each
+// section. Returns the original string if it is already within budget.
+// estimatedMaxChars is a character limit (roughly 4 chars per token).
+func TruncateArtifact(content string, estimatedMaxChars int, linesPerSection int) string {
+	if len(content) <= estimatedMaxChars {
+		return content
+	}
+	if linesPerSection <= 0 {
+		linesPerSection = 5
+	}
+
+	lines := strings.Split(content, "\n")
+	var result strings.Builder
+	sectionLineCount := 0
+	truncated := false
+
+	for _, line := range lines {
+		isHeading := strings.HasPrefix(strings.TrimSpace(line), "#")
+		if isHeading {
+			sectionLineCount = 0
+			if truncated {
+				result.WriteString("  [... truncated ...]\n")
+				truncated = false
+			}
+			result.WriteString(line)
+			result.WriteByte('\n')
+			continue
+		}
+
+		sectionLineCount++
+		if sectionLineCount <= linesPerSection {
+			result.WriteString(line)
+			result.WriteByte('\n')
+		} else if !truncated {
+			truncated = true
+		}
+
+		if result.Len() >= estimatedMaxChars {
+			result.WriteString("\n[... artifact truncated for context limits ...]\n")
+			break
+		}
+	}
+	if truncated {
+		result.WriteString("  [... truncated ...]\n")
+	}
+
+	return result.String()
+}
+
 var enhancementGuidance = map[model.StageName]string{
 	model.StageVision: `ENHANCEMENT INSTRUCTIONS (Vision Stage — Gap Analysis):
 You are refining an EXISTING product vision, not writing a new one.

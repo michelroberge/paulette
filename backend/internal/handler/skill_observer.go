@@ -46,11 +46,11 @@ func NewSkillObserver(hostDir string, skillRepo *fsrepo.SkillRepo, run *stream.R
 
 // resolveProvider returns the Provider and model ID to use for the Build stage,
 // falling back to ClaudeCLI when no registry is configured.
-func (o *SkillObserver) resolveProvider() (provider.Provider, string, error) {
+func (o *SkillObserver) resolveProvider() (provider.Provider, string, *provider.StageAssignment, error) {
 	if o.providerRegistry != nil {
-		return o.providerRegistry.ResolveForStage(o.project.ID, model.StageBuild, o.stageConfig, o.hostDir)
+		return o.providerRegistry.ResolveForStageWithSettings(o.project.ID, model.StageBuild, o.stageConfig, o.hostDir)
 	}
-	return provider.NewClaudeCLIProvider(), provider.FallbackModel(model.StageBuild), nil
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(model.StageBuild), nil, nil
 }
 
 // RecordBead adds a completed bead to the observer's buffer.
@@ -99,18 +99,23 @@ func (o *SkillObserver) analyzeBatch() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	prov, modelID, err := o.resolveProvider()
+	prov, modelID, sa, err := o.resolveProvider()
 	if err != nil {
 		log.Printf("skill observer: resolve provider failed: %v", err)
 		return
 	}
 
 	systemPrompt, userMsg := agent.BuildObserveBeadsRequest(batch, existingSkills)
+	saTemp, saNumCtx, saStream := sa.Fields()
 	events, err := prov.Chat(ctx, provider.ChatRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
 		UserMessage:  userMsg,
 		ProjectDir:   o.hostDir,
+		Stage:        string(model.StageBuild),
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
 	})
 	if err != nil {
 		log.Printf("skill observer: analysis failed: %v", err)

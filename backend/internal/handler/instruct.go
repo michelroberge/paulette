@@ -12,6 +12,7 @@ import (
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -19,10 +20,12 @@ import (
 
 // InstructHandler handles "further instructions" planning and application.
 type InstructHandler struct {
-	registry     repository.RegistryRepo
-	artifactRepo repository.ArtifactRepo
-	activityRepo repository.ActivityRepo
-	runs         *stream.Manager
+	registry         repository.RegistryRepo
+	artifactRepo     repository.ArtifactRepo
+	activityRepo     repository.ActivityRepo
+	runs             *stream.Manager
+	providerRegistry *provider.Registry
+	stageConfig      *provider.StageConfigStore
 }
 
 func NewInstructHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager) *InstructHandler {
@@ -32,6 +35,20 @@ func NewInstructHandler(registry repository.RegistryRepo, artifactRepo repositor
 		activityRepo: activityRepo,
 		runs:         runs,
 	}
+}
+
+// SetProviderRegistry wires in the provider registry and stage config.
+func (h *InstructHandler) SetProviderRegistry(reg *provider.Registry, sc *provider.StageConfigStore) {
+	h.providerRegistry = reg
+	h.stageConfig = sc
+}
+
+// resolveProviderOp resolves a provider for an instruct operation.
+func (h *InstructHandler) resolveProviderOp(projectID, hostDir string) (provider.Provider, string, *provider.StageAssignment, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStageOperation(projectID, model.StageBuild, provider.OperationKey("build.instruct"), h.stageConfig, hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(model.StageBuild), nil, nil
 }
 
 type instructRequest struct {
@@ -106,13 +123,35 @@ func (h *InstructHandler) Plan(w http.ResponseWriter, r *http.Request) {
 
 	systemPrompt := buildInstructSystemPrompt(buildContent, archContent, graphJSON)
 
+	prov, modelID, sa, provErr := h.resolveProviderOp(id, project.HostDir)
+	if provErr != nil {
+		run.Finish(h.runs)
+		http.Error(w, "failed to resolve provider: "+provErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	var temp *float64
+	var numCtx *int
+	var streamFlag *bool
+	if sa != nil {
+		temp, numCtx, streamFlag = sa.Fields()
+	}
+
 	go func() {
 		defer run.Finish(h.runs)
 
 		ctx := run.Context()
-		events, err := agent.Chat(ctx, "claude-opus-4-6", systemPrompt, nil, req.Message, project.HostDir)
+		events, err := prov.Chat(ctx, provider.ChatRequest{
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  req.Message,
+			ProjectDir:   project.HostDir,
+			Stage:        string(model.StageBuild),
+			Temperature:  temp,
+			NumCtx:       numCtx,
+			Stream:       streamFlag,
+		})
 		if err != nil {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "failed to start planning agent: " + err.Error()})
+			run.Emit(agent.StreamEvent{Type: "error", Content: "failed to start planning: " + err.Error()})
 			return
 		}
 

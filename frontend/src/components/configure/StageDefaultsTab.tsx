@@ -1,31 +1,28 @@
 /**
- * StageDefaultsTab — global per-stage connection and model assignment table.
+ * StageDefaultsTab — global per-stage connection and model assignment table,
+ * with expandable sub-operation rows for UX and Build stages.
  *
- * Displays a table with one row per pipeline stage (Vision → Complete).
- * Each row lets the user assign a named connection and model that will be
- * used as the global default for that stage in all new projects.
+ * UX expands to: Chat, Mock Generation
+ * Build expands to: Generate Plan, Review, Execute Beads
  *
- * Behaviour:
- *   - Changes auto-save on dropdown change or text-input blur (IACT-010).
- *   - A "Saved ✓" label fades in next to the changed field and fades out
- *     after 2 seconds; errors show "Save failed — retry?".
- *   - When a connection is changed the model field pre-populates with the
- *     connection's defaultModel so the user doesn't start from scratch.
- *   - When the selected connection has discoveredModels the model column
- *     renders a <select>; otherwise it falls back to a free-text <input>.
- *   - A note at the bottom reminds users these apply to new projects only,
- *     and that per-project overrides are set from the ⚙ icon.
- *
- * Journey: JRN-v0.2.0-006
- * Architecture: ARCH-v0.2.0-025, SCR-010, IACT-010
+ * Sub-operations inherit from their parent stage by default.
+ * When overridden, they save via the operation-level API endpoints.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import type { StageName } from '../../types';
-import type { Connection, ModelInfo, StageAssignment } from '../../types/provider';
+import type { Connection, ModelInfo, StageAssignment, OperationKey, BuildPoolSlot } from '../../types/provider';
 import { listConnections, listModels } from '../../api/connections';
-import { getGlobalDefaults, setGlobalStageDefault } from '../../api/stageConfig';
+import {
+  getGlobalDefaults,
+  setGlobalStageDefault,
+  setGlobalOperationDefault,
+  deleteGlobalOperationDefault,
+  getBuildPool,
+  setBuildPool,
+  deleteBuildPool,
+} from '../../api/stageConfig';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -36,25 +33,39 @@ const STAGES: StageName[] = ['vision', 'ux', 'architecture', 'build', 'complete'
 const STAGE_LABELS: Record<StageName, string> = {
   vision: 'Vision',
   ux: 'UX Design',
+  ui: 'UI Framework',
   architecture: 'Architecture',
   build: 'Build',
   complete: 'Complete',
 };
 
-/** Stage pip colours matching the sidebar navigator. */
 const STAGE_COLORS: Record<StageName, string> = {
   vision: '#3b82f6',
   ux: '#8b5cf6',
+  ui: '#ec4899',
   architecture: '#f59e0b',
   build: '#22c55e',
   complete: '#14b8a6',
 };
 
-/**
- * Sentinel connection ID meaning "use the built-in Claude CLI default".
- * An empty string is stored — the backend interprets an absent / empty
- * connectionId as falling back to the Claude CLI subprocess.
- */
+/** Sub-operations for stages that have them. */
+interface SubOperation {
+  key: OperationKey;
+  label: string;
+}
+
+const STAGE_OPERATIONS: Partial<Record<StageName, SubOperation[]>> = {
+  ux: [
+    { key: 'ux.chat', label: 'Chat' },
+    { key: 'ux.mock', label: 'Mock Generation' },
+  ],
+  build: [
+    { key: 'build.generate', label: 'Generate Plan' },
+    { key: 'build.review', label: 'Review' },
+    { key: 'build.execute', label: 'Execute Beads' },
+  ],
+};
+
 const CLAUDE_CLI_ID = '';
 
 // ---------------------------------------------------------------------------
@@ -64,15 +75,12 @@ const CLAUDE_CLI_ID = '';
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 interface RowState {
-  /** Selected connection ID. '' = Claude CLI fallback. */
   connectionId: string;
-  /** Selected model string. */
   model: string;
-  /** Visual auto-save indicator for this row. */
   saveStatus: SaveStatus;
 }
 
-type RowStates = Record<StageName, RowState>;
+type RowStates = Record<string, RowState>; // keyed by stage name or operation key
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -83,7 +91,17 @@ function defaultRow(): RowState {
 }
 
 function buildDefaultRows(): RowStates {
-  return Object.fromEntries(STAGES.map(s => [s, defaultRow()])) as RowStates;
+  const rows: RowStates = {};
+  for (const stage of STAGES) {
+    rows[stage] = defaultRow();
+    const ops = STAGE_OPERATIONS[stage];
+    if (ops) {
+      for (const op of ops) {
+        rows[op.key] = defaultRow();
+      }
+    }
+  }
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,29 +111,14 @@ function buildDefaultRows(): RowStates {
 export function StageDefaultsTab() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [rows, setRows] = useState<RowStates>(buildDefaultRows);
-  /**
-   * Per-stage discovered models, populated by `listModels()` when the user
-   * picks a connection. An empty array means "no models discovered yet" and
-   * the model column falls back to a free-text <input> (IACT-008).
-   */
-  const [stageModels, setStageModels] = useState<Record<StageName, ModelInfo[]>>(
-    () => Object.fromEntries(STAGES.map(s => [s, [] as ModelInfo[]])) as Record<StageName, ModelInfo[]>,
-  );
+  /** Which operations have an explicit override (not inherited from stage). */
+  const [opOverridden, setOpOverridden] = useState<Record<string, boolean>>({});
+  const [expandedStages, setExpandedStages] = useState<Record<StageName, boolean>>({} as Record<StageName, boolean>);
+  const [stageModels, setStageModels] = useState<Record<string, ModelInfo[]>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  /**
-   * Per-stage save sequence counter.
-   *
-   * Each call to `saveRow` increments its stage's counter and captures the
-   * new value. When the async save resolves, it only applies state updates if
-   * the captured value still matches the current counter — i.e. no newer save
-   * has started in the meantime. This prevents a slow first PUT from
-   * overwriting the result of a fast second PUT on the same row.
-   */
-  const saveSeqRef = useRef<Record<StageName, number>>(
-    Object.fromEntries(STAGES.map(s => [s, 0])) as Record<StageName, number>,
-  );
+  const saveSeqRef = useRef<Record<string, number>>({});
 
   // ── Data loading ───────────────────────────────────────────────────────────
 
@@ -132,16 +135,37 @@ export function StageDefaultsTab() {
 
         setConnections(conns);
 
-        const newRows: Partial<RowStates> = {};
+        const newRows: RowStates = buildDefaultRows();
+        const overridden: Record<string, boolean> = {};
+
+        // Stage-level defaults
         for (const stage of STAGES) {
           const assignment = globalConfig.stageDefaults[stage];
-          newRows[stage] = {
-            connectionId: assignment?.connectionId ?? CLAUDE_CLI_ID,
-            model: assignment?.model ?? '',
-            saveStatus: 'idle',
-          };
+          if (assignment) {
+            newRows[stage] = {
+              connectionId: assignment.connectionId ?? CLAUDE_CLI_ID,
+              model: assignment.model ?? '',
+              saveStatus: 'idle',
+            };
+          }
         }
-        setRows(newRows as RowStates);
+
+        // Operation-level defaults
+        if (globalConfig.operationDefaults) {
+          for (const [opKey, assignment] of Object.entries(globalConfig.operationDefaults)) {
+            if (assignment) {
+              newRows[opKey] = {
+                connectionId: assignment.connectionId ?? CLAUDE_CLI_ID,
+                model: assignment.model ?? '',
+                saveStatus: 'idle',
+              };
+              overridden[opKey] = true;
+            }
+          }
+        }
+
+        setRows(newRows);
+        setOpOverridden(overridden);
       } catch (err) {
         if (!cancelled) {
           console.error('[StageDefaultsTab] Failed to load settings:', err);
@@ -158,41 +182,35 @@ export function StageDefaultsTab() {
 
   // ── Row state helpers ──────────────────────────────────────────────────────
 
-  const updateRow = useCallback((stage: StageName, patch: Partial<RowState>) => {
-    setRows(prev => ({ ...prev, [stage]: { ...prev[stage], ...patch } }));
+  const updateRow = useCallback((key: string, patch: Partial<RowState>) => {
+    setRows(prev => ({ ...prev, [key]: { ...prev[key], ...patch } }));
   }, []);
 
-  /**
-   * Persist the global default for a stage and animate the save-status label.
-   * The "Saved ✓" label fades out automatically after 2 seconds (IACT-010).
-   *
-   * Uses a per-stage sequence number so that if the user makes rapid consecutive
-   * changes, only the *last* in-flight save applies its state updates. A slow
-   * earlier PUT that resolves after a newer one is silently discarded.
-   */
   const saveRow = useCallback(
-    async (stage: StageName, connectionId: string, model: string) => {
-      // Increment and capture the sequence for this save attempt.
-      saveSeqRef.current[stage] = (saveSeqRef.current[stage] ?? 0) + 1;
-      const mySeq = saveSeqRef.current[stage];
+    async (key: string, connectionId: string, model: string, isOperation: boolean) => {
+      if (!saveSeqRef.current[key]) saveSeqRef.current[key] = 0;
+      saveSeqRef.current[key]++;
+      const mySeq = saveSeqRef.current[key];
 
-      updateRow(stage, { saveStatus: 'saving' });
+      updateRow(key, { saveStatus: 'saving' });
       const assignment: StageAssignment = { connectionId, model };
       try {
-        await setGlobalStageDefault(stage, assignment);
-        // Bail out if a newer save has already started for this stage.
-        if (saveSeqRef.current[stage] !== mySeq) return;
-        updateRow(stage, { saveStatus: 'saved' });
+        if (isOperation) {
+          await setGlobalOperationDefault(key as OperationKey, assignment);
+        } else {
+          await setGlobalStageDefault(key as StageName, assignment);
+        }
+        if (saveSeqRef.current[key] !== mySeq) return;
+        updateRow(key, { saveStatus: 'saved' });
         setTimeout(() => {
-          // Only revert to idle if no newer save has taken over by now.
-          if (saveSeqRef.current[stage] === mySeq) {
-            updateRow(stage, { saveStatus: 'idle' });
+          if (saveSeqRef.current[key] === mySeq) {
+            updateRow(key, { saveStatus: 'idle' });
           }
         }, 2000);
       } catch (err) {
-        if (saveSeqRef.current[stage] !== mySeq) return;
-        console.error(`[StageDefaultsTab] Save failed for stage ${stage}:`, err);
-        updateRow(stage, { saveStatus: 'error' });
+        if (saveSeqRef.current[key] !== mySeq) return;
+        console.error(`[StageDefaultsTab] Save failed for ${key}:`, err);
+        updateRow(key, { saveStatus: 'error' });
       }
     },
     [updateRow],
@@ -200,83 +218,93 @@ export function StageDefaultsTab() {
 
   // ── Field change handlers ──────────────────────────────────────────────────
 
-  /**
-   * When the user picks a new connection:
-   *   1. Pre-populate the model field with the connection's defaultModel.
-   *   2. Clear any previously-discovered models for this stage.
-   *   3. Kick off save and model-discovery in parallel (IACT-008).
-   *      Model discovery is best-effort — a failure silently falls back to
-   *      free-text input without blocking or surfacing an error.
-   */
   const handleConnectionChange = useCallback(
-    async (stage: StageName, connectionId: string) => {
+    async (key: string, connectionId: string, isOperation: boolean) => {
       const conn = connections.find(c => c.id === connectionId);
       const newModel = conn?.defaultModel ?? '';
-      updateRow(stage, { connectionId, model: newModel });
+      updateRow(key, { connectionId, model: newModel });
+      setStageModels(prev => ({ ...prev, [key]: [] }));
 
-      // Clear stale models from the previous selection immediately.
-      setStageModels(prev => ({ ...prev, [stage]: [] }));
-
-      // Opportunistically discover models for the newly selected connection.
-      // Do not await — discovery runs in the background so it never blocks the save.
       if (connectionId) {
         listModels(connectionId)
-          .then(models => setStageModels(prev => ({ ...prev, [stage]: models })))
-          .catch(() => {
-            // Silently ignore — the model field stays as free-text (IACT-008).
-          });
+          .then(models => setStageModels(prev => ({ ...prev, [key]: models })))
+          .catch(() => {});
       }
 
-      await saveRow(stage, connectionId, newModel);
+      if (isOperation) {
+        setOpOverridden(prev => ({ ...prev, [key]: true }));
+      }
+      await saveRow(key, connectionId, newModel, isOperation);
     },
     [connections, updateRow, saveRow],
   );
 
-  /** For a model <select> (discovered models): save immediately on change. */
   const handleModelSelect = useCallback(
-    async (stage: StageName, model: string) => {
-      const row = rows[stage];
-      updateRow(stage, { model });
-      await saveRow(stage, row.connectionId, model);
+    async (key: string, model: string, isOperation: boolean) => {
+      const row = rows[key];
+      updateRow(key, { model });
+      if (isOperation) {
+        setOpOverridden(prev => ({ ...prev, [key]: true }));
+      }
+      await saveRow(key, row.connectionId, model, isOperation);
     },
     [rows, updateRow, saveRow],
   );
 
-  /** For a free-text model <input>: update state on every keystroke, save on blur. */
   const handleModelInput = useCallback(
-    (stage: StageName, model: string) => updateRow(stage, { model }),
+    (key: string, model: string) => updateRow(key, { model }),
     [updateRow],
   );
 
   const handleModelBlur = useCallback(
-    async (stage: StageName) => {
-      const row = rows[stage];
-      await saveRow(stage, row.connectionId, row.model);
+    async (key: string, isOperation: boolean) => {
+      const row = rows[key];
+      if (isOperation) {
+        setOpOverridden(prev => ({ ...prev, [key]: true }));
+      }
+      await saveRow(key, row.connectionId, row.model, isOperation);
     },
     [rows, saveRow],
   );
 
+  const handleClearOperation = useCallback(
+    async (opKey: OperationKey) => {
+      try {
+        await deleteGlobalOperationDefault(opKey);
+        setOpOverridden(prev => {
+          const next = { ...prev };
+          delete next[opKey];
+          return next;
+        });
+        updateRow(opKey, { connectionId: CLAUDE_CLI_ID, model: '', saveStatus: 'idle' });
+      } catch (err) {
+        console.error(`[StageDefaultsTab] Failed to clear operation ${opKey}:`, err);
+      }
+    },
+    [updateRow],
+  );
+
+  const toggleExpanded = useCallback((stage: StageName) => {
+    setExpandedStages(prev => ({ ...prev, [stage]: !prev[stage] }));
+  }, []);
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (loading) {
-    return (
-      <p style={styles.loadingText}>Loading stage defaults…</p>
-    );
+    return <p style={styles.loadingText}>Loading stage defaults...</p>;
   }
 
   if (loadError) {
     return (
       <div style={styles.errorBox}>
-        <span>⚠</span> {loadError}
+        <span>Warning</span> {loadError}
       </div>
     );
   }
 
   return (
     <div>
-      {/* Stage defaults table */}
       <div style={styles.table} role="table" aria-label="Global stage defaults">
-        {/* Table header */}
         <div role="rowgroup">
           <div role="row" style={styles.headerRow}>
             <span role="columnheader" style={{ ...styles.headerCell, ...styles.colStage }}>
@@ -288,119 +316,246 @@ export function StageDefaultsTab() {
             <span role="columnheader" style={{ ...styles.headerCell, ...styles.colModel }}>
               Model
             </span>
-            {/* Status column — empty header, reserved for auto-save indicator */}
             <span role="columnheader" style={{ ...styles.headerCell, ...styles.colStatus }} />
           </div>
         </div>
 
-        {/* Table body */}
         <div role="rowgroup">
           {STAGES.map((stage, idx) => {
             const row = rows[stage];
-            // Derive discoverable models from local state, not from the Connection
-            // object — the backend never includes discoveredModels in list responses.
-            // The state is populated by listModels() in handleConnectionChange.
             const discoveredModels = stageModels[stage] ?? [];
             const hasDiscoveredModels = discoveredModels.length > 0;
             const isLast = idx === STAGES.length - 1;
+            const ops = STAGE_OPERATIONS[stage];
+            const hasOps = ops && ops.length > 0;
+            const isExpanded = expandedStages[stage] ?? false;
 
             return (
-              <div
-                key={stage}
-                role="row"
-                style={{
-                  ...styles.bodyRow,
-                  borderBottom: isLast ? 'none' : '1px solid #1e293b',
-                }}
-              >
-                {/* Stage column — pip + label */}
-                <div role="cell" style={{ ...styles.cell, ...styles.colStage }}>
-                  <span
-                    aria-hidden
-                    style={{
-                      display: 'inline-block',
-                      width: '8px',
-                      height: '8px',
-                      borderRadius: '50%',
-                      background: STAGE_COLORS[stage],
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span style={styles.stageLabel}>{STAGE_LABELS[stage]}</span>
-                </div>
+              <div key={stage}>
+                {/* Stage row */}
+                <div
+                  role="row"
+                  style={{
+                    ...styles.bodyRow,
+                    borderBottom: (isLast && !isExpanded) ? 'none' : '1px solid #1e293b',
+                  }}
+                >
+                  {/* Stage column */}
+                  <div role="cell" style={{ ...styles.cell, ...styles.colStage }}>
+                    {hasOps ? (
+                      <button
+                        onClick={() => toggleExpanded(stage)}
+                        style={styles.expandBtn}
+                        aria-expanded={isExpanded}
+                        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${STAGE_LABELS[stage]} sub-operations`}
+                      >
+                        <span style={{
+                          display: 'inline-block',
+                          transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                          transition: 'transform 150ms',
+                          fontSize: '0.625rem',
+                          color: '#64748b',
+                        }}>
+                          &#9654;
+                        </span>
+                      </button>
+                    ) : (
+                      <span style={{ width: '20px', display: 'inline-block' }} />
+                    )}
+                    <span
+                      aria-hidden
+                      style={{
+                        display: 'inline-block',
+                        width: '8px',
+                        height: '8px',
+                        borderRadius: '50%',
+                        background: STAGE_COLORS[stage],
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span style={styles.stageLabel}>{STAGE_LABELS[stage]}</span>
+                  </div>
 
-                {/* Connection column — dropdown */}
-                <div role="cell" style={{ ...styles.cell, ...styles.colConnection }}>
-                  <select
-                    value={row.connectionId}
-                    onChange={e => void handleConnectionChange(stage, e.target.value)}
-                    aria-label={`Connection for ${STAGE_LABELS[stage]}`}
-                    style={selectStyle}
-                  >
-                    <option value="">Claude CLI (default)</option>
-                    {connections.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Model column — dropdown or free-text */}
-                <div role="cell" style={{ ...styles.cell, ...styles.colModel }}>
-                  {hasDiscoveredModels ? (
+                  {/* Connection column */}
+                  <div role="cell" style={{ ...styles.cell, ...styles.colConnection }}>
                     <select
-                      value={row.model}
-                      onChange={e => void handleModelSelect(stage, e.target.value)}
-                      aria-label={`Model for ${STAGE_LABELS[stage]}`}
+                      value={row.connectionId}
+                      onChange={e => void handleConnectionChange(stage, e.target.value, false)}
+                      aria-label={`Connection for ${STAGE_LABELS[stage]}`}
                       style={selectStyle}
                     >
-                      {/* Keep current value selectable even if not in discovered list */}
-                      {!discoveredModels.some(m => m.id === row.model) && row.model && (
-                        <option value={row.model}>{row.model}</option>
-                      )}
-                      {discoveredModels.map(m => (
-                        <option key={m.id} value={m.id}>
-                          {m.name || m.id}
-                        </option>
+                      <option value="">Claude CLI (default)</option>
+                      {connections.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
                       ))}
                     </select>
-                  ) : (
-                    <input
-                      type="text"
-                      value={row.model}
-                      onChange={e => handleModelInput(stage, e.target.value)}
-                      onBlur={() => void handleModelBlur(stage)}
-                      placeholder="e.g. llama3:8b"
-                      aria-label={`Model for ${STAGE_LABELS[stage]}`}
-                      style={inputStyle}
+                  </div>
+
+                  {/* Model column */}
+                  <div role="cell" style={{ ...styles.cell, ...styles.colModel }}>
+                    {hasDiscoveredModels ? (
+                      <select
+                        value={row.model}
+                        onChange={e => void handleModelSelect(stage, e.target.value, false)}
+                        aria-label={`Model for ${STAGE_LABELS[stage]}`}
+                        style={selectStyle}
+                      >
+                        {!discoveredModels.some(m => m.id === row.model) && row.model && (
+                          <option value={row.model}>{row.model}</option>
+                        )}
+                        {discoveredModels.map(m => (
+                          <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={row.model}
+                        onChange={e => handleModelInput(stage, e.target.value)}
+                        onBlur={() => void handleModelBlur(stage, false)}
+                        placeholder="e.g. llama3:8b"
+                        aria-label={`Model for ${STAGE_LABELS[stage]}`}
+                        style={inputStyle}
+                      />
+                    )}
+                  </div>
+
+                  {/* Status column */}
+                  <div role="cell" style={{ ...styles.cell, ...styles.colStatus }}>
+                    <SaveStatusLabel
+                      status={row.saveStatus}
+                      onRetry={
+                        row.saveStatus === 'error'
+                          ? () => void saveRow(stage, row.connectionId, row.model, false)
+                          : undefined
+                      }
                     />
-                  )}
+                  </div>
                 </div>
 
-                {/* Status column — fading save indicator */}
-                <div role="cell" style={{ ...styles.cell, ...styles.colStatus }}>
-                  <SaveStatusLabel
-                    status={row.saveStatus}
-                    onRetry={
-                      row.saveStatus === 'error'
-                        ? () => void saveRow(stage, row.connectionId, row.model)
-                        : undefined
-                    }
-                  />
-                </div>
+                {/* Sub-operation rows */}
+                {hasOps && isExpanded && ops!.map((op, opIdx) => {
+                  const opRow = rows[op.key] ?? defaultRow();
+                  const isOverridden = opOverridden[op.key] ?? false;
+                  const opModels = stageModels[op.key] ?? [];
+                  const hasOpModels = opModels.length > 0;
+                  const isLastOp = opIdx === ops!.length - 1;
+
+                  return (
+                    <div
+                      key={op.key}
+                      role="row"
+                      style={{
+                        ...styles.bodyRow,
+                        ...styles.subRow,
+                        borderBottom: (isLast && isLastOp) ? 'none' : '1px solid #1e293b',
+                      }}
+                    >
+                      {/* Sub-operation label */}
+                      <div role="cell" style={{ ...styles.cell, ...styles.colStage }}>
+                        <span style={{ width: '20px', display: 'inline-block' }} />
+                        <span style={styles.subArrow}>&#8627;</span>
+                        <span style={styles.subLabel}>{op.label}</span>
+                      </div>
+
+                      {/* Connection column — inherit or override */}
+                      <div role="cell" style={{ ...styles.cell, ...styles.colConnection }}>
+                        {isOverridden ? (
+                          <select
+                            value={opRow.connectionId}
+                            onChange={e => void handleConnectionChange(op.key, e.target.value, true)}
+                            aria-label={`Connection for ${op.label}`}
+                            style={selectStyle}
+                          >
+                            <option value="">Claude CLI (default)</option>
+                            {connections.map(c => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span style={styles.inheritedLabel}>(inherited from stage)</span>
+                        )}
+                      </div>
+
+                      {/* Model column */}
+                      <div role="cell" style={{ ...styles.cell, ...styles.colModel }}>
+                        {isOverridden ? (
+                          hasOpModels ? (
+                            <select
+                              value={opRow.model}
+                              onChange={e => void handleModelSelect(op.key, e.target.value, true)}
+                              aria-label={`Model for ${op.label}`}
+                              style={selectStyle}
+                            >
+                              {!opModels.some(m => m.id === opRow.model) && opRow.model && (
+                                <option value={opRow.model}>{opRow.model}</option>
+                              )}
+                              {opModels.map(m => (
+                                <option key={m.id} value={m.id}>{m.name || m.id}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={opRow.model}
+                              onChange={e => handleModelInput(op.key, e.target.value)}
+                              onBlur={() => void handleModelBlur(op.key, true)}
+                              placeholder="e.g. llama3:8b"
+                              aria-label={`Model for ${op.label}`}
+                              style={inputStyle}
+                            />
+                          )
+                        ) : null}
+                      </div>
+
+                      {/* Status / actions column */}
+                      <div role="cell" style={{ ...styles.cell, ...styles.colStatus }}>
+                        {isOverridden ? (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                            <SaveStatusLabel
+                              status={opRow.saveStatus}
+                              onRetry={
+                                opRow.saveStatus === 'error'
+                                  ? () => void saveRow(op.key, opRow.connectionId, opRow.model, true)
+                                  : undefined
+                              }
+                            />
+                            <button
+                              onClick={() => void handleClearOperation(op.key)}
+                              style={styles.clearBtn}
+                              title="Clear override and inherit from stage"
+                              aria-label={`Clear ${op.label} override`}
+                            >
+                              &#10005;
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setOpOverridden(prev => ({ ...prev, [op.key]: true }))}
+                            style={styles.overrideBtn}
+                            title="Override this sub-operation"
+                          >
+                            Override
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Scope note */}
       <p style={styles.scopeNote}>
         These defaults apply to all new projects. Existing projects can override
         settings per-stage from the{' '}
-        <span style={styles.gearHint}>⚙</span> icon in the project header.
+        <span style={styles.gearHint}>&#9881;</span> icon in the project header.
+        Expand UX and Build stages to configure sub-operations individually.
       </p>
+
+      <BuildPoolCard connections={connections} />
     </div>
   );
 }
@@ -409,13 +564,6 @@ export function StageDefaultsTab() {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/**
- * Fading "Saved ✓" / "Saving…" / "Save failed — retry?" label.
- *
- * Always rendered (never null) so the opacity transition fires correctly in
- * both directions: fade-in when status changes from idle → saved, and
- * fade-out when it reverts from saved → idle (IACT-010).
- */
 function SaveStatusLabel({
   status,
   onRetry,
@@ -429,7 +577,7 @@ function SaveStatusLabel({
       ? '#22c55e'
       : status === 'saving'
       ? '#64748b'
-      : '#ef4444'; // error
+      : '#ef4444';
 
   return (
     <span
@@ -446,14 +594,14 @@ function SaveStatusLabel({
         textAlign: 'right',
       }}
     >
-      {status === 'saved' && 'Saved ✓'}
-      {status === 'saving' && 'Saving…'}
+      {status === 'saved' && 'Saved'}
+      {status === 'saving' && 'Saving...'}
       {status === 'error' && (
         <>
           Save failed
           {onRetry && (
             <>
-              {' — '}
+              {' -- '}
               <button
                 onClick={onRetry}
                 style={{
@@ -474,6 +622,232 @@ function SaveStatusLabel({
         </>
       )}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BuildPoolCard
+// ---------------------------------------------------------------------------
+
+function BuildPoolCard({ connections }: { connections: Connection[] }) {
+  const [enabled, setEnabled] = useState(false);
+  const [slots, setSlots] = useState<BuildPoolSlot[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    getBuildPool()
+      .then(cfg => {
+        if (cfg && cfg.slots && cfg.slots.length > 0) {
+          setEnabled(true);
+          setSlots(cfg.slots);
+        }
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  const handleToggle = useCallback(async () => {
+    if (enabled) {
+      setSaving(true);
+      try {
+        await deleteBuildPool();
+        setEnabled(false);
+        setSlots([]);
+      } catch (err) {
+        console.error('Failed to disable build pool:', err);
+      } finally {
+        setSaving(false);
+      }
+    } else {
+      setEnabled(true);
+      if (slots.length === 0) {
+        setSlots([{ connectionId: '', model: '', maxParallel: 2 }]);
+      }
+    }
+  }, [enabled, slots]);
+
+  const updateSlot = useCallback((idx: number, patch: Partial<BuildPoolSlot>) => {
+    setSlots(prev => prev.map((s, i) => i === idx ? { ...s, ...patch } : s));
+  }, []);
+
+  const addSlot = useCallback(() => {
+    setSlots(prev => [...prev, { connectionId: '', model: '', maxParallel: 2 }]);
+  }, []);
+
+  const removeSlot = useCallback((idx: number) => {
+    setSlots(prev => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    const valid = slots.filter(s => s.connectionId);
+    if (valid.length === 0) return;
+    setSaving(true);
+    try {
+      await setBuildPool({ slots: valid });
+    } catch (err) {
+      console.error('Failed to save build pool:', err);
+    } finally {
+      setSaving(false);
+    }
+  }, [slots]);
+
+  if (!loaded) return null;
+
+  return (
+    <div style={{
+      marginTop: '1.5rem',
+      background: '#1e293b',
+      border: '1px solid #334155',
+      borderRadius: '10px',
+      padding: '1rem 1.25rem',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: enabled ? '0.75rem' : 0 }}>
+        <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#e2e8f0', flex: 1 }}>
+          Build Pool
+        </span>
+        <span style={{ fontSize: '0.6875rem', color: '#64748b' }}>
+          {enabled ? 'Enabled' : 'Disabled'}
+        </span>
+        <button
+          onClick={() => void handleToggle()}
+          disabled={saving}
+          style={{
+            position: 'relative',
+            width: '36px',
+            height: '20px',
+            borderRadius: '10px',
+            background: enabled ? '#22c55e' : '#374151',
+            border: 'none',
+            cursor: 'pointer',
+            flexShrink: 0,
+            transition: 'background 0.15s',
+            padding: 0,
+          }}
+        >
+          <span style={{
+            position: 'absolute',
+            top: '2px',
+            left: enabled ? '18px' : '2px',
+            width: '16px',
+            height: '16px',
+            borderRadius: '50%',
+            background: '#fff',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.35)',
+            transition: 'left 0.15s',
+            display: 'block',
+          }} />
+        </button>
+      </div>
+
+      {enabled && (
+        <>
+          <p style={{ fontSize: '0.75rem', color: '#64748b', margin: '0 0 0.75rem' }}>
+            Distribute bead execution across multiple connections. Each slot runs up to its parallel limit concurrently.
+          </p>
+
+          {slots.map((slot, idx) => (
+            <div key={idx} style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: '0.5rem',
+              padding: '0.5rem',
+              background: 'rgba(15, 23, 42, 0.5)',
+              borderRadius: '6px',
+            }}>
+              <select
+                value={slot.connectionId}
+                onChange={e => {
+                  const conn = connections.find(c => c.id === e.target.value);
+                  updateSlot(idx, {
+                    connectionId: e.target.value,
+                    model: conn?.defaultModel ?? slot.model,
+                  });
+                }}
+                style={{ ...selectStyle, flex: '0 0 180px' }}
+              >
+                <option value="">Select connection...</option>
+                {connections.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+
+              <input
+                type="text"
+                value={slot.model}
+                onChange={e => updateSlot(idx, { model: e.target.value })}
+                placeholder="model"
+                style={{ ...inputStyle, flex: 1 }}
+              />
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', flexShrink: 0 }}>
+                <span style={{ fontSize: '0.6875rem', color: '#64748b' }}>Parallel:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={slot.maxParallel}
+                  onChange={e => updateSlot(idx, { maxParallel: Math.max(1, Math.min(10, Number(e.target.value))) })}
+                  style={{ ...inputStyle, width: '48px', textAlign: 'center' }}
+                />
+              </label>
+
+              <button
+                onClick={() => removeSlot(idx)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#64748b',
+                  cursor: 'pointer',
+                  fontSize: '0.875rem',
+                  padding: '2px 4px',
+                }}
+                title="Remove slot"
+              >
+                &#10005;
+              </button>
+            </div>
+          ))}
+
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+            <button
+              onClick={addSlot}
+              style={{
+                background: 'none',
+                border: '1px dashed #334155',
+                borderRadius: '6px',
+                color: '#64748b',
+                cursor: 'pointer',
+                fontSize: '0.75rem',
+                padding: '0.375rem 0.75rem',
+                fontFamily: 'inherit',
+              }}
+            >
+              + Add Slot
+            </button>
+            <button
+              onClick={() => void handleSave()}
+              disabled={saving || slots.every(s => !s.connectionId)}
+              style={{
+                background: '#3b82f6',
+                border: 'none',
+                borderRadius: '6px',
+                color: '#fff',
+                cursor: saving ? 'not-allowed' : 'pointer',
+                fontSize: '0.75rem',
+                fontWeight: 500,
+                padding: '0.375rem 1rem',
+                opacity: saving ? 0.6 : 1,
+                fontFamily: 'inherit',
+              }}
+            >
+              {saving ? 'Saving...' : 'Save Pool'}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -535,6 +909,12 @@ const styles: Record<string, CSSProperties> = {
     transition: 'background 0.1s',
   },
 
+  subRow: {
+    background: 'rgba(15, 23, 42, 0.3)',
+    paddingTop: '0.5rem',
+    paddingBottom: '0.5rem',
+  },
+
   cell: {
     display: 'flex',
     alignItems: 'center',
@@ -542,31 +922,66 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
   },
 
-  colStage: {
-    width: '140px',
-    flexShrink: 0,
-  },
-
-  colConnection: {
-    flex: '0 0 220px',
-    minWidth: 0,
-  },
-
-  colModel: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  colStatus: {
-    width: '5rem',
-    flexShrink: 0,
-    justifyContent: 'flex-end',
-  },
+  colStage: { width: '160px', flexShrink: 0 },
+  colConnection: { flex: '0 0 220px', minWidth: 0 },
+  colModel: { flex: 1, minWidth: 0 },
+  colStatus: { width: '6rem', flexShrink: 0, justifyContent: 'flex-end' },
 
   stageLabel: {
     fontSize: '0.875rem',
     fontWeight: 500,
     color: '#e2e8f0',
+  },
+
+  subArrow: {
+    color: '#475569',
+    fontSize: '0.875rem',
+    marginRight: '0.25rem',
+  },
+
+  subLabel: {
+    fontSize: '0.8125rem',
+    fontWeight: 400,
+    color: '#94a3b8',
+  },
+
+  inheritedLabel: {
+    fontSize: '0.75rem',
+    color: '#475569',
+    fontStyle: 'italic',
+  },
+
+  expandBtn: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: '2px 4px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '20px',
+    flexShrink: 0,
+  },
+
+  overrideBtn: {
+    background: 'none',
+    border: '1px solid #334155',
+    borderRadius: '4px',
+    color: '#64748b',
+    cursor: 'pointer',
+    fontSize: '0.6875rem',
+    padding: '2px 8px',
+    fontFamily: 'inherit',
+  },
+
+  clearBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#64748b',
+    cursor: 'pointer',
+    fontSize: '0.625rem',
+    padding: '2px',
+    lineHeight: 1,
   },
 
   scopeNote: {
@@ -580,10 +995,6 @@ const styles: Record<string, CSSProperties> = {
     fontStyle: 'normal' as const,
   },
 };
-
-// ---------------------------------------------------------------------------
-// Shared field styles
-// ---------------------------------------------------------------------------
 
 const baseFieldStyle: CSSProperties = {
   width: '100%',

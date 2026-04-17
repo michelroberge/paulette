@@ -9,6 +9,8 @@ interface Props {
 
 export function SkillAnalysisPanel({ projectId }: Props) {
   const [analyzing, setAnalyzing] = useState(false);
+  const [analysisRan, setAnalysisRan] = useState(false);
+  const [analysisError, setAnalysisError] = useState('');
   const [streamText, setStreamText] = useState('');
   const [preSuggestions, setPreSuggestions] = useState<SkillSuggestion[]>([]);
   const [observedSuggestions, setObservedSuggestions] = useState<SkillSuggestion[]>([]);
@@ -30,7 +32,9 @@ export function SkillAnalysisPanel({ projectId }: Props) {
   const allSuggestions = [...preSuggestions, ...observedSuggestions];
 
   const handleAnalyze = () => {
+    if (analyzing) return;
     setAnalyzing(true);
+    setAnalysisError('');
     setStreamText('');
     const controller = new AbortController();
     abortRef.current = controller;
@@ -43,13 +47,20 @@ export function SkillAnalysisPanel({ projectId }: Props) {
         }
       } else if (event.type === 'done') {
         setAnalyzing(false);
+        setAnalysisRan(true);
         getSkillSuggestions(projectId)
           .then(r => setPreSuggestions(r.suggestions || []))
           .catch(() => {});
       } else if (event.type === 'error') {
         setAnalyzing(false);
+        setAnalysisRan(true);
+        setAnalysisError(event.content || 'Analysis failed');
       }
-    }, controller.signal).catch(() => setAnalyzing(false));
+    }, controller.signal).catch((err) => {
+      setAnalyzing(false);
+      setAnalysisRan(true);
+      setAnalysisError(err?.message || 'Connection failed');
+    });
   };
 
   const toggleSelected = (idx: number) => {
@@ -109,9 +120,10 @@ export function SkillAnalysisPanel({ projectId }: Props) {
         <button
           className="generate-mock-button"
           onClick={handleAnalyze}
+          disabled={analyzing}
           style={{ marginLeft: 'auto' }}
         >
-          Analyze Build Plan
+          {analyzing ? 'Analyzing…' : 'Analyze Build Plan'}
         </button>
         {approvedCount > 0 && (
           <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
@@ -187,10 +199,17 @@ export function SkillAnalysisPanel({ projectId }: Props) {
         </>
       )}
 
-      {allSuggestions.length === 0 && (
+      {analysisError && (
+        <p style={{ color: '#f87171', fontSize: '0.85rem', margin: 0 }}>
+          {analysisError}
+        </p>
+      )}
+
+      {allSuggestions.length === 0 && !analysisError && (
         <p style={{ color: '#64748b', fontSize: '0.85rem', margin: 0 }}>
-          Click "Analyze Build Plan" to identify reusable patterns that can become skills.
-          Skills are saved to your paulette library for reuse across projects.
+          {analysisRan
+            ? 'No reusable skill patterns found in the current build plan.'
+            : 'Click "Analyze Build Plan" to identify reusable patterns that can become skills. Skills are saved to your paulette library for reuse across projects.'}
         </p>
       )}
     </div>

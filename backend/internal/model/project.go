@@ -31,6 +31,7 @@ type StageName string
 const (
 	StageVision       StageName = "vision"
 	StageUX           StageName = "ux"
+	StageUI           StageName = "ui"
 	StageArchitecture StageName = "architecture"
 	StageBuild        StageName = "build"
 	StageComplete     StageName = "complete"

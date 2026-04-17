@@ -258,9 +258,16 @@ func (r *Run) Subscribe(fromIndex int) (<-chan agent.StreamEvent, int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	ch := make(chan agent.StreamEvent, 256)
+	// Size the channel to hold all buffered events plus headroom for live events,
+	// so the initial send loop never blocks while holding r.mu.
+	pending := 0
+	if fromIndex < len(r.events) {
+		pending = len(r.events) - fromIndex
+	}
+	bufSize := pending + 256
+	ch := make(chan agent.StreamEvent, bufSize)
 
-	// Send buffered events
+	// Send buffered events (guaranteed non-blocking because bufSize >= pending)
 	if fromIndex < len(r.events) {
 		for _, ev := range r.events[fromIndex:] {
 			ch <- ev
@@ -304,6 +311,7 @@ func (r *Run) StreamTo(w http.ResponseWriter, req *http.Request, fromIndex int) 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	// Send headers immediately so the client's fetch() resolves right away
 	// and can start reading the stream body, even before the first event arrives.
 	w.WriteHeader(http.StatusOK)

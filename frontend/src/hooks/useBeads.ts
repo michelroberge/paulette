@@ -8,7 +8,7 @@ export type BuildPhase = 'plan' | 'generating' | 'graph' | 'executing' | 'done';
 export function useBeads(projectId: string | null) {
   const [graph, setGraph] = useState<BeadGraph>({ generatedAt: '', projectId: '', beads: [] });
   const [phase, setPhase] = useState<BuildPhase>('plan');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [executionLog, setExecutionLog] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState('');
   const [planLimitReached, setPlanLimitReached] = useState(false);

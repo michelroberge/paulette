@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { getArtifact } from '../../api/artifacts';
@@ -6,6 +6,7 @@ import { useBeads } from '../../hooks/useBeads';
 import { BeadGraph } from './BeadGraph';
 import { BeadDetailPanel } from './BeadDetailPanel';
 import { BuildingAnimation } from '../ux/BuildingAnimation';
+import { ArtifactSelectionToolbar } from '../artifact/ArtifactSelectionToolbar';
 
 interface Props {
   projectId: string;
@@ -28,6 +29,11 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
   const [artifactExists, setArtifactExists] = useState(false);
   const [maxParallel, setMaxParallel] = useState(2);
   const [selectedBeadId, setSelectedBeadId] = useState<string | null>(null);
+  const [localRefresh, setLocalRefresh] = useState(0);
+
+  const handleArtifactUpdated = useCallback(() => {
+    setLocalRefresh(prev => prev + 1);
+  }, []);
 
   const { graph, setGraph, phase, loading, executionLog, streamingText, generateTokens, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
 
@@ -42,7 +48,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
         setArtifactExists(res.exists);
       })
       .catch(console.error);
-  }, [projectId, refreshTrigger]);
+  }, [projectId, refreshTrigger, localRefresh]);
 
   // Load existing graph on mount
   useEffect(() => {
@@ -134,13 +140,16 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
               </button>
             </>
           )}
+          {loading && !hasBeads && !isGenerating && (
+            <BuildingAnimation />
+          )}
           {!hasBeads && !isGenerating && !loading && (
             <button
               className="generate-mock-button"
               onClick={handleGenerate}
               disabled={!artifactExists}
             >
-              Generate Beads
+              Regenerate Beads
             </button>
           )}
         </div>
@@ -164,16 +173,28 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
           </div>
         ) : mode === 'artifact' && (
           artifactExists ? (
-            <div className="artifact-content">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactContent}</ReactMarkdown>
-              {!hasBeads && !isGenerating && !hideGenerateButton && (
+            <div className="artifact-preview" style={{ position: 'relative' }}>
+              <ArtifactSelectionToolbar
+                projectId={projectId}
+                stage="build"
+                onArtifactUpdated={handleArtifactUpdated}
+              />
+              <div className="artifact-content">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactContent}</ReactMarkdown>
+              </div>
+              {!hasBeads && !isGenerating && !hideGenerateButton && !loading && (
                 <div style={{ padding: '1rem', borderTop: '1px solid #334155', display: 'flex', justifyContent: 'center' }}>
                   <button
                     className="generate-mock-button"
                     onClick={handleGenerate}
                   >
-                    Generate Beads
+                    Regenerate Beads
                   </button>
+                </div>
+              )}
+              {loading && !hasBeads && !isGenerating && (
+                <div style={{ padding: '1rem', borderTop: '1px solid #334155', display: 'flex', justifyContent: 'center' }}>
+                  <BuildingAnimation />
                 </div>
               )}
             </div>

@@ -13,6 +13,10 @@ type RegistryRepo interface {
 	Get(id string) (*model.Project, error)
 	Create(project *model.Project) error
 	Update(project *model.Project) error
+	// UpdateFunc atomically reads the project, applies fn, and writes it back
+	// under a single lock. Use this to avoid lost-update races when multiple
+	// goroutines modify the same project concurrently.
+	UpdateFunc(id string, fn func(*model.Project) error) error
 	Delete(id string) error
 }
 

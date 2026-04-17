@@ -11,6 +11,7 @@ export function useMock(projectId: string | null) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const prevGeneratingRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -18,6 +19,16 @@ export function useMock(projectId: string | null) {
     if (res.exists) setHtml(res.html);
     setLoaded(true);
   }, [projectId]);
+
+  // When generation transitions from true → false without html being set,
+  // reload from the server — the backend may have completed the generation
+  // while our SSE stream was interrupted (e.g. user navigated away).
+  useEffect(() => {
+    if (prevGeneratingRef.current && !generating && !html) {
+      load();
+    }
+    prevGeneratingRef.current = generating;
+  }, [generating, html, load]);
 
   // Check for active mock generation and reconnect on mount
   useEffect(() => {
@@ -56,12 +67,16 @@ export function useMock(projectId: string | null) {
                 setTokenCount(parseInt(ev.content, 10));
                 break;
               case 'done':
-                setHtml(ev.content);
+                // Reload from API — don't rely on SSE payload for large HTML.
                 break;
             }
           },
           controller.signal,
         );
+        // Reload mock from disk after reconnected run completes.
+        if (!cancelled) {
+          await load();
+        }
       } catch {
         // not critical
       } finally {
@@ -91,6 +106,7 @@ export function useMock(projectId: string | null) {
 
     try {
       let charCount = 0;
+      let hadError = false;
       await generateMock(projectId, refinement, (event: StreamEvent) => {
         switch (event.type) {
           case 'chunk':
@@ -102,13 +118,20 @@ export function useMock(projectId: string | null) {
             setTokenCount(Number.parseInt(event.content, 10));
             break;
           case 'done':
-            setHtml(event.content || null);
+            // Don't use event.content — the HTML payload is large and may
+            // be dropped or truncated over SSE. Reload from the API instead.
             break;
           case 'error':
+            hadError = true;
             setError(event.content);
             break;
         }
       }, controller.signal);
+      // Always reload from disk after generation completes — this is reliable
+      // regardless of whether the done event's payload was received intact.
+      if (!hadError) {
+        await load();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Generation failed');
     } finally {

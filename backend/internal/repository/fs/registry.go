@@ -123,6 +123,25 @@ func (r *RegistryRepo) Update(project *model.Project) error {
 	return fmt.Errorf("project %s not found", project.ID)
 }
 
+func (r *RegistryRepo) UpdateFunc(id string, fn func(*model.Project) error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	data, err := r.load()
+	if err != nil {
+		return err
+	}
+	for i := range data.Projects {
+		if data.Projects[i].ID == id {
+			if err := fn(&data.Projects[i]); err != nil {
+				return err
+			}
+			return r.save(data)
+		}
+	}
+	return fmt.Errorf("project %s not found", id)
+}
+
 func (r *RegistryRepo) Delete(id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

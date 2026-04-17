@@ -10,6 +10,7 @@ import { ArtifactPreview } from './components/artifact/ArtifactPreview';
 import { UxPanel } from './components/ux/UxPanel';
 import { BuildPanel } from './components/build/BuildPanel';
 import { BuildWizardView } from './components/build/BuildWizardView';
+import { BuildingAnimation } from './components/ux/BuildingAnimation';
 import { SkillAnalysisPanel } from './components/build/SkillAnalysisPanel';
 import { ApproveButton } from './components/pipeline/ApproveButton';
 import { CompletionView } from './components/pipeline/CompletionView';
@@ -19,6 +20,7 @@ import { VersionSelectorDropdown } from './components/layout/VersionSelectorDrop
 import { VersionHistoryView } from './components/layout/VersionHistoryView';
 import { ConfigurePage } from './components/configure/ConfigurePage';
 import { ProjectStageSettings } from './components/configure/ProjectStageSettings';
+import { RunLogView } from './components/RunLogView';
 import { getPipeline, resetStage, watchPipeline } from './api/pipeline';
 import { getArtifact } from './api/artifacts';
 import { getMock } from './api/mock';
@@ -94,6 +96,7 @@ function ProjectDetailPage() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [pipeline, setPipeline] = useState<PipelineState | null>(null);
   const [selectedStage, setSelectedStage] = useState<StageName | null>(null);
   const [chatReloadTrigger, setChatReloadTrigger] = useState(0);
@@ -113,6 +116,7 @@ function ProjectDetailPage() {
   const [activeRuns, setActiveRuns] = useState<ActiveRun[]>([]);
   const [btwInput, setBtwInput] = useState('');
   const [btwSending, setBtwSending] = useState(false);
+  const [showRunLog, setShowRunLog] = useState(false);
 
   // Load project from URL param on mount / ID change
   useEffect(() => {
@@ -179,8 +183,12 @@ function ProjectDetailPage() {
 
   useEffect(() => {
     if (project) {
+      setPipelineError(null);
       loadPipeline().then(state => {
         if (state) setSelectedStage(state.currentStage);
+      }).catch(err => {
+        console.error('Failed to load pipeline:', err);
+        setPipelineError(err?.message || 'Failed to load pipeline');
       });
       loadStageOverrides();
     }
@@ -260,6 +268,15 @@ function ProjectDetailPage() {
       setHasBuildArtifact(true);
     }
   }, [artifactUpdated, selectedStage]);
+
+  // Auto-switch to artifact tab when artifact is generated (for non-vision stages)
+  useEffect(() => {
+    if (artifactUpdated > 0 && selectedStage && selectedStage !== 'vision' && selectedStage !== 'complete') {
+      if (activeTab === 'chat') {
+        setActiveTab('artifact');
+      }
+    }
+  }, [artifactUpdated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll for summaryReady when at Complete stage
   useEffect(() => {
@@ -386,6 +403,20 @@ function ProjectDetailPage() {
     );
   }
 
+  if (pipelineError) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: '1rem' }}>
+        <p style={{ color: '#ef4444' }}>Failed to load pipeline: {pipelineError}</p>
+        <button onClick={() => { setPipelineError(null); loadPipeline().then(state => { if (state) setSelectedStage(state.currentStage); }).catch(err => setPipelineError(err?.message || 'Failed to load pipeline')); }} style={{ color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer' }}>
+          Retry
+        </button>
+        <button onClick={() => navigate('/')} style={{ color: '#60a5fa', background: 'none', border: 'none', cursor: 'pointer' }}>
+          ← Back to projects
+        </button>
+      </div>
+    );
+  }
+
   const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
   const isActiveStage = currentStageInfo?.status === 'active';
   const tabs = getTabsForStage(selectedStage);
@@ -400,6 +431,7 @@ function ProjectDetailPage() {
           onShowHistory={() => setShowVersionHistory(true)}
           onShowProfile={() => setShowProfile(true)}
           onShowStageSettings={() => setShowStageSettings(true)}
+          onShowRunLog={() => setShowRunLog(v => !v)}
           autonomous={!!project.autonomous}
           onToggleAutonomous={handleToggleAutonomous}
           onVersionClick={() => setVersionSelectorOpen(v => !v)}
@@ -428,7 +460,9 @@ function ProjectDetailPage() {
         )}
 
         <main className="main-content">
-          {viewingVersion ? (
+          {showRunLog ? (
+            <RunLogView projectId={project.id} onClose={() => setShowRunLog(false)} />
+          ) : viewingVersion ? (
             <VersionHistoryView
               project={project}
               version={viewingVersion}
@@ -491,16 +525,33 @@ function ProjectDetailPage() {
                 }}
               >
                 {activeTab === 'chat' && (
-                  <ChatPanel
-                    messages={messages}
-                    streaming={streaming}
-                    streamingContent={streamingContent}
-                    onSend={send}
-                    onStop={stop}
-                    connectionError={connectionError}
-                    onOpenProjectSettings={() => setShowStageSettings(true)}
-                    onRetry={resume}
-                  />
+                  streaming ? (
+                    <div className="mock-split-layout">
+                      <div className="mock-main-column">
+                        <BuildingAnimation />
+                      </div>
+                      <div className="mock-activity-panel">
+                        <div className="mock-activity-header">
+                          <span className="mock-stream-dot" />
+                          <span>Generating Build Plan…</span>
+                        </div>
+                        <div className="mock-activity-content">
+                          {streamingContent || 'Starting…'}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <ChatPanel
+                      messages={messages}
+                      streaming={streaming}
+                      streamingContent={streamingContent}
+                      onSend={send}
+                      onStop={stop}
+                      connectionError={connectionError}
+                      onOpenProjectSettings={() => setShowStageSettings(true)}
+                      onRetry={resume}
+                    />
+                  )
                 )}
 
                 {activeTab === 'skills' && (
@@ -528,16 +579,33 @@ function ProjectDetailPage() {
               ) : (
               <StageView tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab}>
                 {activeTab === 'chat' && (
-                  <ChatPanel
-                    messages={messages}
-                    streaming={streaming}
-                    streamingContent={streamingContent}
-                    onSend={send}
-                    onStop={stop}
-                    connectionError={connectionError}
-                    onOpenProjectSettings={() => setShowStageSettings(true)}
-                    onRetry={resume}
-                  />
+                  streaming && selectedStage && ['ux', 'architecture'].includes(selectedStage) ? (
+                    <div className="mock-split-layout">
+                      <div className="mock-main-column">
+                        <BuildingAnimation />
+                      </div>
+                      <div className="mock-activity-panel">
+                        <div className="mock-activity-header">
+                          <span className="mock-stream-dot" />
+                          <span>Generating {selectedStage === 'ux' ? 'UX Design' : 'Architecture'}…</span>
+                        </div>
+                        <div className="mock-activity-content">
+                          {streamingContent || 'Starting…'}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <ChatPanel
+                      messages={messages}
+                      streaming={streaming}
+                      streamingContent={streamingContent}
+                      onSend={send}
+                      onStop={stop}
+                      connectionError={connectionError}
+                      onOpenProjectSettings={() => setShowStageSettings(true)}
+                      onRetry={resume}
+                    />
+                  )
                 )}
 
                 {activeTab === 'artifact' && selectedStage && !['ux', 'build', 'complete'].includes(selectedStage) && (
@@ -545,6 +613,7 @@ function ProjectDetailPage() {
                     projectId={project.id}
                     stage={selectedStage}
                     refreshTrigger={artifactUpdated}
+                    onArtifactUpdated={() => setChatReloadTrigger(t => t + 1)}
                   />
                 )}
 

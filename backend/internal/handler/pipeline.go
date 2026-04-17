@@ -35,9 +35,10 @@ type PipelineHandler struct {
 	git              *git.Service
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
+	logBase          string
 }
 
-func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, chatRepo repository.ChatRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore) *PipelineHandler {
+func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, chatRepo repository.ChatRepo, runs *stream.Manager, gitSvc *git.Service, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore, logBase string) *PipelineHandler {
 	return &PipelineHandler{
 		registry:         registry,
 		projectRepo:      projectRepo,
@@ -48,16 +49,17 @@ func NewPipelineHandler(registry repository.RegistryRepo, projectRepo repository
 		git:              gitSvc,
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
+		logBase:          logBase,
 	}
 }
 
 // resolveProvider returns the Provider and model ID to use for the given stage,
 // falling back to ClaudeCLI when no registry is configured.
-func (h *PipelineHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
+func (h *PipelineHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, *provider.StageAssignment, error) {
 	if h.providerRegistry != nil {
-		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+		return h.providerRegistry.ResolveForStageWithSettings(projectID, stage, h.stageConfig, hostDir)
 	}
-	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
 func (h *PipelineHandler) GetPipeline(w http.ResponseWriter, r *http.Request) {
@@ -96,9 +98,7 @@ func (h *PipelineHandler) WatchPipeline(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	setSSEHeaders(w)
 
 	emit := func() {
 		p, e := h.registry.Get(id)
@@ -207,13 +207,22 @@ func (h *PipelineHandler) ApproveInternal(projectID string) error {
 		return err
 	}
 
-	project.CurrentStage = nextStage
-	project.UpdatedAt = time.Now()
-	if nextStage == model.StageComplete {
-		project.SummaryReady = false
-	}
-
-	if err := h.registry.Update(project); err != nil {
+	// Use atomic UpdateFunc to avoid clobbering concurrent field changes
+	// (e.g. autonomous toggle racing with stage advancement).
+	if err := h.registry.UpdateFunc(project.ID, func(p *model.Project) error {
+		p.CurrentStage = nextStage
+		p.UpdatedAt = time.Now()
+		if nextStage == model.StageComplete {
+			p.SummaryReady = false
+		}
+		if project.CurrentStage == model.StageArchitecture {
+			p.DevCommands = project.DevCommands
+			p.BuildCommands = project.BuildCommands
+			p.RunCommands = project.RunCommands
+		}
+		*project = *p // update caller's copy with latest state
+		return nil
+	}); err != nil {
 		return fmt.Errorf("failed to update registry: %w", err)
 	}
 	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
@@ -261,6 +270,7 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		return // already running
 	}
 	writeActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary")
+	runLogID := startRunLog(h.logBase, project, model.StageComplete, "summary")
 
 	// Collect artifacts before entering the goroutine.
 	artifacts := make(map[model.StageName]string)
@@ -275,8 +285,9 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 	}
 
 	// Resolve provider before entering the goroutine.
-	prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageComplete)
+	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageComplete)
 	if provErr != nil {
+		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", provErr.Error())
 		run.Emit(agent.StreamEvent{Type: "error", Content: provErr.Error()})
 		clearActivity(h.activityRepo, project.HostDir, model.StageComplete)
@@ -284,20 +295,38 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		return
 	}
 
-	systemPrompt, userMsg := agent.BuildStreamSummaryRequest(artifacts, project.Name, project.Version)
+	// Pass 0 for maxContextChars (no truncation) — the provider's num_ctx
+	// setting handles context limits. Callers can pass a budget for constrained models.
+	systemPrompt, userMsg := agent.BuildStreamSummaryRequest(artifacts, project.Name, project.Version, 0)
+	saTemp, saNumCtx, saStream := sa.Fields()
 
 	go func() {
 		// LIFO defer: clearActivity runs first, then run.Finish (so watcher sees clean state)
 		defer run.Finish(h.runs)
 		defer clearActivity(h.activityRepo, project.HostDir, model.StageComplete)
 
+		var rlErr string
+		var tokens int
+		defer func() {
+			if rlErr != "" {
+				failRunLog(h.logBase, project.Name, runLogID, rlErr)
+			} else {
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageComplete, "summary"), tokens, "")
+			}
+		}()
+
 		events, err := prov.Chat(run.Context(), provider.ChatRequest{
 			Model:        modelID,
 			SystemPrompt: systemPrompt,
 			UserMessage:  userMsg,
 			ProjectDir:   project.HostDir,
+			Stage:        string(model.StageComplete),
+			Temperature:  saTemp,
+			NumCtx:       saNumCtx,
+			Stream:       saStream,
 		})
 		if err != nil {
+			rlErr = err.Error()
 			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", err.Error())
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
 			return
@@ -305,7 +334,6 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 
 		runStart := time.Now()
 		var fullText strings.Builder
-		var tokens int
 		for ev := range events {
 			if ev.Type == "chunk" {
 				fullText.WriteString(ev.Content)
@@ -321,18 +349,19 @@ func (h *PipelineHandler) startSummaryRun(project *model.Project) {
 		}
 		summary := parsed
 		if summary == "" {
-			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", "summary generation produced no output")
-			run.Emit(agent.StreamEvent{Type: "error", Content: "summary generation produced no output"})
+			rlErr = "summary generation produced no output"
+			failActivity(h.activityRepo, project.HostDir, model.StageComplete, "summary", rlErr)
+			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
 
 		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
 		if err := os.WriteFile(summaryPath, []byte(summary), 0644); err != nil {
+			rlErr = "failed to write summary: " + err.Error()
 			log.Printf("failed to write summary: %v", err)
 			run.Emit(agent.StreamEvent{Type: "error", Content: "failed to write summary"})
 			return
 		}
-
 		project.SummaryReady = true
 		project.SummaryTokens = tokens
 		project.AddStageTokens(model.StageComplete, tokens)
@@ -370,9 +399,7 @@ func (h *PipelineHandler) WatchSummary(w http.ResponseWriter, r *http.Request) {
 	run := h.runs.Active(id, "complete", "summary")
 	if run == nil {
 		// No active run — send a done event so the client doesn't hang
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
+		setSSEHeaders(w)
 		fmt.Fprintf(w, "data: {\"type\":\"done\",\"content\":\"\"}\n\n")
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()

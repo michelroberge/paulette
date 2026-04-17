@@ -56,6 +56,7 @@ func buildAutonomousHandler(t *testing.T) (
 		provRegistry,
 		stageConfig,
 		connStore,
+		"", // logBase empty in tests
 	)
 
 	return h, connStore, stageConfig, projectDir
@@ -84,7 +85,7 @@ func TestAutonomousMode_NoConfig_AllStagesFallbackToCLI(t *testing.T) {
 
 	for _, tc := range stages {
 		t.Run(string(tc.stage), func(t *testing.T) {
-			prov, modelID, err := h.resolveProvider("proj-auto", projectDir, tc.stage)
+			prov, modelID, _, err := h.resolveProvider("proj-auto", projectDir, tc.stage)
 
 			if err != nil {
 				t.Fatalf("resolveProvider(%s): unexpected error: %v", tc.stage, err)
@@ -136,7 +137,7 @@ func TestAutonomousMode_OllamaOnly_AllStagesResolveToOllama(t *testing.T) {
 		model.StageBuild, model.StageComplete,
 	} {
 		t.Run(string(stage), func(t *testing.T) {
-			prov, modelID, err := h.resolveProvider("proj-ollama-auto", projectDir, stage)
+			prov, modelID, _, err := h.resolveProvider("proj-ollama-auto", projectDir, stage)
 			if err != nil {
 				t.Fatalf("resolveProvider(%s): %v", stage, err)
 			}
@@ -200,7 +201,7 @@ func TestAutonomousMode_MixedProviders_EachStageResolvesCorrectly(t *testing.T) 
 
 	for _, tc := range cases {
 		t.Run(string(tc.stage), func(t *testing.T) {
-			prov, _, err := h.resolveProvider("proj-mixed-auto", projectDir, tc.stage)
+			prov, _, _, err := h.resolveProvider("proj-mixed-auto", projectDir, tc.stage)
 			if err != nil {
 				t.Fatalf("resolveProvider(%s): %v", tc.stage, err)
 			}
@@ -245,7 +246,7 @@ func TestAutonomousMode_Determinism_RepeatCallsReturnSameProvider(t *testing.T) 
 
 	const iterations = 5
 	for i := 0; i < iterations; i++ {
-		prov, modelID, err := h.resolveProvider("proj-det", projectDir, model.StageBuild)
+		prov, modelID, _, err := h.resolveProvider("proj-det", projectDir, model.StageBuild)
 		if err != nil {
 			t.Fatalf("iteration %d: resolveProvider: %v", i, err)
 		}
