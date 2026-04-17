@@ -149,6 +149,16 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     }, controller.signal);
   }, [projectId, stage, streaming, handleEvent]);
 
+  // Seed a local-only assistant greeting (not persisted to chat history, not sent to AI).
+  // Used for the vision kickoff so the user sees a friendly welcome and can type their first
+  // message, rather than having the agent auto-reply to a synthetic user turn.
+  const seed = useCallback((content: string) => {
+    setMessages(prev => (prev.length === 0
+      ? [{ role: 'assistant', content, timestamp: new Date().toISOString() }]
+      : prev));
+    setNextTurn('user');
+  }, []);
+
   // Resume re-invokes the agent for an unanswered user message (e.g. after server restart).
   const resume = useCallback(async () => {
     if (!projectId || !stage || streaming) return;
@@ -166,5 +176,5 @@ export function useChat(projectId: string | null, stage: StageName | null, reloa
     }, controller.signal);
   }, [projectId, stage, streaming, handleEvent]);
 
-  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, loadHistory, send, resume, stop };
+  return { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, loadHistory, send, seed, resume, stop };
 }

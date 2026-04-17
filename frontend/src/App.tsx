@@ -52,9 +52,10 @@ const PREV_STAGE: Partial<Record<StageName, StageName>> = {
 interface StageTab {
   id: string;
   label: string;
+  dimmed?: boolean;
 }
 
-function getTabsForStage(stage: StageName | null): StageTab[] {
+function getTabsForStage(stage: StageName | null, hasVisionArtifact: boolean): StageTab[] {
   if (!stage || stage === 'complete') return [];
   if (stage === 'ux') return [
     { id: 'chat', label: 'Chat' },
@@ -72,7 +73,7 @@ function getTabsForStage(stage: StageName | null): StageTab[] {
   }
   return [
     { id: 'chat', label: 'Chat' },
-    { id: 'artifact', label: 'Artifact' },
+    { id: 'artifact', label: 'Artifact', dimmed: stage === 'vision' && !hasVisionArtifact },
   ];
 }
 
@@ -113,6 +114,7 @@ function ProjectDetailPage() {
   const [buildComplete, setBuildComplete] = useState(false);
   const [hasBeads, setHasBeads] = useState(false);
   const [hasBuildArtifact, setHasBuildArtifact] = useState(false);
+  const [hasVisionArtifact, setHasVisionArtifact] = useState(false);
   const [activeRuns, setActiveRuns] = useState<ActiveRun[]>([]);
   const [btwInput, setBtwInput] = useState('');
   const [btwSending, setBtwSending] = useState(false);
@@ -139,7 +141,7 @@ function ProjectDetailPage() {
     [stageTokens],
   );
 
-  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, loadHistory, send, resume, stop } =
+  const { messages, streaming, streamingContent, artifactUpdated, historyLoaded, nextTurn, connectionError, loadHistory, send, seed, resume, stop } =
     useChat(project?.id ?? null, selectedStage, chatReloadTrigger, selectedStage ? (n) => addTokens(selectedStage, n) : undefined);
 
   const { active: agentActive, streamingText: agentStreamingText, operation: agentOperation, stage: agentStage } =
@@ -233,11 +235,14 @@ function ProjectDetailPage() {
     setBuildComplete(false);
     setHasBeads(false);
     setHasBuildArtifact(false);
+    setHasVisionArtifact(false);
 
     (async () => {
       try {
         const artifact = await getArtifact(project.id, selectedStage);
-        if (!artifact?.content?.trim()) { setActiveTab('chat'); return; }
+        const artifactExists = !!artifact?.content?.trim();
+        if (selectedStage === 'vision') setHasVisionArtifact(artifactExists);
+        if (!artifactExists) { setActiveTab('chat'); return; }
 
         if (selectedStage === 'ux') {
           const mock = await getMock(project.id);
@@ -266,6 +271,9 @@ function ProjectDetailPage() {
   useEffect(() => {
     if (selectedStage === 'build' && artifactUpdated > 0) {
       setHasBuildArtifact(true);
+    }
+    if (selectedStage === 'vision' && artifactUpdated > 0) {
+      setHasVisionArtifact(true);
     }
   }, [artifactUpdated, selectedStage]);
 
@@ -305,6 +313,12 @@ function ProjectDetailPage() {
     if (messages.length === 0) {
       // Fresh stage — send the opening kickoff message.
       const doKickoff = async () => {
+        // Vision (non-enhancement) opens with a local assistant greeting and waits for the
+        // user's first input, rather than auto-triggering the AI with a synthetic user turn.
+        if (selectedStage === 'vision' && !project?.enhancementVision) {
+          seed("Let's work together to make your vision come to life.");
+          return;
+        }
         let kickoff = selectedStage ? KICKOFF_MESSAGES[selectedStage] : undefined;
         if (project?.enhancementVision) {
           if (selectedStage === 'vision') {
@@ -419,7 +433,7 @@ function ProjectDetailPage() {
 
   const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
   const isActiveStage = currentStageInfo?.status === 'active';
-  const tabs = getTabsForStage(selectedStage);
+  const tabs = getTabsForStage(selectedStage, hasVisionArtifact);
 
   return (
     <div className="app-shell">

@@ -446,6 +446,11 @@ body {
   border-bottom-color: #3b82f6;
 }
 
+.stage-tab.dimmed {
+  color: #475569;
+  opacity: 0.6;
+}
+
 .stage-tab:hover:not(.active) {
   color: #cbd5e1;
 }
