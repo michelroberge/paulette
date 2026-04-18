@@ -12,6 +12,7 @@ import (
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -19,19 +20,37 @@ import (
 
 // InstructHandler handles "further instructions" planning and application.
 type InstructHandler struct {
-	registry     repository.RegistryRepo
-	artifactRepo repository.ArtifactRepo
-	activityRepo repository.ActivityRepo
-	runs         *stream.Manager
+	registry         repository.RegistryRepo
+	artifactRepo     repository.ArtifactRepo
+	activityRepo     repository.ActivityRepo
+	runs             *stream.Manager
+	providerRegistry *provider.Registry
+	stageConfig      *provider.StageConfigStore
+	logBase          string
 }
 
-func NewInstructHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager) *InstructHandler {
+func NewInstructHandler(registry repository.RegistryRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, logBase string) *InstructHandler {
 	return &InstructHandler{
 		registry:     registry,
 		artifactRepo: artifactRepo,
 		activityRepo: activityRepo,
 		runs:         runs,
+		logBase:      logBase,
 	}
+}
+
+// SetProviderRegistry wires in the provider registry and stage config.
+func (h *InstructHandler) SetProviderRegistry(reg *provider.Registry, sc *provider.StageConfigStore) {
+	h.providerRegistry = reg
+	h.stageConfig = sc
+}
+
+// resolveProviderOp resolves a provider for an instruct operation.
+func (h *InstructHandler) resolveProviderOp(projectID, hostDir string) (provider.Provider, string, *provider.StageAssignment, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStageOperation(projectID, model.StageBuild, provider.OperationKey("build.instruct"), h.stageConfig, hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(model.StageBuild), nil, nil
 }
 
 type instructRequest struct {
@@ -94,8 +113,8 @@ func (h *InstructHandler) Plan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load context: build plan, architecture, current bead graph
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
-	archContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
+	archContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageArchitecture)
 
 	graph, _ := fsrepo.ReadBdBeadGraph(r.Context(), project.HostDir)
 	var graphJSON string
@@ -106,13 +125,38 @@ func (h *InstructHandler) Plan(w http.ResponseWriter, r *http.Request) {
 
 	systemPrompt := buildInstructSystemPrompt(buildContent, archContent, graphJSON)
 
+	prov, modelID, sa, provErr := h.resolveProviderOp(id, project.HostDir)
+	if provErr != nil {
+		run.Finish(h.runs)
+		http.Error(w, "failed to resolve provider: "+provErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	var temp *float64
+	var numCtx *int
+	var streamFlag *bool
+	if sa != nil {
+		temp, numCtx, streamFlag = sa.Fields()
+	}
+
+	runLogID := startRunLog(h.logBase, project, model.StageBuild, "instruct")
+
 	go func() {
 		defer run.Finish(h.runs)
 
 		ctx := run.Context()
-		events, err := agent.Chat(ctx, "claude-opus-4-6", systemPrompt, nil, req.Message, project.HostDir)
+		events, err := prov.Chat(ctx, provider.ChatRequest{
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  req.Message,
+			ProjectDir:   project.HostDir,
+			Stage:        string(model.StageBuild),
+			Temperature:  temp,
+			NumCtx:       numCtx,
+			Stream:       streamFlag,
+		})
 		if err != nil {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "failed to start planning agent: " + err.Error()})
+			failRunLog(h.logBase, project.Name, runLogID, err.Error())
+			run.Emit(agent.StreamEvent{Type: "error", Content: "failed to start planning: " + err.Error()})
 			return
 		}
 
@@ -133,6 +177,17 @@ func (h *InstructHandler) Plan(w http.ResponseWriter, r *http.Request) {
 				run.Emit(ev)
 			}
 		}
+
+		// Record full prompt snapshot for tuning/inspection.
+		writePromptSnapshot(h.logBase, project.Name, runLogID, model.PromptSnapshot{
+			Stage:        string(model.StageBuild),
+			Timestamp:    time.Now(),
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  req.Message,
+			RawResponse:  fullContent.String(),
+		})
+		successRunLog(h.logBase, project.Name, runLogID, nil, 0, "instruct planning")
 	}()
 
 	run.StreamTo(w, r, 0)
@@ -163,9 +218,9 @@ func (h *InstructHandler) Apply(w http.ResponseWriter, r *http.Request) {
 
 	// Apply build plan changes
 	if strings.TrimSpace(plan.BuildPlanChanges) != "" {
-		existing, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+		existing, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 		updated := appendInstructionSection(existing, plan.BuildPlanChanges)
-		if wErr := h.artifactRepo.Write(project.HostDir, model.StageBuild, updated); wErr != nil {
+		if wErr := h.artifactRepo.Write(project.DataDir, model.StageBuild, updated); wErr != nil {
 			http.Error(w, "failed to update build plan: "+wErr.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -173,9 +228,9 @@ func (h *InstructHandler) Apply(w http.ResponseWriter, r *http.Request) {
 
 	// Apply architecture changes
 	if strings.TrimSpace(plan.ArchitectureChanges) != "" {
-		existing, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
+		existing, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageArchitecture)
 		updated := appendInstructionSection(existing, plan.ArchitectureChanges)
-		if wErr := h.artifactRepo.Write(project.HostDir, model.StageArchitecture, updated); wErr != nil {
+		if wErr := h.artifactRepo.Write(project.DataDir, model.StageArchitecture, updated); wErr != nil {
 			http.Error(w, "failed to update architecture: "+wErr.Error(), http.StatusInternalServerError)
 			return
 		}

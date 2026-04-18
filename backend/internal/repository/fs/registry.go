@@ -17,9 +17,10 @@ type registryData struct {
 type RegistryRepo struct {
 	mu       sync.RWMutex
 	filePath string
+	dataPath string // root for per-project DataDir computation
 }
 
-func NewRegistryRepo(registryDir string) (*RegistryRepo, error) {
+func NewRegistryRepo(registryDir, dataPath string) (*RegistryRepo, error) {
 	if err := os.MkdirAll(registryDir, 0755); err != nil {
 		return nil, fmt.Errorf("create registry dir: %w", err)
 	}
@@ -35,7 +36,7 @@ func NewRegistryRepo(registryDir string) (*RegistryRepo, error) {
 		}
 	}
 
-	return &RegistryRepo{filePath: filePath}, nil
+	return &RegistryRepo{filePath: filePath, dataPath: dataPath}, nil
 }
 
 func (r *RegistryRepo) load() (*registryData, error) {
@@ -47,7 +48,8 @@ func (r *RegistryRepo) load() (*registryData, error) {
 	if err := json.Unmarshal(b, &data); err != nil {
 		return nil, fmt.Errorf("parse registry: %w", err)
 	}
-	// Migrate legacy stage names
+	// Migrate legacy stage names and backfill DataDir when absent.
+	dirty := false
 	for i := range data.Projects {
 		if data.Projects[i].CurrentStage == "review" {
 			data.Projects[i].CurrentStage = model.StageComplete
@@ -55,6 +57,15 @@ func (r *RegistryRepo) load() (*registryData, error) {
 		if data.Projects[i].Iteration == 0 {
 			data.Projects[i].Iteration = 1
 		}
+		if data.Projects[i].DataDir == "" && r.dataPath != "" {
+			data.Projects[i].DataDir = model.ComputeDataDir(
+				r.dataPath, data.Projects[i].ID, data.Projects[i].Version,
+			)
+			dirty = true
+		}
+	}
+	if dirty {
+		_ = r.save(&data) // best-effort; non-fatal if it fails
 	}
 	return &data, nil
 }
@@ -121,6 +132,25 @@ func (r *RegistryRepo) Update(project *model.Project) error {
 		}
 	}
 	return fmt.Errorf("project %s not found", project.ID)
+}
+
+func (r *RegistryRepo) UpdateFunc(id string, fn func(*model.Project) error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	data, err := r.load()
+	if err != nil {
+		return err
+	}
+	for i := range data.Projects {
+		if data.Projects[i].ID == id {
+			if err := fn(&data.Projects[i]); err != nil {
+				return err
+			}
+			return r.save(data)
+		}
+	}
+	return fmt.Errorf("project %s not found", id)
 }
 
 func (r *RegistryRepo) Delete(id string) error {

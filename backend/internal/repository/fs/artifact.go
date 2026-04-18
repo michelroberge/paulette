@@ -18,12 +18,12 @@ func NewArtifactRepo() *ArtifactRepo {
 	return &ArtifactRepo{}
 }
 
-func artifactPath(hostDir string, stage model.StageName) string {
-	return filepath.Join(hostDir, factoryDir, string(stage), string(stage)+".md")
+func artifactPath(dataDir string, stage model.StageName) string {
+	return filepath.Join(dataDir, string(stage), string(stage)+".md")
 }
 
-func (r *ArtifactRepo) Read(hostDir string, stage model.StageName) (string, error) {
-	b, err := os.ReadFile(artifactPath(hostDir, stage))
+func (r *ArtifactRepo) Read(dataDir string, stage model.StageName) (string, error) {
+	b, err := os.ReadFile(artifactPath(dataDir, stage))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -33,9 +33,9 @@ func (r *ArtifactRepo) Read(hostDir string, stage model.StageName) (string, erro
 	return string(b), nil
 }
 
-// ReadWithFallback reads from .paulette first; if not found, falls back to docs/{version}/.
-func (r *ArtifactRepo) ReadWithFallback(hostDir, version string, stage model.StageName) (string, error) {
-	content, err := r.Read(hostDir, stage)
+// ReadWithFallback reads from dataDir first; if not found, falls back to docs/{version}/ in hostDir.
+func (r *ArtifactRepo) ReadWithFallback(dataDir, hostDir, version string, stage model.StageName) (string, error) {
+	content, err := r.Read(dataDir, stage)
 	if err != nil {
 		return "", err
 	}
@@ -45,16 +45,16 @@ func (r *ArtifactRepo) ReadWithFallback(hostDir, version string, stage model.Sta
 	return ReadStageDoc(hostDir, version, stage)
 }
 
-func (r *ArtifactRepo) Write(hostDir string, stage model.StageName, content string) error {
-	p := artifactPath(hostDir, stage)
+func (r *ArtifactRepo) Write(dataDir string, stage model.StageName, content string) error {
+	p := artifactPath(dataDir, stage)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("create artifact dir: %w", err)
 	}
 	return os.WriteFile(p, []byte(content), 0644)
 }
 
-func (r *ArtifactRepo) Exists(hostDir string, stage model.StageName) (bool, error) {
-	content, err := r.Read(hostDir, stage)
+func (r *ArtifactRepo) Exists(dataDir string, stage model.StageName) (bool, error) {
+	content, err := r.Read(dataDir, stage)
 	if err != nil {
 		return false, err
 	}
@@ -92,15 +92,16 @@ func WriteSummaryDoc(hostDir, version, content string) error {
 	return os.WriteFile(p, []byte(content), 0644)
 }
 
-// ReadSummaryDoc reads the iteration summary from docs/{version}/summary.md,
-// falling back to .paulette/summary.md for backward compatibility.
-func ReadSummaryDoc(hostDir, version string) (string, error) {
-	docsPath := filepath.Join(hostDir, "docs", version, summaryFile)
-	if b, err := os.ReadFile(docsPath); err == nil {
-		return string(b), nil
+// ReadSummaryDoc reads the iteration summary.
+// Priority: dataDir/summary.md → hostDir/docs/{version}/summary.md.
+func ReadSummaryDoc(dataDir, hostDir, version string) (string, error) {
+	if dataDir != "" {
+		if b, err := os.ReadFile(filepath.Join(dataDir, summaryFile)); err == nil {
+			return string(b), nil
+		}
 	}
-	fallbackPath := filepath.Join(hostDir, ".paulette", summaryFile)
-	b, err := os.ReadFile(fallbackPath)
+	docsPath := filepath.Join(hostDir, "docs", version, summaryFile)
+	b, err := os.ReadFile(docsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil

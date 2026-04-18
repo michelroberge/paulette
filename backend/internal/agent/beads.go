@@ -5,14 +5,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
+	ollamaprompts "github.com/michelroberge/paulette/backend/internal/prompts/ollama"
 )
 
 // ParseBuildPlanSystemPrompt is exported so handlers can pass it to provider.Chat directly.
 const ParseBuildPlanSystemPrompt = parseBuildPlanSystemPrompt
+
+// GetParseBuildPlanPrompt returns the build plan parser system prompt,
+// loading from the store if available.
+func GetParseBuildPlanPrompt(store *promptfiles.PromptStore) string {
+	return resolveBeadPrompt(store, "bead-parse-build-plan.md.tmpl", parseBuildPlanSystemPrompt, nil)
+}
 
 const parseBuildPlanSystemPrompt = `You are a Build Plan Parser for an AI App Factory. Read the build plan and architecture below and extract all milestones and tasks into a structured JSON format. 
 
@@ -94,10 +104,22 @@ When given a task to implement:
 - Run tests or build commands if applicable to verify the implementation
 - ALWAYS use relative paths for file operations (e.g., ` + "`src/app.py`" + `, not ` + "`/root/project/src/app.py`" + `). Your working directory is already set to the project root.`
 
+// resolveBeadPrompt loads a prompt from the store if available, falling back to the hardcoded default.
+func resolveBeadPrompt(store *promptfiles.PromptStore, name, fallback string, data map[string]any) string {
+	if store == nil {
+		return fallback
+	}
+	result, err := store.Render(name, data)
+	if err != nil || result == "" {
+		return fallback
+	}
+	return result
+}
+
 // ParseBuildPlan streams Claude's response while parsing build.md into structured epics/tasks.
 // The caller should collect the full "done" event content and call ExtractBeadJSON on it.
 // archContent is optional; when provided it helps Claude infer target files and tags.
-func ParseBuildPlan(ctx context.Context, buildMdContent, archContent string) (<-chan StreamEvent, error) {
+func ParseBuildPlan(ctx context.Context, buildMdContent, archContent string, store ...*promptfiles.PromptStore) (<-chan StreamEvent, error) {
 	var prompt strings.Builder
 	prompt.WriteString("Build Plan:\n---\n")
 	prompt.WriteString(buildMdContent)
@@ -109,12 +131,18 @@ func ParseBuildPlan(ctx context.Context, buildMdContent, archContent string) (<-
 	}
 	prompt.WriteString("Extract all milestones and tasks from this build plan into the required JSON format. Include tags and targetFiles for each task.")
 
+	var ps *promptfiles.PromptStore
+	if len(store) > 0 {
+		ps = store[0]
+	}
+	sysPrompt := resolveBeadPrompt(ps, "bead-parse-build-plan.md.tmpl", parseBuildPlanSystemPrompt, nil)
+
 	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--model", "claude-opus-4-6",
-		"--system-prompt", parseBuildPlanSystemPrompt,
+		"--system-prompt", sysPrompt,
 	)
 	cmd.Stdin = strings.NewReader(prompt.String())
 
@@ -184,11 +212,16 @@ type MatchedSkill struct {
 	Prompt string
 }
 
-func ExecuteBead(ctx context.Context, projectDir string, bead model.Bead, artifacts map[model.StageName]string, enhancement ...*EnhancementContext) (<-chan StreamEvent, error) {
+func ExecuteBead(ctx context.Context, projectDir string, bead model.Bead, artifacts map[model.StageName]string, store *promptfiles.PromptStore, enhancement ...*EnhancementContext) (<-chan StreamEvent, error) {
 	var systemPrompt strings.Builder
 
 	artifactCtx := buildArtifactContext(model.RelevantStages(bead.Tags), artifacts)
-	systemPrompt.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactCtx))
+	basePrompt := resolveBeadPrompt(store, "bead-code-writer.md.tmpl", codeWriterSystemPrompt, map[string]any{"ArtifactContext": artifactCtx})
+	if store != nil {
+		systemPrompt.WriteString(basePrompt)
+	} else {
+		systemPrompt.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactCtx))
+	}
 	systemPrompt.WriteString(fmt.Sprintf("\n\nProject root: `%s`\nALWAYS use relative paths for file operations — never hardcode absolute paths.", projectDir))
 
 	// Inject enhancement context for code writer when iterating on existing code
@@ -282,7 +315,7 @@ Your approach MUST be:
 // All artifacts are provided regardless of bead tags so the reviewer has full context.
 // siblings contains the other tasks in the same epic for integration awareness.
 // openBeads is the project-wide list of open/blocked beads so the reviewer can skip already-tracked issues.
-func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifacts map[model.StageName]string, siblings []model.Bead, openBeads []model.Bead, enhancement ...*EnhancementContext) (string, int, error) {
+func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifacts map[model.StageName]string, siblings []model.Bead, openBeads []model.Bead, store *promptfiles.PromptStore, enhancement ...*EnhancementContext) (string, int, error) {
 	// Devil's advocate always gets all artifacts — it needs the full picture to spot integration gaps.
 	allStages := []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild}
 	artifactCtx := buildArtifactContext(allStages, artifacts)
@@ -292,6 +325,8 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 	}
 	userMsg := buildReviewUserMsg(projectDir, bead, artifactCtx, siblings, openBeads, reviewEnh)
 
+	sysPrompt := resolveBeadPrompt(store, "bead-devil-advocate.md.tmpl", devilAdvocateSystemPrompt, nil)
+
 	cmd := exec.CommandContext(ctx, claudeBin,
 		"--print",
 		"--output-format", "stream-json",
@@ -300,7 +335,7 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 		"--model", "claude-sonnet-4-6",
 		"--allowedTools", "Bash",
 		"--permission-mode", "acceptEdits",
-		"--system-prompt", devilAdvocateSystemPrompt,
+		"--system-prompt", sysPrompt,
 	)
 	cmd.Stdin = strings.NewReader(userMsg)
 	cmd.Dir = projectDir
@@ -365,6 +400,97 @@ func ReviewBead(ctx context.Context, projectDir string, bead model.Bead, artifac
 // IsLGTM is the exported form of isLGTM for use by handler dispatch helpers.
 func IsLGTM(response string) bool { return isLGTM(response) }
 
+// DevilAdvocateChatSystemPrompt is a chat-only variant of the review prompt
+// for providers that don't support tool use reliably (e.g. Ollama). The file
+// contents are injected into the user message instead of relying on Bash.
+const DevilAdvocateChatSystemPrompt = `You are the Devil's Advocate Agent for an AI App Factory. Your role is to critically review code and challenge its quality, completeness, and correctness.
+
+You will receive the task description, the source code of relevant files, and project context.
+
+Challenge:
+- Is the implementation complete or are there stubs/placeholders?
+- Does it match the task description and architecture requirements?
+- Are there obvious bugs, missing error handling, or edge cases?
+- Does it integrate correctly with the rest of the codebase?
+- Is there anything the code writer clearly missed?
+
+Be a tough reviewer, but pragmatic. Focus on real issues, not style preferences.
+
+CRITICAL — your response determines what happens next:
+1. If the implementation is satisfactory: respond with "LGTM" optionally followed by a brief reason.
+2. If there are real issues: respond with a concise bullet list of specific, actionable issues. Do NOT include "LGTM" anywhere.
+
+No preamble, no narration — just the verdict.`
+
+// BuildReviewBeadChatRequest builds the system prompt and user message for a
+// chat-based (non-agentic) code review. Target file contents are read from
+// disk and inlined into the user message so the model doesn't need tool access.
+func BuildReviewBeadChatRequest(
+	projectDir string,
+	bead model.Bead,
+	artifacts map[model.StageName]string,
+	siblings []model.Bead,
+	openBeads []model.Bead,
+	enhancement *EnhancementContext,
+) (systemPrompt, userMsg string) {
+	allStages := []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild}
+	artifactCtx := buildArtifactContext(allStages, artifacts)
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Review the implementation of this task:\n\nTask: %s\n", bead.Title))
+	if bead.Description != "" {
+		b.WriteString(fmt.Sprintf("Description: %s\n", bead.Description))
+	}
+
+	// Inline target file contents so the model can review without tools.
+	if len(bead.TargetFiles) > 0 {
+		b.WriteString("\n--- TARGET FILE CONTENTS ---\n")
+		const maxFileBytes = 8000
+		for _, f := range bead.TargetFiles {
+			path := filepath.Join(projectDir, f)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				b.WriteString(fmt.Sprintf("\n### %s\n(file not found: %v)\n", f, err))
+				continue
+			}
+			content := string(data)
+			if len(content) > maxFileBytes {
+				content = content[:maxFileBytes] + "\n... (truncated)"
+			}
+			b.WriteString(fmt.Sprintf("\n### %s\n```\n%s\n```\n", f, content))
+		}
+		b.WriteString("--- END TARGET FILES ---\n")
+	}
+
+	if len(siblings) > 0 {
+		b.WriteString("\nSibling tasks in the same epic:\n")
+		for _, s := range siblings {
+			b.WriteString(fmt.Sprintf("- [%s] %s: %s\n", strings.ToUpper(string(s.Status)), s.Title, s.Description))
+		}
+	}
+
+	b.WriteString("\nProject context:\n")
+	b.WriteString(artifactCtx)
+
+	if enhancement != nil {
+		b.WriteString("\nENHANCEMENT CONTEXT: This is an enhancement iteration. Check that existing code was preserved.\n")
+	}
+
+	return DevilAdvocateChatSystemPrompt, b.String()
+}
+
+// BuildCodeFilePlannerSystemPrompt returns the system prompt for the orchestrated
+// code generation file-planning step, used when the provider is Ollama.
+func BuildCodeFilePlannerSystemPrompt() string {
+	return ollamaprompts.CodeFilePlanner
+}
+
+// BuildCodeFileGeneratorSystemPrompt returns the system prompt for the orchestrated
+// code generation per-file step, used when the provider is Ollama.
+func BuildCodeFileGeneratorSystemPrompt() string {
+	return ollamaprompts.CodeFileGenerator
+}
+
 // BuildExecuteBeadRequest builds the system prompt and user message for a code-writer
 // bead execution without actually running Claude. This is used by non-CLI providers
 // that call ExecuteAgent directly.
@@ -374,11 +500,17 @@ func BuildExecuteBeadRequest(
 	bead model.Bead,
 	artifacts map[model.StageName]string,
 	enhancement *EnhancementContext,
+	store *promptfiles.PromptStore,
 ) (systemPrompt, userMsg string) {
 	var sp strings.Builder
 
 	artifactCtx := buildArtifactContext(model.RelevantStages(bead.Tags), artifacts)
-	sp.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactCtx))
+	basePrompt := resolveBeadPrompt(store, "bead-code-writer.md.tmpl", codeWriterSystemPrompt, map[string]any{"ArtifactContext": artifactCtx})
+	if store != nil {
+		sp.WriteString(basePrompt)
+	} else {
+		sp.WriteString(fmt.Sprintf(codeWriterSystemPrompt, artifactCtx))
+	}
 	sp.WriteString(fmt.Sprintf("\n\nProject root: `%s`\nALWAYS use relative paths for file operations — never hardcode absolute paths.", projectDir))
 
 	if enhancement != nil {
@@ -426,34 +558,95 @@ func BuildReviewBeadRequest(
 	siblings []model.Bead,
 	openBeads []model.Bead,
 	enhancement *EnhancementContext,
+	store *promptfiles.PromptStore,
 ) (systemPrompt, userMsg string) {
 	allStages := []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild}
 	artifactCtx := buildArtifactContext(allStages, artifacts)
-	return devilAdvocateSystemPrompt, buildReviewUserMsg(projectDir, bead, artifactCtx, siblings, openBeads, enhancement)
+	sysPrompt := resolveBeadPrompt(store, "bead-devil-advocate.md.tmpl", devilAdvocateSystemPrompt, nil)
+	return sysPrompt, buildReviewUserMsg(projectDir, bead, artifactCtx, siblings, openBeads, enhancement)
+}
+
+// approvalPhrases are common approval phrases used by models that don't say "LGTM".
+// Checked case-insensitively against the first line of the response.
+var approvalPhrases = []string{
+	"lgtm",
+	"looks good",
+	"approved",
+	"no issues",
+	"no findings",
+	"all good",
+	"no problems",
+	"no concerns",
+	"code looks correct",
+	"implementation is correct",
+	"implementation looks good",
+	"the implementation is complete",
+	"the code is correct",
+}
+
+// issueKeywords are words that indicate the review found problems,
+// used as a negative signal in the heuristic fallback.
+var issueKeywords = []string{
+	"fix", "bug", "missing", "wrong", "error", "broken", "incorrect",
+	"should", "must", "needs to", "fail", "issue", "problem", "todo",
 }
 
 // isLGTM checks whether the devil's advocate response is an approval.
-// Primary check: response starts with "LGTM".
-// Fallback: if the response contains "LGTM" and has no actionable bullet
-// points (lines starting with "- "), treat it as approval — the model
-// narrated its review but ultimately approved.
+//
+// Three-tier detection:
+//  1. First line starts with a known approval phrase (case-insensitive).
+//  2. Response contains an approval phrase AND has no actionable bullet points.
+//  3. Heuristic: response is short (<500 chars), has no bullet points, and
+//     contains no issue keywords — treat as implicit approval.
 func isLGTM(response string) bool {
-	if strings.HasPrefix(response, "LGTM") {
-		return true
+	trimmed := strings.TrimSpace(response)
+	if trimmed == "" {
+		return true // empty review = nothing to fix
 	}
-	upper := strings.ToUpper(response)
-	if !strings.Contains(upper, "LGTM") {
-		return false
+	lower := strings.ToLower(trimmed)
+
+	// Tier 1: first line starts with an approval phrase
+	firstLine := lower
+	if idx := strings.IndexByte(lower, '\n'); idx >= 0 {
+		firstLine = lower[:idx]
 	}
-	// Contains LGTM but didn't start with it — only approve if there are
-	// no actionable bullet points (issue lists).
-	for _, line := range strings.Split(response, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
-			return false
+	firstLine = strings.TrimSpace(firstLine)
+	for _, phrase := range approvalPhrases {
+		if strings.HasPrefix(firstLine, phrase) {
+			return true
 		}
 	}
-	return true
+
+	// Check for actionable bullet points anywhere in the response.
+	hasBullets := false
+	for _, line := range strings.Split(trimmed, "\n") {
+		lt := strings.TrimSpace(line)
+		if strings.HasPrefix(lt, "- ") || strings.HasPrefix(lt, "* ") {
+			hasBullets = true
+			break
+		}
+	}
+
+	// Tier 2: contains an approval phrase with no bullet points
+	if !hasBullets {
+		for _, phrase := range approvalPhrases {
+			if strings.Contains(lower, phrase) {
+				return true
+			}
+		}
+	}
+
+	// Tier 3: short response, no bullets, no issue keywords → implicit approval
+	if !hasBullets && len(trimmed) < 500 {
+		for _, kw := range issueKeywords {
+			if strings.Contains(lower, kw) {
+				return false
+			}
+		}
+		return true
+	}
+
+	return false
 }
 
 // ExtractBeadJSON extracts the JSON build plan from a Claude XML envelope response.

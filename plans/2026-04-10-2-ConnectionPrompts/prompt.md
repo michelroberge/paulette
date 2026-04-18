@@ -1,0 +1,1 @@
+I think we should also add a workflow button per connection in configure/ so we can fine tune the default prompts per step per connection. For example, the prompt for claude for the vision would be more complex than if I use a small model.

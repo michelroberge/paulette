@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -33,6 +34,7 @@ type StageConfigHandler struct {
 	// assignments refer to real, stored connections.
 	connStore *provider.ConnectionStore
 	registry  repository.RegistryRepo
+	buildPool *provider.BuildPool
 }
 
 // NewStageConfigHandler constructs a StageConfigHandler with its dependencies.
@@ -48,6 +50,12 @@ func NewStageConfigHandler(
 	}
 }
 
+// SetBuildPoolRuntime wires in the runtime build pool so SetBuildPool / DeleteBuildPool
+// handlers can reconfigure it without a restart.
+func (h *StageConfigHandler) SetBuildPoolRuntime(pool *provider.BuildPool) {
+	h.buildPool = pool
+}
+
 // RegisterRoutes mounts all stage-config routes onto the provided router.
 // The project-scoped routes expect {id} to already be in scope (i.e. mounted
 // inside a "/api/projects/{id}" sub-router).
@@ -56,10 +64,18 @@ func (h *StageConfigHandler) RegisterRoutes(global chi.Router, project chi.Route
 	global.Get("/api/config/stages", h.GetGlobalDefaults)
 	global.Put("/api/config/stages/{stage}", h.SetGlobalStageDefault)
 
+	// Global operation defaults
+	global.Put("/api/config/operations/{operation}", h.SetGlobalOperationDefault)
+	global.Delete("/api/config/operations/{operation}", h.DeleteGlobalOperationDefault)
+
 	// Per-project overrides — registered inside the /{id} sub-router
 	project.Get("/config/stages", h.GetProjectOverrides)
 	project.Put("/config/stages/{stage}", h.SetProjectStageOverride)
 	project.Post("/config/stages/reset", h.ResetProjectOverrides)
+
+	// Per-project operation overrides
+	project.Put("/config/operations/{operation}", h.SetProjectOperationOverride)
+	project.Delete("/config/operations/{operation}", h.DeleteProjectOperationOverride)
 }
 
 // ---------------------------------------------------------------------------
@@ -255,4 +271,200 @@ func (h *StageConfigHandler) ResetProjectOverrides(w http.ResponseWriter, r *htt
 	}
 
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// ---------------------------------------------------------------------------
+// Global operation defaults
+// ---------------------------------------------------------------------------
+
+// SetGlobalOperationDefault writes a connection + model assignment for a specific
+// sub-step operation (e.g. "ux.mock", "build.generate") into the global config.
+//
+// PUT /api/config/operations/:operation
+//
+// Request body: { "connectionId": "uuid", "model": "..." }
+// Response 200: full updated GlobalConfig.
+func (h *StageConfigHandler) SetGlobalOperationDefault(w http.ResponseWriter, r *http.Request) {
+	operation := chi.URLParam(r, "operation")
+
+	var assignment provider.StageAssignment
+	if err := json.NewDecoder(r.Body).Decode(&assignment); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	if assignment.ConnectionID != "" {
+		if _, err := h.connStore.Get(assignment.ConnectionID); err != nil {
+			jsonError(w, http.StatusBadRequest, "unknown connectionId: "+assignment.ConnectionID)
+			return
+		}
+	}
+
+	if err := h.stageConfig.SetGlobalOperationDefault(operation, assignment); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	cfg := h.stageConfig.GetGlobalDefaults()
+	writeJSON(w, cfg)
+}
+
+// DeleteGlobalOperationDefault removes a global operation default, causing the
+// operation to fall through to stage-level defaults.
+//
+// DELETE /api/config/operations/:operation
+//
+// Response 200: full updated GlobalConfig.
+func (h *StageConfigHandler) DeleteGlobalOperationDefault(w http.ResponseWriter, r *http.Request) {
+	operation := chi.URLParam(r, "operation")
+
+	if err := h.stageConfig.DeleteGlobalOperationDefault(operation); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	cfg := h.stageConfig.GetGlobalDefaults()
+	writeJSON(w, cfg)
+}
+
+// ---------------------------------------------------------------------------
+// Per-project operation overrides
+// ---------------------------------------------------------------------------
+
+// SetProjectOperationOverride sets or clears a per-project operation override.
+// Sending null body or empty body clears the override.
+//
+// PUT /api/projects/:id/config/operations/:operation
+//
+// Response 200: full updated ProjectStageConfig.
+func (h *StageConfigHandler) SetProjectOperationOverride(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	operation := chi.URLParam(r, "operation")
+
+	project, err := h.registry.Get(projectID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	var raw json.RawMessage
+	decErr := json.NewDecoder(r.Body).Decode(&raw)
+	if decErr != nil && !errors.Is(decErr, io.EOF) {
+		jsonError(w, http.StatusBadRequest, "invalid request body: "+decErr.Error())
+		return
+	}
+
+	var assignment *provider.StageAssignment
+	if decErr == nil && string(raw) != "null" {
+		var a provider.StageAssignment
+		if unmarshalErr := json.Unmarshal(raw, &a); unmarshalErr != nil {
+			jsonError(w, http.StatusBadRequest, "invalid stage assignment: "+unmarshalErr.Error())
+			return
+		}
+		if a.ConnectionID != "" {
+			if _, connErr := h.connStore.Get(a.ConnectionID); connErr != nil {
+				jsonError(w, http.StatusBadRequest, "unknown connectionId: "+a.ConnectionID)
+				return
+			}
+		}
+		assignment = &a
+	}
+
+	if setErr := h.stageConfig.SetProjectOperationOverride(project.HostDir, operation, assignment); setErr != nil {
+		jsonError(w, http.StatusBadRequest, setErr.Error())
+		return
+	}
+
+	overrides := h.stageConfig.GetProjectOverrides(project.HostDir)
+	writeJSON(w, overrides)
+}
+
+// DeleteProjectOperationOverride removes a per-project operation override.
+//
+// DELETE /api/projects/:id/config/operations/:operation
+//
+// Response 200: full updated ProjectStageConfig.
+func (h *StageConfigHandler) DeleteProjectOperationOverride(w http.ResponseWriter, r *http.Request) {
+	projectID := chi.URLParam(r, "id")
+	operation := chi.URLParam(r, "operation")
+
+	project, err := h.registry.Get(projectID)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	if delErr := h.stageConfig.DeleteProjectOperationOverride(project.HostDir, operation); delErr != nil {
+		jsonError(w, http.StatusBadRequest, delErr.Error())
+		return
+	}
+
+	overrides := h.stageConfig.GetProjectOverrides(project.HostDir)
+	writeJSON(w, overrides)
+}
+
+// ---------------------------------------------------------------------------
+// Build pool
+// ---------------------------------------------------------------------------
+
+// GetBuildPool returns the current build pool configuration.
+// GET /api/config/build-pool
+func (h *StageConfigHandler) GetBuildPool(w http.ResponseWriter, r *http.Request) {
+	pool := h.stageConfig.GetBuildPool()
+	writeJSON(w, pool)
+}
+
+// SetBuildPool sets or replaces the build pool configuration.
+// PUT /api/config/build-pool
+func (h *StageConfigHandler) SetBuildPool(w http.ResponseWriter, r *http.Request) {
+	var cfg provider.BuildPoolConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(cfg.Slots) == 0 {
+		jsonError(w, http.StatusBadRequest, "build pool must have at least one slot")
+		return
+	}
+	for i, slot := range cfg.Slots {
+		if slot.ConnectionID == "" {
+			jsonError(w, http.StatusBadRequest, fmt.Sprintf("slot %d: connectionId is required", i))
+			return
+		}
+		if slot.MaxParallel < 1 {
+			cfg.Slots[i].MaxParallel = 1
+		}
+		if slot.MaxParallel > 10 {
+			cfg.Slots[i].MaxParallel = 10
+		}
+	}
+	if err := h.stageConfig.SetBuildPool(cfg); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Reconfigure the runtime pool if one exists.
+	if h.buildPool != nil {
+		h.buildPool.Reconfigure(cfg)
+	}
+	writeJSON(w, cfg)
+}
+
+// DeleteBuildPool removes the build pool configuration.
+// DELETE /api/config/build-pool
+func (h *StageConfigHandler) DeleteBuildPool(w http.ResponseWriter, r *http.Request) {
+	if err := h.stageConfig.DeleteBuildPool(); err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetBuildPoolStatus returns the runtime status of all pool slots.
+// GET /api/config/build-pool/status
+func (h *StageConfigHandler) GetBuildPoolStatus(w http.ResponseWriter, r *http.Request) {
+	if h.buildPool == nil || !h.buildPool.Active() {
+		writeJSON(w, map[string]interface{}{"slots": []interface{}{}})
+		return
+	}
+	writeJSON(w, map[string]interface{}{"slots": h.buildPool.Status()})
 }

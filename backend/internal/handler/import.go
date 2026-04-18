@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -20,23 +21,25 @@ import (
 )
 
 type ImportHandler struct {
-	registry      repository.RegistryRepo
-	projectRepo   repository.ProjectRepo
-	artifactRepo  repository.ArtifactRepo
-	runs          *stream.Manager
-	git           *git.Service
-	reposPath     string
-	gitIdentity   *git.GlobalIdentityStore
+	registry     repository.RegistryRepo
+	projectRepo  repository.ProjectRepo
+	artifactRepo repository.ArtifactRepo
+	runs         *stream.Manager
+	git          *git.Service
+	gitPath      string
+	dataPath     string
+	gitIdentity  *git.GlobalIdentityStore
 }
 
-func NewImportHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager, gitSvc *git.Service, reposPath string, gitIdentity *git.GlobalIdentityStore) *ImportHandler {
+func NewImportHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager, gitSvc *git.Service, gitPath, dataPath string, gitIdentity *git.GlobalIdentityStore) *ImportHandler {
 	return &ImportHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
 		artifactRepo: artifactRepo,
 		runs:         runs,
 		git:          gitSvc,
-		reposPath:    reposPath,
+		gitPath:      gitPath,
+		dataPath:     dataPath,
 		gitIdentity:  gitIdentity,
 	}
 }
@@ -55,46 +58,10 @@ func (h *ImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.RepoURL != "" {
-		// Clone import — hostDir is optional, default to repos/<repo-basename>
-		if req.HostDir == "" {
-			base := filepath.Base(req.RepoURL)
-			base = strings.TrimSuffix(base, ".git")
-			req.HostDir = filepath.Join(h.reposPath, base)
-		}
-		// Host dir must not already exist
-		if _, err := os.Stat(req.HostDir); err == nil {
-			http.Error(w, "hostDir already exists; for local import, omit repoUrl", http.StatusBadRequest)
-			return
-		}
-		if err := h.git.Clone(req.RepoURL, req.HostDir); err != nil {
-			http.Error(w, "failed to clone repo: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		// Local import — hostDir is required
-		if req.HostDir == "" {
-			http.Error(w, "hostDir is required for local imports", http.StatusBadRequest)
-			return
-		}
-		if _, err := os.Stat(req.HostDir); os.IsNotExist(err) {
-			http.Error(w, "hostDir does not exist", http.StatusBadRequest)
-			return
-		}
-		if _, err := os.Stat(filepath.Join(req.HostDir, ".git")); os.IsNotExist(err) {
-			http.Error(w, "hostDir is not a git repository", http.StatusBadRequest)
-			return
-		}
-	}
 
-	// Defaults
-	name := req.Name
-	if name == "" {
-		name = filepath.Base(req.HostDir)
-	}
-	version := req.Version
-	if version == "" {
-		version = "1.0.0"
+	if err := h.resolveRepo(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// Apply global git identity to the repo so commits work out of the box.
@@ -102,28 +69,16 @@ func (h *ImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		_ = h.git.SetIdentity(req.HostDir, id.Name, id.Email)
 	}
 
-	// Initialize .paulette directory structure
-	if err := h.projectRepo.Init(req.HostDir); err != nil {
+	project := h.buildProject(&req)
+
+	// Initialize working-state directory
+	if err := h.projectRepo.Init(project.DataDir); err != nil {
 		http.Error(w, "failed to init project directory: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	now := time.Now()
-	project := &model.Project{
-		ID:           uuid.New().String(),
-		Name:         name,
-		Author:       req.Author,
-		Version:      version,
-		HostDir:      req.HostDir,
-		CurrentStage: model.StageVision,
-		Iteration:    1,
-		Imported:     true,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-
 	// Save project.json and register
-	if err := h.projectRepo.Save(req.HostDir, project); err != nil {
+	if err := h.projectRepo.Save(project.DataDir, project); err != nil {
 		http.Error(w, "failed to save project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -138,6 +93,65 @@ func (h *ImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(project)
+}
+
+// resolveRepo validates and prepares the repository for import (clone or local).
+func (h *ImportHandler) resolveRepo(req *importRequest) error {
+	if req.RepoURL != "" {
+		return h.resolveCloneImport(req)
+	}
+	return h.resolveLocalImport(req)
+}
+
+func (h *ImportHandler) resolveCloneImport(req *importRequest) error {
+	if req.HostDir == "" {
+		base := strings.TrimSuffix(filepath.Base(req.RepoURL), ".git")
+		req.HostDir = filepath.Join(h.gitPath, base)
+	}
+	if _, err := os.Stat(req.HostDir); err == nil {
+		return fmt.Errorf("hostDir already exists; for local import, omit repoUrl")
+	}
+	return h.git.Clone(req.RepoURL, req.HostDir)
+}
+
+func (h *ImportHandler) resolveLocalImport(req *importRequest) error {
+	if req.HostDir == "" {
+		return fmt.Errorf("hostDir is required for local imports")
+	}
+	if _, err := os.Stat(req.HostDir); os.IsNotExist(err) {
+		return fmt.Errorf("hostDir does not exist")
+	}
+	if _, err := os.Stat(filepath.Join(req.HostDir, ".git")); os.IsNotExist(err) {
+		return fmt.Errorf("hostDir is not a git repository")
+	}
+	return nil
+}
+
+func (h *ImportHandler) buildProject(req *importRequest) *model.Project {
+	name := req.Name
+	if name == "" {
+		name = filepath.Base(req.HostDir)
+	}
+	version := req.Version
+	if version == "" {
+		version = "1.0.0"
+	}
+	now := time.Now()
+	projectID := uuid.New().String()
+	dataDir := model.ComputeDataDir(h.dataPath, projectID, version)
+	return &model.Project{
+		ID:           projectID,
+		Name:         name,
+		Author:       req.Author,
+		Version:      version,
+		HostDir:      req.HostDir,
+		DataDir:      dataDir,
+		CurrentStage: model.StageVision,
+		Iteration:    1,
+		Imported:     true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
 }
 
 func (h *ImportHandler) startImportRun(project *model.Project) {
@@ -163,7 +177,7 @@ func (h *ImportHandler) startImportRun(project *model.Project) {
 
 		// Write all generated artifacts
 		for stage, content := range result.Artifacts {
-			if err := h.artifactRepo.Write(project.HostDir, stage, content); err != nil {
+			if err := h.artifactRepo.Write(project.DataDir, stage, content); err != nil {
 				log.Printf("import: failed to write %s artifact: %v", stage, err)
 				emit(agent.StreamEvent{Type: "error", Content: "failed to write " + string(stage) + " artifact"})
 				return
@@ -189,9 +203,7 @@ func (h *ImportHandler) WatchImport(w http.ResponseWriter, r *http.Request) {
 	run := h.runs.Active(id, "import", "import")
 	if run == nil {
 		// No active run — return empty
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
+		setSSEHeaders(w)
 		return
 	}
 	run.StreamTo(w, r, 0)

@@ -2,19 +2,24 @@ package agent
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 )
 
 var systemPrompts = map[model.StageName]string{
 	model.StageVision: `You are the Visionary Agent for an AI Product Factory. Your role is to help the user crystallize their product idea into a clear, structured vision document.
 
+**CRITICAL CONSTRAINT**: You are a thinking partner, not a builder. You focus on WHAT and WHY — never HOW. Never discuss architecture, technology choices, databases, frameworks, code, or implementation details. If the user asks for something that could be built directly (e.g. "make me a hello world page", "create a todo app"), treat it as a product idea to explore: ask clarifying questions about purpose, target users, and goals before producing any artifact. The artifact you produce is always a vision document, never an implementation.
+
 Your approach:
 1. Ask probing questions to understand the product idea deeply
 2. Challenge assumptions constructively
-3. Help identify target users, core problems, key features, and constraints
+3. Help identify target users, core problems, core value propositions, and business constraints
 4. Iteratively refine the vision based on user feedback
+5. Stay at the business/functional level — never discuss architecture, technology choices, or implementation details
 
 When you believe the vision is sufficiently clear (or when the user asks you to produce the artifact), generate a structured vision document.
 
@@ -36,8 +41,8 @@ What problem does this solve? Why does it matter?
 ## Target Users
 Who are the primary users? What are their needs?
 
-## Core Features
-The essential capabilities (not a wishlist — what makes this product viable).
+## Core Value Propositions
+The essential capabilities that make this product valuable (functional benefits, not technical implementation).
 
 ## User Experience
 How should users feel when using this product? Key interaction patterns.
@@ -45,8 +50,8 @@ How should users feel when using this product? Key interaction patterns.
 ## Success Metrics
 How will we know this product is working?
 
-## Constraints & Assumptions
-Technical, business, or time constraints. Key assumptions being made.
+## Business Constraints & Assumptions
+Business, time, or resource constraints. Key assumptions being made. Do NOT include technology or architecture decisions.
 
 ## Out of Scope (V1)
 What are we explicitly NOT building in the first version?
@@ -55,9 +60,7 @@ What are we explicitly NOT building in the first version?
 
 **CRITICAL**: Every time you discuss changes, improvements, or new information — you MUST include the complete updated artifact inside <artifact>...</artifact> in your response. Do NOT just describe changes without producing the updated artifact. Even if the user only asked about one section, include the FULL artifact with all sections (updated and unchanged). If you do not include the artifact tags, your changes will be lost.
 
-Be conversational and collaborative. You're a thinking partner, not a form filler.
-
-**CRITICAL CONSTRAINT**: You are a thinking partner, not a builder. Never produce code, files, or working implementations — not even as examples. If the user asks for something that could be built directly (e.g. "make me a hello world page", "create a todo app"), treat it as a product idea to explore: ask clarifying questions about purpose, target users, and goals before producing any artifact. The artifact you produce is always a vision document, never an implementation.`,
+Be conversational and collaborative. You're a thinking partner, not a form filler.`,
 
 	model.StageUX: `You are the UX Agent for an AI Product Factory. Your role is to convert the approved product vision into user flows, wireframe descriptions, and interaction patterns.
 
@@ -330,31 +333,160 @@ Example task format:
 
 // GetSystemPrompt returns the system prompt for a given stage, injecting previous artifacts and framework config.
 func GetSystemPrompt(stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig, enhancement ...*EnhancementContext) string {
+	return GetSystemPromptWithRAG(stage, version, previousArtifacts, frameworkCfg, "", nil, enhancement...)
+}
+
+// GetSystemPromptWithRAG returns the system prompt for a given stage, with
+// optional RAG knowledge context injected between the base prompt and any
+// enhancement context. Pass ragContext="" to get the same result as GetSystemPrompt.
+// When store is non-nil, prompt templates are loaded from the project's
+// .paulette/prompts/ directory instead of the hardcoded defaults.
+func GetSystemPromptWithRAG(stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig, ragContext string, store *promptfiles.PromptStore, enhancement ...*EnhancementContext) string {
+	var prompt string
+
+	if store != nil {
+		prompt = buildPromptFromStore(store, stage, version, previousArtifacts, frameworkCfg)
+	}
+
+	// Fallback to hardcoded prompts if store is nil or returned empty.
+	if prompt == "" {
+		prompt = buildPromptHardcoded(stage, version, previousArtifacts, frameworkCfg)
+	}
+
+	if ragContext != "" {
+		prompt += "\n\n" + ragContext
+	}
+
+	return applyEnhancementContext(stage, prompt, enhancement)
+}
+
+// buildPromptFromStore loads and renders the stage prompt from the PromptStore.
+func buildPromptFromStore(store *promptfiles.PromptStore, stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig) string {
+	tmplName := "stage-" + string(stage) + ".md.tmpl"
+	data := map[string]any{}
+
+	switch stage {
+	case model.StageUX:
+		data["VisionArtifact"] = previousArtifacts[model.StageVision]
+		frameworkNote := renderHelperFromStore(store, "helper-framework-note.md.tmpl", frameworkCfg)
+		journeyNote := renderHelperFromStore(store, "helper-journey-id-note.md.tmpl", map[string]any{"Version": version})
+		data["FrameworkNote"] = frameworkNote + "\n\n" + journeyNote
+	case model.StageArchitecture:
+		data["VisionArtifact"] = previousArtifacts[model.StageVision]
+		archNote := renderHelperFromStore(store, "helper-arch-id-note.md.tmpl", map[string]any{"Version": version})
+		validationNote := renderHelperFromStore(store, "helper-validation-commands.md.tmpl", nil)
+		data["UXArtifact"] = previousArtifacts[model.StageUX] + "\n\n" + archNote + "\n\n" + validationNote
+	case model.StageBuild:
+		data["VisionArtifact"] = previousArtifacts[model.StageVision]
+		data["UXArtifact"] = previousArtifacts[model.StageUX]
+		planNote := renderHelperFromStore(store, "helper-plan-id-note.md.tmpl", nil)
+		data["ArchArtifact"] = previousArtifacts[model.StageArchitecture] + "\n\n" + planNote
+	}
+
+	result, err := store.Render(tmplName, data)
+	if err != nil {
+		log.Printf("promptfiles: failed to render %s, falling back to hardcoded: %v", tmplName, err)
+		return ""
+	}
+	return result
+}
+
+// renderHelperFromStore renders a helper template; falls back gracefully.
+func renderHelperFromStore(store *promptfiles.PromptStore, name string, dataOrCfg any) string {
+	var data map[string]any
+	switch v := dataOrCfg.(type) {
+	case map[string]any:
+		data = v
+	case *model.FrameworkConfig:
+		data = map[string]any{}
+		if v != nil {
+			data["FrameworkName"] = frameworkDisplayName(v)
+		}
+	default:
+		data = nil
+	}
+	result, err := store.Render(name, data)
+	if err != nil {
+		log.Printf("promptfiles: failed to render helper %s: %v", name, err)
+		return ""
+	}
+	return result
+}
+
+// buildPromptHardcoded is the original prompt builder using hardcoded templates.
+func buildPromptHardcoded(stage model.StageName, version string, previousArtifacts map[model.StageName]string, frameworkCfg *model.FrameworkConfig) string {
 	template, ok := systemPrompts[stage]
 	if !ok {
 		return fmt.Sprintf("You are an AI assistant helping with the %s stage of product development.", stage)
 	}
 
-	var prompt string
 	switch stage {
 	case model.StageUX:
 		visionArtifact := previousArtifacts[model.StageVision]
 		frameworkNote := buildFrameworkPromptNote(frameworkCfg) + "\n\n" + buildJourneyIDNote(version)
-		prompt = fmt.Sprintf(template, visionArtifact, frameworkNote)
+		return fmt.Sprintf(template, visionArtifact, frameworkNote)
 	case model.StageArchitecture:
 		visionArtifact := previousArtifacts[model.StageVision]
 		uxArtifact := previousArtifacts[model.StageUX] + "\n\n" + buildArchIDNote(version) + "\n\n" + buildValidationCommandsNote()
-		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact)
+		return fmt.Sprintf(template, visionArtifact, uxArtifact)
 	case model.StageBuild:
 		visionArtifact := previousArtifacts[model.StageVision]
 		uxArtifact := previousArtifacts[model.StageUX]
 		archArtifact := previousArtifacts[model.StageArchitecture] + "\n\n" + buildPlanIDNote()
-		prompt = fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact)
+		return fmt.Sprintf(template, visionArtifact, uxArtifact, archArtifact)
 	default:
-		prompt = template
+		return template
+	}
+}
+
+// TruncateArtifact reduces an artifact to fit within a rough token budget by
+// preserving markdown headings and the first linesPerSection lines of each
+// section. Returns the original string if it is already within budget.
+// estimatedMaxChars is a character limit (roughly 4 chars per token).
+func TruncateArtifact(content string, estimatedMaxChars int, linesPerSection int) string {
+	if len(content) <= estimatedMaxChars {
+		return content
+	}
+	if linesPerSection <= 0 {
+		linesPerSection = 5
 	}
 
-	return applyEnhancementContext(stage, prompt, enhancement)
+	lines := strings.Split(content, "\n")
+	var result strings.Builder
+	sectionLineCount := 0
+	truncated := false
+
+	for _, line := range lines {
+		isHeading := strings.HasPrefix(strings.TrimSpace(line), "#")
+		if isHeading {
+			sectionLineCount = 0
+			if truncated {
+				result.WriteString("  [... truncated ...]\n")
+				truncated = false
+			}
+			result.WriteString(line)
+			result.WriteByte('\n')
+			continue
+		}
+
+		sectionLineCount++
+		if sectionLineCount <= linesPerSection {
+			result.WriteString(line)
+			result.WriteByte('\n')
+		} else if !truncated {
+			truncated = true
+		}
+
+		if result.Len() >= estimatedMaxChars {
+			result.WriteString("\n[... artifact truncated for context limits ...]\n")
+			break
+		}
+	}
+	if truncated {
+		result.WriteString("  [... truncated ...]\n")
+	}
+
+	return result.String()
 }
 
 var enhancementGuidance = map[model.StageName]string{

@@ -1,4 +1,4 @@
-export type StageName = 'vision' | 'ux' | 'architecture' | 'build' | 'complete';
+export type StageName = 'vision' | 'ux' | 'ui' | 'architecture' | 'build' | 'complete';
 export type StageStatus = 'locked' | 'active' | 'approved';
 
 export interface Project {
@@ -14,6 +14,8 @@ export interface Project {
   summaryReady: boolean;
   summaryApproved?: boolean;
   autonomous?: boolean;
+  useRefinementLoop?: boolean;
+  aiMode?: 'files' | 'rag';
   baseBranch?: string;
   devCommands?: string[];
   buildCommands?: string[];
@@ -59,8 +61,16 @@ export interface ChatHistory {
 }
 
 export interface StreamEvent {
-  type: 'chunk' | 'artifact' | 'done' | 'error' | 'tokens' | 'plan_limit';
+  type: 'chunk' | 'artifact' | 'done' | 'error' | 'tokens' | 'plan_limit' | 'rag_sources' | 'refinement';
   content: string;
+}
+
+export interface RAGSource {
+  chunk_id: string;
+  file_path?: string;
+  collection?: string;
+  score: number;
+  preview?: string;
 }
 
 export type FrameworkId = 'tailwind' | 'bootstrap' | 'mui' | 'shadcn' | 'vanilla' | 'other';

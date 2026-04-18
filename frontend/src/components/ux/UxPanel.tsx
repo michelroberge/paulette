@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useMock } from '../../hooks/useMock';
 import { getArtifact } from '../../api/artifacts';
+import { ArtifactSelectionToolbar } from '../artifact/ArtifactSelectionToolbar';
 import { FrameworkSelector } from './FrameworkSelector';
 import { BuildingAnimation } from './BuildingAnimation';
 
@@ -21,6 +22,11 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
   const [artifactContent, setArtifactContent] = useState('');
   const [artifactExists, setArtifactExists] = useState(false);
   const [refinement, setRefinement] = useState('');
+  const [localRefresh, setLocalRefresh] = useState(0);
+
+  const handleArtifactUpdated = useCallback(() => {
+    setLocalRefresh(prev => prev + 1);
+  }, []);
 
   const streamRef = useRef<HTMLDivElement>(null);
   const { html, generating, tokenCount, streamingText, loaded, error, load, generate, stop } = useMock(projectId);
@@ -42,7 +48,7 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
         setArtifactExists(res.exists);
       })
       .catch(console.error);
-  }, [projectId, refreshTrigger]);
+  }, [projectId, refreshTrigger, localRefresh]);
 
   // Load existing mock on mount
   useEffect(() => {
@@ -130,8 +136,15 @@ export function UxPanel({ projectId, refreshTrigger, mode, onRequestMockTab, hid
       <div className="ux-panel-content">
         {mode === 'artifact' && (
           artifactExists ? (
-            <div className="artifact-content">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactContent}</ReactMarkdown>
+            <div className="artifact-preview" style={{ position: 'relative' }}>
+              <ArtifactSelectionToolbar
+                projectId={projectId}
+                stage="ux"
+                onArtifactUpdated={handleArtifactUpdated}
+              />
+              <div className="artifact-content">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{artifactContent}</ReactMarkdown>
+              </div>
             </div>
           ) : (
             <div className="artifact-preview empty">

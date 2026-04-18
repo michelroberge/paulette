@@ -16,6 +16,7 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/handler"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/refinement"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -46,6 +47,7 @@ type Orchestrator struct {
 	beadH        *handler.BeadHandler
 	pipelineH    *handler.PipelineHandler
 	enhanceH     *handler.EnhanceHandler
+	refinementH  *refinement.Handler
 }
 
 func NewOrchestrator(
@@ -76,6 +78,11 @@ func NewOrchestrator(
 	}
 }
 
+// SetRefinementHandler sets the refinement handler for vision loop support.
+func (o *Orchestrator) SetRefinementHandler(h *refinement.Handler) {
+	o.refinementH = h
+}
+
 // StartAll resumes any in-progress operations and starts autonomous goroutines.
 // For each project, stale "running" activities are either restarted (mock,
 // beads-generate, beads-execute) or marked as failed (chat, summary).
@@ -100,7 +107,7 @@ func (o *Orchestrator) StartAll() {
 // are cleared so the orchestrator re-evaluates the stage cleanly. Everything else
 // is marked as failed so the UI shows what happened.
 func (o *Orchestrator) resumeOrClearStaleActivities(p *model.Project) {
-	activities, err := o.activityRepo.ReadActivity(p.HostDir)
+	activities, err := o.activityRepo.ReadActivity(p.DataDir)
 	if err != nil || len(activities) == 0 {
 		return
 	}
@@ -115,7 +122,7 @@ func (o *Orchestrator) resumeOrClearStaleActivities(p *model.Project) {
 		updated := *a
 		updated.Status = "failed"
 		updated.Error = "server restarted while this operation was running"
-		if setErr := o.activityRepo.SetActivity(p.HostDir, stage, &updated); setErr != nil {
+		if setErr := o.activityRepo.SetActivity(p.DataDir, stage, &updated); setErr != nil {
 			log.Printf("orchestrator: resumeOrClearStaleActivities(%s/%s): %v", p.ID, stage, setErr)
 		}
 	}
@@ -152,7 +159,7 @@ func (o *Orchestrator) tryResumeStaleActivity(p *model.Project, stage model.Stag
 		// re-run if the artifact is still missing. Clear the stale activity so the
 		// UI doesn't show a false "running" badge while the orchestrator catches up.
 		if p.Autonomous {
-			if clearErr := o.activityRepo.ClearActivity(p.HostDir, stage); clearErr != nil {
+			if clearErr := o.activityRepo.ClearActivity(p.DataDir, stage); clearErr != nil {
 				log.Printf("orchestrator: failed to clear stale chat activity for %s/%s: %v", p.ID, stage, clearErr)
 			}
 			return true
@@ -233,7 +240,13 @@ func (o *Orchestrator) runProject(ctx context.Context, projectID string) {
 
 		var stageErr error
 		switch project.CurrentStage {
-		case model.StageVision, model.StageArchitecture:
+		case model.StageVision:
+			if project.UseRefinementLoop && o.refinementH != nil {
+				stageErr = o.handleVisionLoop(ctx, project)
+			} else {
+				stageErr = o.handleSimpleStage(ctx, project, project.CurrentStage)
+			}
+		case model.StageArchitecture:
 			stageErr = o.handleSimpleStage(ctx, project, project.CurrentStage)
 		case model.StageUX:
 			stageErr = o.handleUXStage(ctx, project)
@@ -274,7 +287,7 @@ func (o *Orchestrator) runProject(ctx context.Context, projectID string) {
 }
 
 func (o *Orchestrator) handleSimpleStage(ctx context.Context, project *model.Project, stage model.StageName) error {
-	content, _ := o.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
+	content, _ := o.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, stage)
 	if strings.TrimSpace(content) == "" {
 		msg := kickoffMessages[stage]
 		if stage == model.StageVision && project.EnhancementVision != "" {
@@ -294,8 +307,44 @@ func (o *Orchestrator) handleSimpleStage(ctx context.Context, project *model.Pro
 	return o.pipelineH.ApproveInternal(project.ID)
 }
 
+func (o *Orchestrator) handleVisionLoop(ctx context.Context, project *model.Project) error {
+	content, _ := o.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
+	if strings.TrimSpace(content) != "" {
+		// Artifact already exists, skip to approval.
+		select {
+		case <-time.After(2 * time.Second):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return o.pipelineH.ApproveInternal(project.ID)
+	}
+
+	idea := kickoffMessages[model.StageVision]
+	if project.EnhancementVision != "" {
+		idea = project.EnhancementVision
+	}
+
+	run, err := o.refinementH.RunAutonomous(ctx, project, idea)
+	if err != nil {
+		return fmt.Errorf("refinement loop: %w", err)
+	}
+	if run != nil {
+		if err := o.waitForRunDone(ctx, run); err != nil {
+			return err
+		}
+	}
+
+	select {
+	case <-time.After(2 * time.Second):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	return o.pipelineH.ApproveInternal(project.ID)
+}
+
 func (o *Orchestrator) handleUXStage(ctx context.Context, project *model.Project) error {
-	content, _ := o.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
+	content, _ := o.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageUX)
 	if strings.TrimSpace(content) == "" {
 		msg := kickoffMessages[model.StageUX]
 		if project.EnhancementVision != "" {
@@ -307,7 +356,7 @@ func (o *Orchestrator) handleUXStage(ctx context.Context, project *model.Project
 	}
 
 	// Generate mock if missing
-	mockPath := filepath.Join(project.HostDir, ".paulette", "ux", "mock.html")
+	mockPath := filepath.Join(project.DataDir, "ux", "mock.html")
 	if _, statErr := os.Stat(mockPath); os.IsNotExist(statErr) {
 		if b, _ := fsrepo.ReadMockDoc(project.HostDir, project.Version); b == nil {
 			run, err := o.startOrJoinMockRun(ctx, project)
@@ -332,7 +381,7 @@ func (o *Orchestrator) handleUXStage(ctx context.Context, project *model.Project
 }
 
 func (o *Orchestrator) handleBuildStage(ctx context.Context, project *model.Project) error {
-	content, _ := o.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+	content, _ := o.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 	if strings.TrimSpace(content) == "" {
 		msg := kickoffMessages[model.StageBuild]
 		if project.EnhancementVision != "" {
@@ -410,7 +459,7 @@ func (o *Orchestrator) handleCompleteStage(ctx context.Context, project *model.P
 		return nil
 	}
 
-	summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+	summaryPath := filepath.Join(project.DataDir, "summary.md")
 	summaryBytes, err := os.ReadFile(summaryPath)
 	if err != nil {
 		return fmt.Errorf("read summary: %w", err)
@@ -451,7 +500,7 @@ func (o *Orchestrator) runChatWithBtw(ctx context.Context, project *model.Projec
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		msgs, err := o.activityRepo.ClearBtw(project.HostDir, stage)
+		msgs, err := o.activityRepo.ClearBtw(project.DataDir, stage)
 		if err != nil || len(msgs) == 0 {
 			break
 		}

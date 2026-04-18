@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"path/filepath"
+	"time"
+)
 
 // BtwMessage is a queued follow-up message the user sent while an agent was running.
 type BtwMessage struct {
@@ -31,6 +34,7 @@ type StageName string
 const (
 	StageVision       StageName = "vision"
 	StageUX           StageName = "ux"
+	StageUI           StageName = "ui"
 	StageArchitecture StageName = "architecture"
 	StageBuild        StageName = "build"
 	StageComplete     StageName = "complete"
@@ -43,12 +47,30 @@ type StageInfo struct {
 	Activity     *StageActivity `json:"activity,omitempty"`
 }
 
+// ComputeDataDir returns the working-state directory for a project version.
+// Layout: {dataPath}/{projectID}/default/{version}
+// The "default" segment is a placeholder for a future user-ID slot.
+func ComputeDataDir(dataPath, projectID, version string) string {
+	return filepath.Join(dataPath, projectID, "default", version)
+}
+
+// AIMode controls how the project resolves prompt templates.
+type AIMode string
+
+const (
+	// AIModeFiles uses externalized prompt templates from .paulette/prompts/ in the target repo.
+	AIModeFiles AIMode = "files"
+	// AIModeRAG uses the RAG pipeline for context retrieval (requires RAG_ENABLED=true).
+	AIModeRAG AIMode = "rag"
+)
+
 type Project struct {
 	ID                string              `json:"id"`
 	Name              string              `json:"name"`
 	Author            string              `json:"author"`
 	Version           string              `json:"version"`
 	HostDir           string              `json:"hostDir"`
+	DataDir           string              `json:"dataDir,omitempty"`
 	CurrentStage      StageName           `json:"currentStage"`
 	Iteration         int                 `json:"iteration"`
 	EnhancementVision string              `json:"enhancementVision,omitempty"`
@@ -56,6 +78,8 @@ type Project struct {
 	SummaryReady      bool                `json:"summaryReady"`
 	SummaryApproved   bool                `json:"summaryApproved,omitempty"`
 	Autonomous        bool                `json:"autonomous"`
+	UseRefinementLoop bool                `json:"useRefinementLoop,omitempty"`
+	AIMode            AIMode              `json:"aiMode,omitempty"`
 	BaseBranch        string              `json:"baseBranch,omitempty"`
 	DevCommands       []string            `json:"devCommands,omitempty"`
 	BuildCommands     []string            `json:"buildCommands,omitempty"`

@@ -25,24 +25,22 @@ var (
 	sessionWriters   = make(map[string]*SessionWriter)
 )
 
-// GetSessionWriter returns (or creates) the singleton SessionWriter for a project.
-func GetSessionWriter(hostDir string) *SessionWriter {
-	dir := filepath.Join(hostDir, ".paulette")
-
+// GetSessionWriter returns (or creates) the singleton SessionWriter for a project data dir.
+func GetSessionWriter(dataDir string) *SessionWriter {
 	sessionWritersMu.Lock()
 	defer sessionWritersMu.Unlock()
 
-	if sw, ok := sessionWriters[dir]; ok {
+	if sw, ok := sessionWriters[dataDir]; ok {
 		return sw
 	}
 
 	sw := &SessionWriter{
 		ch:   make(chan model.Session, 64),
 		done: make(chan struct{}),
-		dir:  dir,
+		dir:  dataDir,
 	}
 	go sw.run()
-	sessionWriters[dir] = sw
+	sessionWriters[dataDir] = sw
 	return sw
 }
 
@@ -84,8 +82,8 @@ func (sw *SessionWriter) appendToDisk(s model.Session) {
 
 // ReadSessions loads all session records for a project. Safe to call concurrently
 // with Append — the writer serializes all writes so reads see consistent state.
-func ReadSessions(hostDir string) ([]model.Session, error) {
-	p := filepath.Join(hostDir, ".paulette", sessionsFile)
+func ReadSessions(dataDir string) ([]model.Session, error) {
+	p := filepath.Join(dataDir, sessionsFile)
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -102,8 +100,8 @@ func ReadSessions(hostDir string) ([]model.Session, error) {
 }
 
 // ReadSessionsByStage returns sessions filtered by stage.
-func ReadSessionsByStage(hostDir string, stage model.StageName) ([]model.Session, error) {
-	all, err := ReadSessions(hostDir)
+func ReadSessionsByStage(dataDir string, stage model.StageName) ([]model.Session, error) {
+	all, err := ReadSessions(dataDir)
 	if err != nil {
 		return nil, err
 	}

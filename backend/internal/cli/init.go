@@ -60,26 +60,26 @@ func parseFlag(name string) string {
 }
 
 // RunInit checks all dependencies and helps install missing ones.
-// Accepts an optional --repos-path=<path> flag to configure where projects are stored.
+// Accepts an optional --git-path=<path> flag to configure where projects are stored.
 // Returns an exit code: 0 for success, 1 for failure.
 func RunInit() int {
 	fmt.Println("paulette init - checking dependencies...")
 	fmt.Println()
 
-	// Handle optional --repos-path flag
-	if rp := parseFlag("repos-path"); rp != "" {
+	// Handle optional --git-path flag
+	if rp := parseFlag("git-path"); rp != "" {
 		absPath, err := filepath.Abs(rp)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Invalid repos path: %v\n", err)
 			return 1
 		}
 		settings := config.LoadSettings()
-		settings.ReposPath = absPath
+		settings.GitPath = absPath
 		if err := config.SaveSettings(settings); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to save settings: %v\n", err)
 			return 1
 		}
-		fmt.Printf("Repos path set to: %s\n\n", absPath)
+		fmt.Printf("Git path set to: %s\n\n", absPath)
 	}
 
 	// Handle optional --claude-path flag
@@ -180,6 +180,6 @@ func RunInit() int {
 
 	cfg := config.Load()
 	fmt.Println("All dependencies satisfied. You're ready to run paulette!")
-	fmt.Printf("  Repos path: %s\n", cfg.ReposPath)
+	fmt.Printf("  Git path: %s\n", cfg.GitPath)
 	return 0
 }

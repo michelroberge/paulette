@@ -4,6 +4,8 @@ export interface AppConfig {
   reposPath: string;
   version: string;
   author: string;
+  oidcEnabled: boolean;
+  ragEnabled: boolean;
 }
 
 export function getConfig(): Promise<AppConfig> {

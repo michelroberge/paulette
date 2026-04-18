@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -28,6 +29,17 @@ import (
 type OllamaProvider struct {
 	baseURL    string
 	httpClient *http.Client
+}
+
+// resolveModelCaps returns the capability profile for the model. If the model
+// is unknown in the static table, it triggers a runtime probe and caches the result.
+func (p *OllamaProvider) resolveModelCaps(model string) OllamaModelCaps {
+	caps := ollamaModelCaps(model)
+	if caps == safeDefault {
+		// Unknown model — try runtime probe.
+		return ProbeOllamaModelCaps(p.baseURL, model)
+	}
+	return caps
 }
 
 // NewOllamaProvider returns an OllamaProvider configured to talk to the
@@ -53,19 +65,32 @@ type ollamaMessage struct {
 	Content string `json:"content"`
 }
 
+// ollamaChatOptions holds runtime parameters sent in the "options" field.
+type ollamaChatOptions struct {
+	NumCtx      int     `json:"num_ctx,omitempty"`
+	Temperature float64 `json:"temperature,omitempty"`
+}
+
 // ollamaChatRequest is the JSON body sent to POST /api/chat.
 type ollamaChatRequest struct {
-	Model    string          `json:"model"`
-	Messages []ollamaMessage `json:"messages"`
-	Stream   bool            `json:"stream"`
+	Model    string             `json:"model"`
+	Messages []ollamaMessage    `json:"messages"`
+	Stream   bool               `json:"stream"`
+	Options  *ollamaChatOptions `json:"options,omitempty"`
+	// Format, when non-empty, constrains the model's output at the inference
+	// layer. Ollama accepts either the string "json" or a JSON Schema object
+	// (0.5+). json.RawMessage lets callers pass either without re-encoding.
+	Format json.RawMessage `json:"format,omitempty"`
 }
 
 // ollamaStreamChunk is one NDJSON line from the /api/chat stream.
 // Only the fields we need are decoded; unknown fields are silently dropped.
 type ollamaStreamChunk struct {
-	Message ollamaMessage `json:"message"`
-	Done    bool          `json:"done"`
-	Error   string        `json:"error,omitempty"`
+	Message         ollamaMessage `json:"message"`
+	Done            bool          `json:"done"`
+	Error           string        `json:"error,omitempty"`
+	PromptEvalCount int           `json:"prompt_eval_count,omitempty"`
+	EvalCount       int           `json:"eval_count,omitempty"`
 }
 
 // ollamaModel is one entry in the GET /api/tags response.
@@ -95,6 +120,20 @@ func (p *OllamaProvider) Chat(ctx context.Context, req ChatRequest) (<-chan Stre
 	body, err := p.buildChatRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("ollama: build request: %w", err)
+	}
+
+	// --- DEBUG: write full prompt to file (only when PAULETTE_DEBUG_DIR is set) ---
+	if debugDir := os.Getenv("PAULETTE_DEBUG_DIR"); debugDir != "" {
+		label := req.Stage
+		if label == "" {
+			label = "unknown"
+		}
+		debugFile := fmt.Sprintf("%s/%s_prompt_%d.json", debugDir, label, time.Now().UnixNano())
+		if f, err := os.Create(debugFile); err == nil {
+			_, _ = f.Write(body)
+			_ = f.Close()
+			fmt.Printf("Ollama request body written to %s\n", debugFile)
+		}
 	}
 
 	url := fmt.Sprintf("%s/api/chat", p.baseURL)
@@ -160,10 +199,14 @@ const xmlEnvelopeMarker = "<!-- RESPONSE:START -->"
 // ollamaWrapSystemPrompt adapts the base system prompt for models that are not
 // XML-friendly. For XMLFriendly models the prompt is returned unchanged.
 //
-// Non-XML-friendly models receive the XML envelope instruction replaced with a
-// simpler "## Discussion / ## Artifact" section-header format that those models
-// follow more reliably. If the prompt does not contain the XML envelope marker,
-// it is returned unchanged regardless of capability.
+// Non-XML-friendly models receive XML envelope instructions replaced with
+// simpler alternatives that those models follow more reliably:
+//   - Stage prompts (with discussion/artifact): get "## Discussion / ## Artifact" sections
+//   - HTML generation prompts (with CDATA): get code-fence instructions
+//   - Other prompts with XML markers: get markers stripped
+//
+// If the prompt does not contain the XML envelope marker, it is returned
+// unchanged regardless of capability.
 func ollamaWrapSystemPrompt(basePrompt string, caps OllamaModelCaps) string {
 	if caps.XMLFriendly {
 		return basePrompt
@@ -172,17 +215,26 @@ func ollamaWrapSystemPrompt(basePrompt string, caps OllamaModelCaps) string {
 		return basePrompt
 	}
 
-	// Replace the XML output format block with a plain-section equivalent.
-	// Stage prompts always contain an "OUTPUT FORMAT:" heading followed by the
-	// <!-- RESPONSE:START --> envelope instruction. We locate the sentinel
-	// instruction line and replace the surrounding paragraph.
-	const xmlInstruction = "Wrap your entire response in <!-- RESPONSE:START -->...<!-- RESPONSE:END --> tags"
-	if !strings.Contains(basePrompt, xmlInstruction) {
-		// Prompt uses XML but not the standard instruction — leave unchanged to
-		// avoid breaking custom prompts.
-		return basePrompt
+	// Detect prompt type by content and apply appropriate replacement.
+	hasHTMLContent := strings.Contains(basePrompt, "<htmlcontent>")
+	hasArtifact := strings.Contains(basePrompt, "<artifact>") || strings.Contains(basePrompt, "<discussion>")
+
+	if hasHTMLContent {
+		return ollamaAdaptHTMLPrompt(basePrompt)
+	}
+	if hasArtifact {
+		return ollamaAdaptStagePrompt(basePrompt)
 	}
 
+	// Generic: remove the XML envelope markers and add a plain-output note.
+	result := strings.ReplaceAll(basePrompt, xmlEnvelopeMarker, "")
+	result = strings.ReplaceAll(result, "<!-- RESPONSE:END -->", "")
+	return result + "\n\nOutput your response directly without XML wrapper tags."
+}
+
+// ollamaAdaptStagePrompt replaces XML envelope instructions with plain-section format
+// for stage prompts that use <discussion>/<artifact> structure.
+func ollamaAdaptStagePrompt(basePrompt string) string {
 	plainFormat := `Structure your response using these plain sections:
 
 ## Discussion
@@ -193,18 +245,91 @@ The complete document, code, or deliverable goes here.
 
 Always include both sections. Do not use XML tags.`
 
-	// Find the paragraph that contains the XML instruction and replace it.
-	// Split on double-newline to find paragraph boundaries.
+	// Find the paragraph containing the XML envelope marker and replace it.
 	paragraphs := strings.Split(basePrompt, "\n\n")
+	replaced := false
 	for i, p := range paragraphs {
-		if strings.Contains(p, xmlInstruction) {
+		if strings.Contains(p, xmlEnvelopeMarker) {
 			paragraphs[i] = plainFormat
-			return strings.Join(paragraphs, "\n\n")
+			replaced = true
+			break
+		}
+	}
+	if replaced {
+		return strings.Join(paragraphs, "\n\n")
+	}
+	return basePrompt + "\n\n" + plainFormat
+}
+
+// ollamaAdaptHTMLPrompt replaces XML/CDATA envelope instructions with code-fence
+// format for HTML generation prompts (mock components, styler, views).
+func ollamaAdaptHTMLPrompt(basePrompt string) string {
+	plainFormat := "OUTPUT FORMAT — follow this exactly:\n" +
+		"Return ONLY the HTML content inside a code fence:\n\n" +
+		"```html\n...your HTML here...\n```\n\n" +
+		"Do not write anything outside the code fence."
+
+	// Find the paragraph containing the XML envelope marker and replace it.
+	paragraphs := strings.Split(basePrompt, "\n\n")
+	replaced := false
+	for i, p := range paragraphs {
+		if strings.Contains(p, xmlEnvelopeMarker) {
+			paragraphs[i] = plainFormat
+			replaced = true
+			break
 		}
 	}
 
-	// Fallback: append the plain format note if paragraph split didn't find it.
-	return basePrompt + "\n\n" + plainFormat
+	result := basePrompt
+	if replaced {
+		result = strings.Join(paragraphs, "\n\n")
+	} else {
+		result = basePrompt + "\n\n" + plainFormat
+	}
+
+	// Also strip any remaining CDATA/XML tags from examples in the prompt.
+	result = strings.ReplaceAll(result, "<htmlcontent><![CDATA[", "")
+	result = strings.ReplaceAll(result, "]]></htmlcontent>", "")
+	result = strings.ReplaceAll(result, xmlEnvelopeMarker, "")
+	result = strings.ReplaceAll(result, "<!-- RESPONSE:END -->", "")
+	return result
+}
+
+// ollamaStageDefault holds sensible Ollama defaults for a pipeline stage.
+// numCtx is intentionally absent: context window size comes from model caps
+// (ollamaCapTable / EffectiveNumCtx) so that the model's actual capacity is
+// used rather than a small generic constant that causes truncation.
+type ollamaStageDefault struct {
+	temperature float64
+}
+
+// ollamaStageDefaults maps pipeline stage names to their recommended Ollama
+// defaults. These are used when no explicit value is provided in ChatRequest.
+// Users may override any field via StageAssignment in their config files.
+var ollamaStageDefaults = map[string]ollamaStageDefault{
+	"vision":       {temperature: 0.9}, // high creativity for brainstorming
+	"ux":           {temperature: 0.6}, // structured reasoning for UX design
+	"ui":           {temperature: 0.4}, // focused code gen for HTML mockups
+	"architecture": {temperature: 0.5}, // balanced reasoning for arch diagrams
+	"build":        {temperature: 0.4}, // deterministic build plans
+	"complete":     {temperature: 0.5}, // summary generation
+}
+
+// ollamaTemperatureForPrompt selects a temperature based on prompt content.
+// This is the fallback heuristic when no stage default or explicit value applies.
+// Structured output prompts (JSON planning, code generation) use low temperature
+// for predictable formatting; conversational prompts use moderate temperature.
+func ollamaTemperatureForPrompt(systemPrompt string) float64 {
+	lower := strings.ToLower(systemPrompt)
+	// Low temperature for structured output: JSON plans, code generation, summaries
+	if strings.Contains(lower, "<jsonplan>") ||
+		strings.Contains(lower, "json array") ||
+		strings.Contains(lower, "json object") ||
+		strings.Contains(lower, "code fence") ||
+		strings.Contains(lower, "iteration summary") {
+		return 0.3
+	}
+	return 0.7
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -214,7 +339,7 @@ Always include both sections. Do not use XML tags.`
 // If a system prompt is provided it is prepended as a message with role "system".
 // History messages are appended in order, followed by the new user message.
 func (p *OllamaProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
-	caps := ollamaModelCaps(req.Model)
+	caps := p.resolveModelCaps(req.Model)
 	systemPrompt := ollamaWrapSystemPrompt(req.SystemPrompt, caps)
 
 	msgs := make([]ollamaMessage, 0, len(req.History)+2)
@@ -237,10 +362,41 @@ func (p *OllamaProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
 	// Append the new user turn.
 	msgs = append(msgs, ollamaMessage{Role: "user", Content: req.UserMessage})
 
+	// Resolve temperature: explicit override → stage default → prompt heuristic.
+	var temp float64
+	if req.Temperature != nil {
+		temp = *req.Temperature
+	} else if sd, ok := ollamaStageDefaults[req.Stage]; ok {
+		temp = sd.temperature
+	} else {
+		temp = ollamaTemperatureForPrompt(systemPrompt)
+	}
+
+	// Resolve numCtx: explicit override → model capability.
+	// Stage defaults are not used for numCtx; the model's actual context
+	// window (from ollamaCapTable) must be respected to avoid truncation.
+	var numCtx int
+	if req.NumCtx != nil {
+		numCtx = *req.NumCtx
+	} else {
+		numCtx = caps.EffectiveNumCtx()
+	}
+
+	// Resolve stream: explicit override → default true.
+	stream := true
+	if req.Stream != nil {
+		stream = *req.Stream
+	}
+
 	return json.Marshal(ollamaChatRequest{
 		Model:    req.Model,
 		Messages: msgs,
-		Stream:   true,
+		Stream:   stream,
+		Options: &ollamaChatOptions{
+			NumCtx:      numCtx,
+			Temperature: temp,
+		},
+		Format: req.Format,
 	})
 }
 
@@ -294,14 +450,29 @@ func (p *OllamaProvider) streamResponse(ctx context.Context, body io.Reader, ch 
 		}
 
 		if chunk.Done {
+			// Emit token count if available (Ollama includes this in the final response).
+			totalTokens := chunk.PromptEvalCount + chunk.EvalCount
+			if totalTokens > 0 {
+				ch <- StreamEvent{Type: "tokens", Content: fmt.Sprintf("%d", totalTokens)}
+			}
 			// Generation complete; emit the sentinel and stop.
 			ch <- StreamEvent{Type: "done"}
 			return
 		}
 
 		// Emit content as a chunk event; skip empty content lines.
+		// Truncate at known instruction-format stop tokens that some Llama-family
+		// models leak into their output (e.g. [/INST], <|eot_id|>). If found,
+		// emit the clean prefix and stop — this prevents duplicated artifact content.
 		if chunk.Message.Content != "" {
-			ch <- StreamEvent{Type: "chunk", Content: chunk.Message.Content}
+			content, stopped := truncateAtStopToken(chunk.Message.Content)
+			if content != "" {
+				ch <- StreamEvent{Type: "chunk", Content: content}
+			}
+			if stopped {
+				ch <- StreamEvent{Type: "done"}
+				return
+			}
 		}
 	}
 
@@ -355,7 +526,7 @@ type ollamaAgentResp struct {
 // It branches on model capabilities: models with NativeTools use the structured
 // tool_calls API; all others use the pseudo-tool text fallback.
 func runOllamaAgentLoop(ctx context.Context, p *OllamaProvider, req AgentRequest, ch chan<- StreamEvent) {
-	caps := ollamaModelCaps(req.Model)
+	caps := p.resolveModelCaps(req.Model)
 	executor := &ToolExecutor{ProjectDir: req.ProjectDir}
 	msgs := ollamaInitMessages(req, caps)
 	toolSchemas := ollamaBuildToolSchemas(req.Tools, caps)
@@ -437,10 +608,15 @@ func ollamaBuildToolSchemas(tools []AgentTool, caps OllamaModelCaps) []map[strin
 
 // ollamaAgentPost sends one non-streaming request to /api/chat and returns the decoded response.
 func (p *OllamaProvider) ollamaAgentPost(ctx context.Context, apiURL, model string, msgs []ollamaAgentMsg, toolSchemas []map[string]any) (ollamaAgentResp, error) {
+	caps := p.resolveModelCaps(model)
 	body := map[string]any{
 		"model":    model,
 		"messages": msgs,
 		"stream":   false,
+		"options": map[string]any{
+			"num_ctx":     caps.EffectiveNumCtx(),
+			"temperature": 0.3, // agent/tool-use path benefits from low temperature
+		},
 	}
 	if len(toolSchemas) > 0 {
 		body["tools"] = toolSchemas
@@ -522,6 +698,32 @@ func executeTool(ctx context.Context, executor *ToolExecutor, name string, args 
 		return fmt.Sprintf("error: %v\n%s", err, output)
 	}
 	return output
+}
+
+// ── Stop-token helpers ────────────────────────────────────────────────────────
+
+// knownStopTokens are instruction-format tokens that some Llama-family models
+// emit verbatim in their output when they lose track of the chat template
+// boundary. Encountering one means the model has finished its real response and
+// is about to repeat itself (or output training-data artefacts). We truncate the
+// stream at the first occurrence to prevent duplicated artifact content.
+var knownStopTokens = []string{
+	"[/INST]",    // Llama-2 end-of-instruction
+	"[/INSTS]",   // Llama-2 variant seen in the wild
+	"<|eot_id|>", // Llama-3 end-of-turn
+	"<|end|>",    // Phi-family end token
+	"<|im_end|>", // ChatML (Qwen, Mistral-Nemo, etc.)
+}
+
+// truncateAtStopToken returns (content[:idx], true) when a known stop token is
+// found in content, or (content, false) when none are present.
+func truncateAtStopToken(content string) (string, bool) {
+	for _, tok := range knownStopTokens {
+		if idx := strings.Index(content, tok); idx >= 0 {
+			return content[:idx], true
+		}
+	}
+	return content, false
 }
 
 // ── Pseudo-tool helpers ───────────────────────────────────────────────────────

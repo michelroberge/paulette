@@ -14,6 +14,7 @@ import (
 
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 )
 
@@ -28,17 +29,21 @@ type ProjectHandler struct {
 	projectRepo  repository.ProjectRepo
 	artifactRepo repository.ArtifactRepo
 	git          *git.Service
-	reposPath    string
+	gitPath      string // where git repos are created by default
+	dataPath     string // root for Paulette working-state directories
+	ragEnabled   bool   // whether RAG is configured in .env
 	orchestrator OrchestratorI // may be nil before wired
 }
 
-func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service, reposPath string) *ProjectHandler {
+func NewProjectHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, gitSvc *git.Service, gitPath, dataPath string, ragEnabled bool) *ProjectHandler {
 	return &ProjectHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
 		artifactRepo: artifactRepo,
 		git:          gitSvc,
-		reposPath:    reposPath,
+		gitPath:      gitPath,
+		dataPath:     dataPath,
+		ragEnabled:   ragEnabled,
 	}
 }
 
@@ -64,7 +69,7 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.HostDir == "" {
-		req.HostDir = filepath.Join(h.reposPath, req.Name)
+		req.HostDir = filepath.Join(h.gitPath, req.Name)
 	}
 
 	version := req.Version
@@ -73,12 +78,15 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now()
+	projectID := uuid.New().String()
+	dataDir := model.ComputeDataDir(h.dataPath, projectID, version)
 	project := &model.Project{
-		ID:           uuid.New().String(),
+		ID:           projectID,
 		Name:         req.Name,
 		Author:       req.Author,
 		Version:      version,
 		HostDir:      req.HostDir,
+		DataDir:      dataDir,
 		CurrentStage: model.StageVision,
 		Iteration:    1,
 		CreatedAt:    now,
@@ -107,15 +115,19 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 			log.Printf("bd init failed in %s: %v: %s", req.HostDir, err, out)
 		}
 	}
+	// Initialize prompt templates in the target repo (Files mode is the default).
+	if err := promptfiles.New(req.HostDir).Init(); err != nil {
+		log.Printf("warning: failed to init prompt templates in %s: %v", req.HostDir, err)
+	}
 
-	// Initialize .paulette directory structure
-	if err := h.projectRepo.Init(req.HostDir); err != nil {
+	// Initialize working-state directory structure
+	if err := h.projectRepo.Init(dataDir); err != nil {
 		http.Error(w, "failed to init project directory: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Save project.json inside the host dir
-	if err := h.projectRepo.Save(req.HostDir, project); err != nil {
+	// Save project.json in the data dir
+	if err := h.projectRepo.Save(dataDir, project); err != nil {
 		http.Error(w, "failed to save project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -162,6 +174,7 @@ func (h *ProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 type patchProjectRequest struct {
 	Autonomous *bool   `json:"autonomous"`
 	BaseBranch *string `json:"baseBranch"`
+	AIMode     *string `json:"aiMode"`
 }
 
 func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +195,23 @@ func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		project.BaseBranch = *req.BaseBranch
 	}
 
+	if req.AIMode != nil {
+		mode := model.AIMode(*req.AIMode)
+		switch mode {
+		case model.AIModeFiles:
+			project.AIMode = mode
+		case model.AIModeRAG:
+			if !h.ragEnabled {
+				http.Error(w, "RAG is not enabled on this server", http.StatusBadRequest)
+				return
+			}
+			project.AIMode = mode
+		default:
+			http.Error(w, "invalid aiMode: must be \"files\" or \"rag\"", http.StatusBadRequest)
+			return
+		}
+	}
+
 	if req.Autonomous != nil {
 		project.Autonomous = *req.Autonomous
 		if h.orchestrator != nil {
@@ -199,7 +229,7 @@ func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to update registry: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := h.projectRepo.Save(project.HostDir, project); err != nil {
+	if err := h.projectRepo.Save(project.DataDir, project); err != nil {
 		http.Error(w, "failed to save project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -210,9 +240,24 @@ func (h *ProjectHandler) Patch(w http.ResponseWriter, r *http.Request) {
 
 func (h *ProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+
+	project, err := h.registry.Get(id)
+	if err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	hostDir := project.HostDir
+
 	if err := h.registry.Delete(id); err != nil {
 		http.Error(w, "project not found", http.StatusNotFound)
 		return
 	}
+
+	if hostDir != "" {
+		if removeErr := os.RemoveAll(hostDir); removeErr != nil {
+			log.Printf("warning: failed to remove host directory %s: %v", hostDir, removeErr)
+		}
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }

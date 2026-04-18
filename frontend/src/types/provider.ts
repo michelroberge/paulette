@@ -175,6 +175,48 @@ export interface ConnectionError {
 }
 
 // ---------------------------------------------------------------------------
+// Operation keys — sub-step identifiers within a pipeline stage
+// ---------------------------------------------------------------------------
+
+/**
+ * Dotted identifier for a specific sub-step within a pipeline stage.
+ * Maps 1:1 to the backend OperationKey constants in provider/stage_config.go.
+ */
+export type OperationKey =
+  | 'ux.chat'
+  | 'ux.mock'
+  | 'build.generate'
+  | 'build.review'
+  | 'build.execute';
+
+// ---------------------------------------------------------------------------
+// Build pool
+// ---------------------------------------------------------------------------
+
+export interface BuildPoolSlot {
+  connectionId: string;
+  model: string;
+  maxParallel: number;
+}
+
+export interface BuildPoolConfig {
+  slots: BuildPoolSlot[];
+}
+
+export interface BuildPoolSlotStatus {
+  connectionId: string;
+  model: string;
+  maxParallel: number;
+  activeCount: number;
+  degraded: boolean;
+  totalCompleted: number;
+}
+
+export interface BuildPoolStatus {
+  slots: BuildPoolSlotStatus[];
+}
+
+// ---------------------------------------------------------------------------
 // Stage assignment & config
 // ---------------------------------------------------------------------------
 
@@ -204,6 +246,8 @@ export interface StageAssignment {
  */
 export interface GlobalStageConfig {
   stageDefaults: Partial<Record<StageName, StageAssignment>>;
+  operationDefaults?: Partial<Record<OperationKey, StageAssignment>>;
+  buildPool?: BuildPoolConfig | null;
 }
 
 /**
@@ -215,4 +259,6 @@ export interface GlobalStageConfig {
 export interface ProjectStageConfig {
   /** Per-stage overrides. A `null` value means "use the global default for this stage". */
   overrides: Partial<Record<StageName, StageAssignment | null>>;
+  /** Per-operation overrides. A `null` value means "inherit from stage or global default". */
+  operationOverrides?: Partial<Record<OperationKey, StageAssignment | null>>;
 }

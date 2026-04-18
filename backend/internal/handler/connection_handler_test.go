@@ -52,7 +52,7 @@ func newConnectionHandlerSetup(t *testing.T) (*ConnectionHandler, *chi.Mux) {
 		},
 	}
 
-	h := NewConnectionHandler(connStore, registry, stageStore, projRegistry)
+	h := NewConnectionHandler(connStore, registry, stageStore, projRegistry, "")
 
 	r := chi.NewRouter()
 	r.Route("/api/connections", h.RegisterRoutes)

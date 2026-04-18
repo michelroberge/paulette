@@ -12,10 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/cli"
 	"github.com/michelroberge/paulette/backend/internal/config"
 	"github.com/michelroberge/paulette/backend/internal/provider"
+	"github.com/michelroberge/paulette/backend/internal/rag"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/server"
 )
@@ -24,6 +26,15 @@ import (
 var staticFiles embed.FS
 
 func main() {
+	// Load .env from the repo root (one level up from backend/) if present.
+	// Silently ignored when running in Docker/CI where env vars are already set.
+	for _, path := range []string{".env", "../.env"} {
+		if err := godotenv.Load(path); err == nil {
+			log.Printf("loaded %s", path)
+			break
+		}
+	}
+
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "init":
@@ -37,9 +48,18 @@ func main() {
 	cfg := config.Load()
 	agent.SetClaudePath(cfg.ClaudePath)
 
-	registry, err := fsrepo.NewRegistryRepo(cfg.RegistryPath)
+	registry, err := fsrepo.NewRegistryRepo(cfg.RegistryPath, cfg.DataPath)
 	if err != nil {
 		log.Fatalf("failed to initialize registry: %v", err)
+	}
+
+	// Migrate any legacy .paulette/ working state into the new DataDir layout.
+	if allProjects, listErr := registry.List(); listErr == nil {
+		for i := range allProjects {
+			if migrateErr := fsrepo.MigrateProjectDataIfNeeded(&allProjects[i]); migrateErr != nil {
+				log.Printf("warning: migration failed for project %s: %v", allProjects[i].ID, migrateErr)
+			}
+		}
 	}
 
 	projectRepo := fsrepo.NewProjectRepo()
@@ -53,13 +73,16 @@ func main() {
 	providerRegistry := provider.NewRegistry(connStore)
 	stageConfig := provider.NewStageConfigStore(cfg.RegistryPath)
 
+	// Initialise the optional RAG integration (nil when RAG_ENABLED is not "true").
+	ragClient := rag.NewClient(cfg.RAG)
+
 	// Strip the "static" prefix so files are served from "/".
 	staticSub, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		log.Fatalf("failed to load embedded static files: %v", err)
 	}
 
-	srv := server.New(cfg, registry, projectRepo, artifactRepo, chatRepo, staticSub, connStore, providerRegistry, stageConfig)
+	srv := server.New(cfg, registry, projectRepo, artifactRepo, chatRepo, staticSub, connStore, providerRegistry, stageConfig, ragClient)
 
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Port)
 	httpServer := &http.Server{
@@ -76,6 +99,10 @@ func main() {
 		}
 	}()
 
+	// Start RAG health monitor (no-op if RAG is disabled / client is nil).
+	ragCtx, ragCancel := context.WithCancel(context.Background())
+	srv.RAGClient().StartHealthMonitor(ragCtx)
+
 	// Resume autonomous pipelines for any projects that were running before restart
 	go srv.Orchestrator().StartAll()
 
@@ -85,7 +112,8 @@ func main() {
 	sig := <-quit
 	log.Printf("received %s, shutting down...", sig)
 
-	// Cancel autonomous orchestrators, then active Claude processes
+	// Cancel RAG health monitor, autonomous orchestrators, then active Claude processes
+	ragCancel()
 	srv.Orchestrator().CancelAll()
 	srv.Runs().CancelAll()
 	log.Println("cancelled all active agent runs")

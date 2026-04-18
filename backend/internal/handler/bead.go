@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,7 +22,9 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/git"
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 	"github.com/michelroberge/paulette/backend/internal/provider"
+	"github.com/michelroberge/paulette/backend/internal/rag"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -37,10 +40,13 @@ type BeadHandler struct {
 	gitSvc           *git.Service
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
+	buildPool        *provider.BuildPool
+	ragClient        *rag.Client
+	logBase          string
 }
 
-func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, skillRepo *fsrepo.SkillRepo) *BeadHandler {
-	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs, skillRepo: skillRepo, gitSvc: git.NewService()}
+func NewBeadHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, activityRepo repository.ActivityRepo, runs *stream.Manager, skillRepo *fsrepo.SkillRepo, logBase string) *BeadHandler {
+	return &BeadHandler{registry: registry, projectRepo: projectRepo, artifactRepo: artifactRepo, activityRepo: activityRepo, runs: runs, skillRepo: skillRepo, gitSvc: git.NewService(), logBase: logBase}
 }
 
 // SetProviderRegistry wires in the provider registry and stage config so bead
@@ -50,13 +56,67 @@ func (h *BeadHandler) SetProviderRegistry(reg *provider.Registry, sc *provider.S
 	h.stageConfig = sc
 }
 
-// resolveProvider returns the Provider and model to use for the given stage,
-// falling back to ClaudeCLI when no registry is configured.
-func (h *BeadHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, error) {
-	if h.providerRegistry != nil {
-		return h.providerRegistry.ResolveForStage(projectID, stage, h.stageConfig, hostDir)
+// SetBuildPool wires in the build pool for parallel bead execution.
+func (h *BeadHandler) SetBuildPool(pool *provider.BuildPool) {
+	h.buildPool = pool
+}
+
+// SetRAGClient wires in the RAG client for knowledge retrieval and ingestion.
+func (h *BeadHandler) SetRAGClient(client *rag.Client) {
+	h.ragClient = client
+}
+
+// ragOnBeadClosed fires a non-blocking RAG ingest for a completed bead's code.
+func (h *BeadHandler) ragOnBeadClosed(project *model.Project, bead model.Bead) {
+	if h.ragClient == nil || !h.ragClient.IsHealthy() {
+		return
 	}
-	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := rag.IngestBeadCode(ctx, h.ragClient, project, bead); err != nil {
+			log.Printf("RAG bead ingest failed for %s/%s: %v", project.Name, bead.ID, err)
+		}
+	}()
+}
+
+// ragOnReviewOutcome fires non-blocking RAG feedback based on code review results.
+func (h *BeadHandler) ragOnReviewOutcome(project *model.Project, bead model.Bead, lgtm bool, findings string) {
+	if h.ragClient == nil || !h.ragClient.IsHealthy() {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if lgtm {
+			if err := rag.RecordPositiveOutcome(ctx, h.ragClient, project, bead); err != nil {
+				log.Printf("RAG positive feedback failed for %s/%s: %v", project.Name, bead.ID, err)
+			}
+		} else {
+			if err := rag.RecordNegativeOutcome(ctx, h.ragClient, project, bead, findings); err != nil {
+				log.Printf("RAG negative feedback failed for %s/%s: %v", project.Name, bead.ID, err)
+			}
+		}
+	}()
+}
+
+// resolveProvider returns the Provider, model ID, and optional stage settings to
+// use for a stage. Falls back to ClaudeCLI when no registry is configured.
+// The returned *StageAssignment may be nil for the fallback path.
+func (h *BeadHandler) resolveProvider(projectID, hostDir string, stage model.StageName) (provider.Provider, string, *provider.StageAssignment, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStageWithSettings(projectID, stage, h.stageConfig, hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
+}
+
+// resolveProviderOp resolves the provider for a specific sub-step operation
+// (e.g. "build.generate", "build.execute") using the five-level fallback hierarchy.
+func (h *BeadHandler) resolveProviderOp(projectID, hostDir string, stage model.StageName, operation provider.OperationKey) (provider.Provider, string, *provider.StageAssignment, error) {
+	if h.providerRegistry != nil {
+		return h.providerRegistry.ResolveForStageOperation(projectID, stage, operation, h.stageConfig, hostDir)
+	}
+	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
 // GetGraph returns the current bead graph JSON for a project, assembled from bd.
@@ -69,7 +129,7 @@ func (h *BeadHandler) GetGraph(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// One-time migration: if old beads-graph.json exists, migrate to bd notes
-	fsrepo.MigrateBeadGraphIfNeeded(r.Context(), project.HostDir)
+	fsrepo.MigrateBeadGraphIfNeeded(r.Context(), project.HostDir, project.DataDir)
 
 	// Reset stale in_progress beads if no execution is currently active (e.g. after a restart)
 	if h.runs.Active(project.ID, "build", "beads-execute") == nil {
@@ -102,9 +162,7 @@ func (h *BeadHandler) Watch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	setSSEHeaders(w)
 	flusher.Flush()
 
 	ctx := r.Context()
@@ -202,30 +260,40 @@ func (h *BeadHandler) Generate(w http.ResponseWriter, r *http.Request) {
 // StartGenerateRun starts the beads generation run without HTTP plumbing.
 // Returns (nil, nil) on race condition.
 func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, error) {
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 	if buildContent == "" {
 		return nil, fmt.Errorf("no build artifact — complete the Build stage first")
 	}
 
-	archContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
+	archContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageArchitecture)
 
 	run := h.runs.Start(project.ID, "build", "beads-generate")
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "beads-generate")
+	writeActivity(h.activityRepo, project.DataDir, model.StageBuild, "beads-generate")
+	runLogID := startRunLog(h.logBase, project, model.StageBuild, "beads-generate")
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageBuild)
 
 		var generateTokens int
+		var rlErr string
+		var beadNotes string
 		runStart := time.Now()
+		defer func() {
+			if rlErr != "" {
+				failRunLog(h.logBase, project.Name, runLogID, rlErr)
+			} else {
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.DataDir, project.HostDir, model.StageBuild, "beads-generate"), generateTokens, beadNotes)
+			}
+		}()
 		defer func() {
 			if generateTokens > 0 {
 				project.AddStageTokens(model.StageBuild, generateTokens)
 				h.registry.Update(project)
-				recordSession(project.HostDir, model.StageBuild, model.SessionBeadGenerate, project.Iteration, runStart, generateTokens)
+				recordSession(project.DataDir, model.StageBuild, model.SessionBeadGenerate, project.Iteration, runStart, generateTokens)
 			}
 		}()
 
@@ -234,9 +302,10 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 		// Step 1: Parse build.md via the provider registry (falls back to Claude CLI).
 		run.Emit(agent.StreamEvent{Type: "log", Content: "Parsing build plan..."})
 
-		prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
+		prov, modelID, sa, provErr := h.resolveProviderOp(project.ID, project.HostDir, model.StageBuild, provider.OperationBuildGenerate)
 		if provErr != nil {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to resolve provider: " + provErr.Error()})
+			rlErr = "Failed to resolve provider: " + provErr.Error()
+			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
 
@@ -251,11 +320,19 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 		}
 		parseBuildPlanPrompt.WriteString("Extract all milestones and tasks from this build plan into the required JSON format. Include tags and targetFiles for each task.")
 
+		parseSystemPrompt := agent.GetParseBuildPlanPrompt(promptStoreForProject(project))
+		trace := newRunTrace(h.logBase, project.Name, runLogID)
+
+		_, saNumCtx, saStream := sa.Fields()
 		events, err := prov.Chat(ctx, provider.ChatRequest{
 			Model:        modelID,
-			SystemPrompt: agent.ParseBuildPlanSystemPrompt,
+			SystemPrompt: parseSystemPrompt,
 			UserMessage:  parseBuildPlanPrompt.String(),
 			ProjectDir:   project.HostDir,
+			Stage:        string(model.StageBuild),
+			Temperature:  provider.TempLow(), // structured JSON output always uses low temp
+			NumCtx:       saNumCtx,
+			Stream:       saStream,
 		})
 		if err != nil {
 			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to start parser: " + err.Error()})
@@ -279,6 +356,15 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 			}
 		}
 
+		// Record the parse LLM exchange for tuning/inspection.
+		if trace != nil {
+			trace.logStep("bead_parse", "ok",
+				fmt.Sprintf("resp=%d chars", len(fullResponse)),
+				fmt.Sprintf("## System Prompt\n%s\n\n## User Message\n%s\n\n## Raw Response\n%s",
+					parseSystemPrompt, parseBuildPlanPrompt.String(), fullResponse),
+				time.Since(runStart))
+		}
+
 		fixer := func(fixCtx context.Context, badJSON []byte, schema []byte) ([]byte, error) {
 			run.Emit(agent.StreamEvent{Type: "log", Content: "JSON validation failed — asking LLM to fix..."})
 			fixEvents, fixErr := prov.Chat(fixCtx, provider.ChatRequest{
@@ -286,6 +372,10 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 				SystemPrompt: agent.JSONFixSystemPrompt,
 				UserMessage:  agent.BuildJSONFixPrompt(badJSON, schema),
 				ProjectDir:   project.HostDir,
+				Stage:        string(model.StageBuild),
+				Temperature:  provider.TempLow(), // structured JSON output always uses low temp
+				NumCtx:       saNumCtx,
+				Stream:       saStream,
 			})
 			if fixErr != nil {
 				return nil, fixErr
@@ -305,20 +395,25 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 
 		jsonBytes, err := agent.ParseAndValidateJSON(ctx, fullResponse, agent.BuildPlanSchema, fixer)
 		if err != nil {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "JSON validation failed: " + err.Error()})
+			rlErr = "JSON validation failed: " + err.Error()
+			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
 
 		var plan model.ParsedBuildPlan
 		if err := json.Unmarshal(jsonBytes, &plan); err != nil {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "Failed to parse JSON: " + err.Error()})
+			rlErr = "Failed to parse JSON: " + err.Error()
+			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
+
+		trace.flush()
 
 		// Step 2: Ensure bd is initialized
 		run.Emit(agent.StreamEvent{Type: "log", Content: "Checking bd status..."})
 		if err := ensureBdInitRun(ctx, project.HostDir, run); err != nil {
-			run.Emit(agent.StreamEvent{Type: "error", Content: "bd init failed: " + err.Error()})
+			rlErr = "bd init failed: " + err.Error()
+			run.Emit(agent.StreamEvent{Type: "error", Content: rlErr})
 			return
 		}
 
@@ -432,8 +527,8 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 			}
 		}
 
-		summary := fmt.Sprintf("Generated %d beads (%d epics)", len(allBeads), len(plan.Epics))
-		run.Emit(agent.StreamEvent{Type: "done", Content: summary})
+		beadNotes = fmt.Sprintf("Generated %d beads (%d epics)", len(allBeads), len(plan.Epics))
+		run.Emit(agent.StreamEvent{Type: "done", Content: beadNotes})
 	}()
 
 	return run, nil
@@ -491,37 +586,50 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		maxParallel = 10
 	}
 
+	// Reset stale in_progress beads synchronously before creating the run,
+	// so GetGraph never returns stale in_progress state to the frontend.
+	if err := bdResetStale(context.Background(), project.HostDir); err != nil {
+		log.Printf("beads: reset stale before execute: %v", err)
+	}
+
 	run := h.runs.Start(project.ID, "build", "beads-execute")
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "beads-execute")
+	writeActivity(h.activityRepo, project.DataDir, model.StageBuild, "beads-execute")
+	runLogID := startRunLog(h.logBase, project, model.StageBuild, "beads-execute")
+
+	beadTrace := newRunTrace(h.logBase, project.Name, runLogID)
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageBuild)
 
 		var totalBuildTokens atomic.Int64
+		var rlErr string
 		runStart := time.Now()
+		defer func() {
+			beadTrace.flush()
+			if rlErr != "" {
+				failRunLog(h.logBase, project.Name, runLogID, rlErr)
+			} else {
+				successRunLog(h.logBase, project.Name, runLogID, nil, int(totalBuildTokens.Load()), "")
+			}
+		}()
 		defer func() {
 			if n := int(totalBuildTokens.Load()); n > 0 {
 				project.AddStageTokens(model.StageBuild, n)
 				h.registry.Update(project)
-				recordSession(project.HostDir, model.StageBuild, model.SessionBeadExecute, project.Iteration, runStart, n)
+				recordSession(project.DataDir, model.StageBuild, model.SessionBeadExecute, project.Iteration, runStart, n)
 			}
 		}()
 
 		ctx := run.Context()
 
-		// Reset any stale in_progress beads from a previous interrupted run.
-		if err := bdResetStale(ctx, project.HostDir); err != nil {
-			run.Emit(agent.StreamEvent{Type: "log", Content: "warn: reset stale: " + err.Error()})
-		}
-
 		// Load all artifacts for context injection
 		artifacts := map[model.StageName]string{}
 		for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
-			content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
+			content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, stage)
 			if content != "" {
 				artifacts[stage] = content
 			}
@@ -531,9 +639,23 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 		var enhCtx *agent.EnhancementContext
 		if project.EnhancementVision != "" {
 			enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-			summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+			summaryPath := filepath.Join(project.DataDir, "summary.md")
 			if data, err := os.ReadFile(summaryPath); err == nil {
 				enhCtx.Summary = string(data)
+			}
+
+			// Truncate enhancement context for small-context providers (e.g. Ollama)
+			// to avoid exceeding the model's context window.
+			if prov, _, _, err := h.resolveProviderOp(project.ID, project.HostDir, model.StageBuild, provider.OperationBuildExecute); err == nil {
+				if _, isOllama := prov.(*provider.OllamaProvider); isOllama {
+					const maxEnhChars = 4000
+					if len(enhCtx.Summary) > maxEnhChars {
+						enhCtx.Summary = enhCtx.Summary[:maxEnhChars] + "\n...(truncated for context window)"
+					}
+					if len(enhCtx.Vision) > maxEnhChars {
+						enhCtx.Vision = enhCtx.Vision[:maxEnhChars] + "\n...(truncated for context window)"
+					}
+				}
 			}
 		}
 
@@ -551,16 +673,17 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				}
 				skillCache = append(skillCache, cachedSkill{skill: s, prompt: promptText})
 				// Copy to project for local agent access
-				h.skillRepo.CopyToProject(project.HostDir, s.ID)
+				h.skillRepo.CopyToProject(project.DataDir, s.ID)
 			}
 		}
 
 		// Set up skill observer to detect emergent patterns during execution
-		observer := NewSkillObserver(project.HostDir, h.skillRepo, run, project, 5, h.providerRegistry, h.stageConfig)
+		observer := NewSkillObserver(project.DataDir, project.HostDir, h.skillRepo, run, project, 5, h.providerRegistry, h.stageConfig)
 		defer observer.Flush()
 
 		var wg sync.WaitGroup
-		sem := make(chan struct{}, maxParallel)
+		usePool := h.buildPool != nil && h.buildPool.Active()
+		sem := make(chan struct{}, maxParallel) // only used when pool is not active
 
 		for {
 			if ctx.Err() != nil {
@@ -575,13 +698,28 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 			// Enrich bead with scoping metadata from bd notes (bd list returns basic fields only)
 			enrichBeadFromBd(ctx, project.HostDir, bead)
 
-			sem <- struct{}{}
+			// Acquire a slot: either from the build pool or the local semaphore.
+			var poolLease *provider.PoolLease
+			if usePool {
+				lease, acqErr := h.buildPool.Acquire(ctx)
+				if acqErr != nil {
+					run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] pool acquire: %v", bead.ID, acqErr)})
+					break
+				}
+				poolLease = lease
+			} else {
+				sem <- struct{}{}
+			}
 
 			// Capture git commit hash before execution starts, for diff view
 			preCommit := h.gitSvc.CurrentHash(project.HostDir)
 
 			if err := bdClaim(ctx, project.HostDir, bead.ID); err != nil {
-				<-sem
+				if poolLease != nil {
+					h.buildPool.Release(poolLease)
+				} else {
+					<-sem
+				}
 				run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] claim failed: %v", bead.ID, err)})
 				continue
 			}
@@ -596,9 +734,15 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 			run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 			run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Starting: %s", b.ID, b.Title)})
 
-			go func(b model.Bead) {
+			go func(b model.Bead, lease *provider.PoolLease) {
 				defer wg.Done()
-				defer func() { <-sem }()
+				defer func() {
+					if lease != nil {
+						h.buildPool.Release(lease)
+					} else {
+						<-sem
+					}
+				}()
 
 				const maxReviewIterations = 3
 				currentBead := b
@@ -624,13 +768,23 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					}
 				}
 
-				// Execute initial bead via provider
-				prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
-				if provErr != nil {
-					run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] resolve provider: %v", currentBead.ID, provErr)})
-					return
+				// Execute initial bead via provider (pool lease or per-project resolution)
+				var prov provider.Provider
+				var modelID string
+				var sa *provider.StageAssignment
+				if lease != nil {
+					prov = lease.Provider
+					modelID = lease.Model
+					sa = lease.Assignment
+				} else {
+					var provErr error
+					prov, modelID, sa, provErr = h.resolveProviderOp(project.ID, project.HostDir, model.StageBuild, provider.OperationBuildExecute)
+					if provErr != nil {
+						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] resolve provider: %v", currentBead.ID, provErr)})
+						return
+					}
 				}
-				agentEvents, err := dispatchExecuteBead(beadCtx, prov, modelID, project.HostDir, currentBead, artifacts, enhCtx)
+				agentEvents, err := dispatchExecuteBead(beadCtx, prov, modelID, sa, project.HostDir, currentBead, artifacts, enhCtx, promptStoreForProject(project))
 				if err != nil {
 					run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] execute failed: %v", currentBead.ID, err)})
 					return
@@ -651,10 +805,22 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 					}
 				}
+				// Record bead execution exchange.
+				beadTrace.logStep("bead_execute_"+currentBead.ID, "ok",
+					fmt.Sprintf("tokens=%d resp=%d chars", currentBead.Tokens, len(execContent)),
+					execContent,
+					time.Since(runStart))
+
 				if execContent != "" {
 					if docErr := fsrepo.WriteBeadDoc(project.HostDir, project.Version, currentBead.ID, execContent); docErr != nil {
 						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] warn: docs mirror failed: %v", currentBead.ID, docErr)})
 					}
+				}
+
+				// Resolve review provider (may differ from execute provider).
+				reviewProv, reviewModelID, reviewSA, reviewProvErr := h.resolveProviderOp(project.ID, project.HostDir, model.StageBuild, provider.OperationBuildReview)
+				if reviewProvErr != nil {
+					reviewProv, reviewModelID, reviewSA = prov, modelID, sa
 				}
 
 				// Ralph loop: devil's advocate reviews, up to maxReviewIterations times
@@ -666,13 +832,23 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 😈 Devil's advocate reviewing (attempt %d/%d)...", currentBead.ID, iteration+1, maxReviewIterations)})
 
 					siblings, openBeads := reviewContext(ctx, project.HostDir, currentBead)
-					findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, prov, modelID, project.HostDir, currentBead, artifacts, siblings, openBeads, enhCtx)
+					findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, reviewProv, reviewModelID, reviewSA, project.HostDir, currentBead, artifacts, siblings, openBeads, enhCtx, promptStoreForProject(project))
 					if reviewTokens > 0 {
 						currentBead.Tokens += reviewTokens
 						totalBuildTokens.Add(int64(reviewTokens))
 						beadJSON, _ := json.Marshal(currentBead)
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 					}
+					// Record review exchange.
+					reviewStatus := "ok"
+					if reviewErr != nil {
+						reviewStatus = "error"
+					}
+					beadTrace.logStep(fmt.Sprintf("bead_review_%s_iter%d", currentBead.ID, iteration), reviewStatus,
+						fmt.Sprintf("tokens=%d approved=%v", reviewTokens, findings == ""),
+						findings,
+						time.Since(runStart))
+
 					if reviewErr != nil {
 						if errors.Is(reviewErr, agent.ErrPlanLimit) {
 							run.Emit(agent.StreamEvent{Type: "plan_limit", Content: reviewErr.Error()})
@@ -708,6 +884,8 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 						run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 						run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", b.ID, b.Title)})
 						observer.RecordBead(b, b.Title, b.Description)
+						h.ragOnBeadClosed(project, b)
+						h.ragOnReviewOutcome(project, b, isApproved, findings)
 						return
 					}
 
@@ -766,7 +944,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 					run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Starting correction: %s", corrID, corrTitle)})
 
-					corrEvents, err := dispatchExecuteBead(ctx, prov, modelID, project.HostDir, corrBead, artifacts, enhCtx)
+					corrEvents, err := dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, corrBead, artifacts, enhCtx, promptStoreForProject(project))
 					if err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] correction execute failed: %v", corrID, err)})
 						return
@@ -794,7 +972,7 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 					}
 					currentBead = corrBead
 				}
-			}(b)
+			}(b, poolLease)
 		}
 
 		wg.Wait()
@@ -846,12 +1024,12 @@ func (h *BeadHandler) StartExecuteRun(project *model.Project, maxParallel int) (
 				run.Emit(agent.StreamEvent{Type: "bead_created", Content: string(beadJSON)})
 				run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 🔧 Fixing validation failures...", fixID)})
 
-				fixProv, fixModelID, fixProvErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
+				fixProv, fixModelID, fixSA, fixProvErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
 			if fixProvErr != nil {
 				run.Emit(agent.StreamEvent{Type: "error", Content: "Fix bead resolve provider failed: " + fixProvErr.Error()})
 				break
 			}
-			fixEvents, err := dispatchExecuteBead(ctx, fixProv, fixModelID, project.HostDir, fixBead, artifacts, enhCtx)
+			fixEvents, err := dispatchExecuteBead(ctx, fixProv, fixModelID, fixSA, project.HostDir, fixBead, artifacts, enhCtx, promptStoreForProject(project))
 				if err != nil {
 					run.Emit(agent.StreamEvent{Type: "error", Content: "Fix bead execution failed: " + err.Error()})
 					break
@@ -888,16 +1066,23 @@ func dispatchExecuteBead(
 	ctx context.Context,
 	prov provider.Provider,
 	modelID string,
+	sa *provider.StageAssignment,
 	projectDir string,
 	bead model.Bead,
 	artifacts map[model.StageName]string,
 	enhCtx *agent.EnhancementContext,
+	store *promptfiles.PromptStore,
 ) (<-chan agent.StreamEvent, error) {
 	if _, ok := prov.(*provider.ClaudeCLIProvider); ok {
-		return agent.ExecuteBead(ctx, projectDir, bead, artifacts, enhCtx)
+		return agent.ExecuteBead(ctx, projectDir, bead, artifacts, store, enhCtx)
+	}
+	// Ollama models lack reliable multi-step tool use; use the multi-level
+	// non-agentic orchestration path (file planner → per-file generator → write).
+	if _, ok := prov.(*provider.OllamaProvider); ok {
+		return dispatchExecuteBeadOrchestrated(ctx, prov, modelID, sa, projectDir, bead, artifacts, enhCtx)
 	}
 	// Build system + user prompts for non-CLI providers.
-	systemPrompt, userMsg := agent.BuildExecuteBeadRequest(ctx, projectDir, bead, artifacts, enhCtx)
+	systemPrompt, userMsg := agent.BuildExecuteBeadRequest(ctx, projectDir, bead, artifacts, enhCtx, store)
 	return prov.ExecuteAgent(ctx, provider.AgentRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
@@ -912,17 +1097,27 @@ func dispatchReviewBead(
 	ctx context.Context,
 	prov provider.Provider,
 	modelID string,
+	sa *provider.StageAssignment,
 	projectDir string,
 	bead model.Bead,
 	artifacts map[model.StageName]string,
 	siblings []model.Bead,
 	openBeads []model.Bead,
 	enhCtx *agent.EnhancementContext,
+	store *promptfiles.PromptStore,
 ) (string, int, error) {
 	if _, ok := prov.(*provider.ClaudeCLIProvider); ok {
-		return agent.ReviewBead(ctx, projectDir, bead, artifacts, siblings, openBeads, enhCtx)
+		return agent.ReviewBead(ctx, projectDir, bead, artifacts, siblings, openBeads, store, enhCtx)
 	}
-	systemPrompt, userMsg := agent.BuildReviewBeadRequest(projectDir, bead, artifacts, siblings, openBeads, enhCtx)
+
+	// Ollama: use chat-based review with file contents inlined (no tool use).
+	// This avoids the fragile agentic tool loop for a task that rarely needs it.
+	if _, ok := prov.(*provider.OllamaProvider); ok {
+		return dispatchReviewBeadChat(ctx, prov, modelID, sa, projectDir, bead, artifacts, siblings, openBeads, enhCtx)
+	}
+
+	// Other providers: agentic review with Bash-only tools.
+	systemPrompt, userMsg := agent.BuildReviewBeadRequest(projectDir, bead, artifacts, siblings, openBeads, enhCtx, store)
 	ch, err := prov.ExecuteAgent(ctx, provider.AgentRequest{
 		Model:        modelID,
 		SystemPrompt: systemPrompt,
@@ -933,6 +1128,45 @@ func dispatchReviewBead(
 	if err != nil {
 		return "", 0, err
 	}
+	return consumeReviewEvents(ch)
+}
+
+// dispatchReviewBeadChat performs a chat-based (non-agentic) code review.
+// Target file contents are read from disk and inlined into the prompt so
+// the model doesn't need tool access — much more reliable for Ollama.
+func dispatchReviewBeadChat(
+	ctx context.Context,
+	prov provider.Provider,
+	modelID string,
+	sa *provider.StageAssignment,
+	projectDir string,
+	bead model.Bead,
+	artifacts map[model.StageName]string,
+	siblings []model.Bead,
+	openBeads []model.Bead,
+	enhCtx *agent.EnhancementContext,
+) (string, int, error) {
+	systemPrompt, userMsg := agent.BuildReviewBeadChatRequest(projectDir, bead, artifacts, siblings, openBeads, enhCtx)
+	saTemp, saNumCtx, saStream := sa.Fields()
+	ch, err := prov.Chat(ctx, provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: systemPrompt,
+		UserMessage:  userMsg,
+		ProjectDir:   projectDir,
+		Stage:        string(model.StageBuild),
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
+	})
+	if err != nil {
+		return "", 0, err
+	}
+	return consumeReviewEvents(ch)
+}
+
+// consumeReviewEvents drains a stream of events and returns the review findings
+// (empty string = approved) and token count.
+func consumeReviewEvents(ch <-chan agent.StreamEvent) (string, int, error) {
 	var fullText strings.Builder
 	var tokens int
 	for ev := range ch {
@@ -970,9 +1204,16 @@ func ensureBdInitRun(ctx context.Context, hostDir string, run *stream.Run) error
 	}
 	out, err := runBd(ctx, hostDir, "status")
 	if err != nil {
-		return fmt.Errorf("bd status: %w\n%s", err, out)
+		run.Emit(agent.StreamEvent{Type: "log", Content: "bd status failed, re-initializing: " + strings.TrimSpace(out)})
+		out2, err2 := runBd(ctx, hostDir, "init", "--force")
+		if err2 != nil {
+			return fmt.Errorf("bd init (recovery): %w\n%s", err2, out2)
+		}
+		run.Emit(agent.StreamEvent{Type: "log", Content: "bd re-initialized: " + strings.TrimSpace(out2)})
+		return nil
 	}
 	run.Emit(agent.StreamEvent{Type: "log", Content: "bd ready: " + strings.TrimSpace(out)})
+
 	return nil
 }
 
@@ -1000,6 +1241,7 @@ func bdCreate(ctx context.Context, hostDir, title, description, beadType string,
 		after := strings.TrimSpace(line[idx+len("Created issue:"):])
 		parts := strings.Fields(after)
 		if len(parts) > 0 {
+			fsrepo.CommitBeadsJSONL(hostDir)
 			return parts[0], nil
 		}
 	}
@@ -1066,6 +1308,9 @@ func bdClaim(ctx context.Context, hostDir, id string) error {
 
 func bdClose(ctx context.Context, hostDir, id string) error {
 	_, err := runBd(ctx, hostDir, "close", id)
+	if err == nil {
+		fsrepo.CommitBeadsJSONL(hostDir)
+	}
 	return err
 }
 
@@ -1074,7 +1319,6 @@ func runBd(ctx context.Context, hostDir string, args ...string) (string, error) 
 	cmd.Dir = hostDir
 	var out bytes.Buffer
 	cmd.Stdout = &out
-	cmd.Stderr = &out
 	err := cmd.Run()
 	return out.String(), err
 }
@@ -1282,7 +1526,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 
 		artifacts := map[model.StageName]string{}
 		for _, stage := range []model.StageName{model.StageVision, model.StageUX, model.StageArchitecture, model.StageBuild} {
-			content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, stage)
+			content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, stage)
 			if content != "" {
 				artifacts[stage] = content
 			}
@@ -1291,7 +1535,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 		var enhCtx *agent.EnhancementContext
 		if project.EnhancementVision != "" {
 			enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-			summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+			summaryPath := filepath.Join(project.DataDir, "summary.md")
 			if data, err := os.ReadFile(summaryPath); err == nil {
 				enhCtx.Summary = string(data)
 			}
@@ -1311,13 +1555,13 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 		run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 		run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] Starting: %s", bead.ID, bead.Title)})
 
-		prov, modelID, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
+		prov, modelID, sa, provErr := h.resolveProviderOp(project.ID, project.HostDir, model.StageBuild, provider.OperationBuildExecute)
 		if provErr != nil {
 			run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] resolve provider: %v", bead.ID, provErr)})
 			return
 		}
 
-		agentEvents, err := dispatchExecuteBead(ctx, prov, modelID, project.HostDir, *bead, artifacts, enhCtx)
+		agentEvents, err := dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, *bead, artifacts, enhCtx, promptStoreForProject(project))
 		if err != nil {
 			run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] execute failed: %v", bead.ID, err)})
 			return
@@ -1343,6 +1587,11 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 			fsrepo.WriteBeadDoc(project.HostDir, project.Version, bead.ID, execContent) //nolint:errcheck
 		}
 
+		reviewProv, reviewModelID, reviewSA, reviewProvErr := h.resolveProviderOp(project.ID, project.HostDir, model.StageBuild, provider.OperationBuildReview)
+		if reviewProvErr != nil {
+			reviewProv, reviewModelID, reviewSA = prov, modelID, sa
+		}
+
 		const maxReviewIterations = 3
 		for iteration := 0; iteration < maxReviewIterations; iteration++ {
 			bead.Status = model.BeadStatusReviewing
@@ -1351,7 +1600,7 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 			run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 😈 Devil's advocate reviewing (attempt %d/%d)...", bead.ID, iteration+1, maxReviewIterations)})
 
 			siblings, openBeads := reviewContext(ctx, project.HostDir, *bead)
-			findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, prov, modelID, project.HostDir, *bead, artifacts, siblings, openBeads, enhCtx)
+			findings, reviewTokens, reviewErr := dispatchReviewBead(ctx, reviewProv, reviewModelID, reviewSA, project.HostDir, *bead, artifacts, siblings, openBeads, enhCtx, promptStoreForProject(project))
 			if reviewTokens > 0 {
 				bead.Tokens += reviewTokens
 				totalTokens += reviewTokens
@@ -1393,12 +1642,14 @@ func (h *BeadHandler) ExecuteSingleBead(w http.ResponseWriter, r *http.Request) 
 				beadJSON, _ = json.Marshal(bead)
 				run.Emit(agent.StreamEvent{Type: "bead_update", Content: string(beadJSON)})
 				run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] ✅ Done: %s", bead.ID, bead.Title)})
+				h.ragOnBeadClosed(project, *bead)
+				h.ragOnReviewOutcome(project, *bead, isApproved, findings)
 				return
 			}
 
 			// Issues found — re-execute with feedback (simplified: just close and let next cycle handle)
 			run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("[%s] 🔄 Re-executing with review feedback...", bead.ID)})
-			agentEvents, err = dispatchExecuteBead(ctx, prov, modelID, project.HostDir, *bead, artifacts, enhCtx)
+			agentEvents, err = dispatchExecuteBead(ctx, prov, modelID, sa, project.HostDir, *bead, artifacts, enhCtx, promptStoreForProject(project))
 			if err != nil {
 				run.Emit(agent.StreamEvent{Type: "error", Content: fmt.Sprintf("[%s] re-execute failed: %v", bead.ID, err)})
 				return
@@ -1494,32 +1745,60 @@ func (h *BeadHandler) BeadChat(w http.ResponseWriter, r *http.Request) {
 		chatHistory = chatHistory[:len(chatHistory)-1]
 	}
 
+	// Resolve provider for bead chat (ux.chat operation, build stage as fallback).
+	prov, modelID, sa, provErr := h.resolveProviderOp(id, project.HostDir, model.StageBuild, provider.OperationKey("build.chat"))
+	if provErr != nil {
+		http.Error(w, "failed to resolve provider: "+provErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	var temp *float64
+	var numCtx *int
+	var stream *bool
+	if sa != nil {
+		temp, numCtx, stream = sa.Fields()
+	}
+
 	run := h.runs.Start(id, "build", runKey)
 	if run == nil {
 		http.Error(w, "chat already running for this bead", http.StatusConflict)
 		return
 	}
 
-	events, err := agent.Chat(run.Context(), "claude-sonnet-4-6", systemPrompt, chatHistory, req.Message, project.HostDir)
+	events, err := prov.Chat(run.Context(), provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: systemPrompt,
+		History:      chatHistory,
+		UserMessage:  req.Message,
+		ProjectDir:   project.HostDir,
+		Stage:        string(model.StageBuild),
+		Temperature:  temp,
+		NumCtx:       numCtx,
+		Stream:       stream,
+	})
 	if err != nil {
 		run.Finish(h.runs)
-		http.Error(w, "failed to start agent: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "failed to start chat: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	go func() {
 		defer run.Finish(h.runs)
 
+		var fullContent strings.Builder
 		for event := range events {
-			if event.Type == "done" {
+			switch event.Type {
+			case "chunk":
+				fullContent.WriteString(event.Content)
+				run.Emit(event)
+			case "done":
 				assistantMsg := model.Message{
 					Role:      model.RoleAssistant,
-					Content:   event.Content,
+					Content:   fullContent.String(),
 					Timestamp: time.Now(),
 				}
 				fsrepo.AppendBeadChatMessage(project.HostDir, project.Version, beadID, assistantMsg)
-				run.Emit(agent.StreamEvent{Type: "done", Content: event.Content})
-			} else {
+				run.Emit(agent.StreamEvent{Type: "done", Content: fullContent.String()})
+			default:
 				run.Emit(event)
 			}
 		}

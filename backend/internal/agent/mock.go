@@ -1,18 +1,19 @@
 package agent
 
 import (
-	"bufio"
-	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/michelroberge/paulette/backend/internal/model"
+	ollamaprompts "github.com/michelroberge/paulette/backend/internal/prompts/ollama"
 )
+
+// MockView holds a single screen's generated HTML fragment for use by the assembler.
+type MockView struct {
+	ID    string
+	Title string
+	HTML  string // body fragment only — no <html>/<head>/<body> shell
+}
 
 const mockSystemPromptBase = `You are a UI mockup generator for an AI Product Factory. Based on the provided UX design document, generate a complete standalone HTML page that visually represents the proposed UI as high-fidelity wireframe mockups.
 
@@ -76,6 +77,213 @@ var frameworkInstructions = map[model.UXFramework]string{
 - Use CSS Grid and Flexbox for layout`,
 }
 
+// frameworkShellHeads contains the <head> elements (CDN links, CSS variables, base styles)
+// that the deterministic assembler injects into the shared HTML shell. Each view fragment
+// relies on these being present but must not re-include them.
+var frameworkShellHeads = map[model.UXFramework]string{
+	model.FrameworkTailwind: `<script src="https://cdn.tailwindcss.com"></script>`,
+
+	model.FrameworkBootstrap: `<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<style>body{background:#0f172a;color:#e2e8f0}</style>`,
+
+	model.FrameworkMUI: `<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<style>body{font-family:'Roboto',sans-serif;background:#121212;color:#fff}</style>`,
+
+	model.FrameworkShadcn: `<style>
+:root{--background:#09090b;--foreground:#fafafa;--card:#18181b;--border:#27272a;--primary:#fafafa;--muted:#71717a}
+body{background:var(--background);color:var(--foreground)}
+</style>`,
+
+	model.FrameworkVanilla: `<style>
+:root{--bg:#0f172a;--panel:#1e293b;--accent:#3b82f6;--text:#e2e8f0;--border:#334155}
+body{background:var(--bg);color:var(--text)}
+</style>`,
+}
+
+// frameworkViewInstructs contains per-view agent instructions (which classes/styles to use)
+// without CDN links — those are already in frameworkShellHeads.
+var frameworkViewInstructs = map[model.UXFramework]string{
+	model.FrameworkTailwind: `Framework: Tailwind CSS (CDN already loaded in shell)
+- Use Tailwind utility classes exclusively (bg-slate-900, text-slate-100, rounded-lg, shadow-lg, etc.)
+- Dark mode palette: bg-slate-900, bg-slate-800, bg-slate-700, text-slate-100, text-blue-500
+- Do NOT include <script> CDN tags — Tailwind is already available
+- FORBIDDEN: Do NOT use Bootstrap class names (btn, card, d-flex, container, row, col-*)
+- FORBIDDEN: Do NOT write <style> blocks — use utility classes directly on elements`,
+
+	model.FrameworkBootstrap: `Framework: Bootstrap 5 (CDN already loaded in shell)
+- Use Bootstrap grid, components (card, navbar, btn, form-control, badge, list-group, etc.)
+- Dark theme is already applied globally; use Bootstrap dark variants where available
+- Do NOT include <link> or <script> CDN tags — Bootstrap is already available
+- FORBIDDEN: Do NOT use Tailwind utility class names (bg-slate-*, text-*, p-4, flex, rounded-lg)
+- Always use Bootstrap layout: container, row, col-*`,
+
+	model.FrameworkMUI: `Framework: Material UI (MUI) design language — plain CSS approximation
+- Color palette: primary #1976d2, background #121212, surface #1e1e1e, on-surface #fff, secondary #90caf9
+- Use box-shadow for elevation (dp2: 0 2px 4px rgba(0,0,0,.4), dp4: 0 4px 8px rgba(0,0,0,.4))
+- Roboto font is already loaded; rounded corners: 4px for components, 8px for cards
+- Inline <style> blocks for component CSS are fine
+- FORBIDDEN: Do NOT add Tailwind or Bootstrap class names — use only inline style="" attributes or <style> blocks`,
+
+	model.FrameworkShadcn: `Framework: Shadcn/UI design language — plain CSS
+- Use CSS variables already defined in the shell: var(--background), var(--foreground), var(--card), var(--border), var(--primary), var(--muted)
+- Zinc color scale for neutrals, rounded-md (6px) borders, subtle hover states
+- Bordered cards with 1px solid var(--border); inline <style> blocks are fine
+- FORBIDDEN: Do NOT add Tailwind or Bootstrap class names — use only CSS variables and inline style="" attributes`,
+
+	model.FrameworkVanilla: `Framework: Vanilla CSS
+- CSS variables are already defined in the shell: var(--bg), var(--panel), var(--accent), var(--text), var(--border)
+- Use CSS Grid and Flexbox; inline <style> blocks are fine
+- FORBIDDEN: Do NOT add Tailwind or Bootstrap class names — use only CSS variables and inline style="" attributes`,
+}
+
+// frameworkStylerContracts contains the allowed class/style contracts for each framework,
+// injected into the MockStyler system prompt to constrain the styler's rewriting pass.
+var frameworkStylerContracts = map[model.UXFramework]string{
+	model.FrameworkTailwind: `Framework: Tailwind CSS
+ALLOWED: Only Tailwind utility classes — bg-*, text-*, p-*, m-*, flex, grid, rounded-*, shadow-*, border-*, hover:*, w-*, h-*, gap-*, items-*, justify-*, overflow-*, opacity-*, font-*, leading-*, tracking-*
+FORBIDDEN: Any Bootstrap class names (btn, card, d-flex, container, row, col-*) or MUI/Shadcn names
+FORBIDDEN: Any <style> blocks — move all styling to utility classes`,
+
+	model.FrameworkBootstrap: `Framework: Bootstrap 5
+ALLOWED: Only Bootstrap component classes — btn, btn-*, card, card-body, card-header, navbar, nav, nav-link, container, row, col-*, form-control, badge, list-group, list-group-item, table, alert, modal, d-flex, d-grid, gap-*, justify-content-*, align-items-*
+FORBIDDEN: Any Tailwind utility classes (bg-slate-*, text-*, p-4, rounded-lg, shadow-lg)`,
+
+	model.FrameworkMUI: `Framework: MUI plain CSS approximation
+ALLOWED: Only inline style="" attributes and <style> blocks. No class="" values with framework names.
+Remove any Tailwind or Bootstrap class names from class="" attributes — replace with inline style="" using MUI palette: primary #1976d2, background #121212, surface #1e1e1e`,
+
+	model.FrameworkShadcn: `Framework: Shadcn/UI plain CSS
+ALLOWED: Only CSS variable references in style="" attributes: var(--background), var(--foreground), var(--card), var(--border), var(--primary), var(--muted)
+Remove any Tailwind or Bootstrap class names from class="" attributes — replace with inline style="" using the CSS variables`,
+
+	model.FrameworkVanilla: `Framework: Vanilla CSS
+ALLOWED: Only CSS variable references in style="" attributes: var(--bg), var(--panel), var(--accent), var(--text), var(--border)
+Remove any Tailwind or Bootstrap class names from class="" attributes — replace with inline style="" using the CSS variables`,
+}
+
+// frameworkShellHead returns the <head> snippet for the given framework config.
+func frameworkShellHead(cfg *model.FrameworkConfig) string {
+	if cfg == nil {
+		return frameworkShellHeads[model.FrameworkVanilla]
+	}
+	h, ok := frameworkShellHeads[cfg.Framework]
+	if !ok {
+		return frameworkShellHeads[model.FrameworkVanilla]
+	}
+	return h
+}
+
+// frameworkViewInstruct returns the per-view agent framework instruction for the given config.
+func frameworkViewInstruct(cfg *model.FrameworkConfig) string {
+	if cfg == nil {
+		return frameworkViewInstructs[model.FrameworkVanilla]
+	}
+	instruct, ok := frameworkViewInstructs[cfg.Framework]
+	if !ok || cfg.Framework == model.FrameworkOther {
+		name := cfg.CustomName
+		if name == "" {
+			name = "custom framework"
+		}
+		return fmt.Sprintf(`Framework: %s — plain CSS approximation
+- Use plain CSS inline <style> blocks as the base styling
+- Apply %s design conventions as closely as possible
+- Modern dark aesthetic: background #0f172a, panels #1e293b, accents #3b82f6`, name, name)
+	}
+	return instruct
+}
+
+// buildMockViewSystemPrompt constructs the per-view system prompt for the given framework.
+func buildMockViewSystemPrompt(cfg *model.FrameworkConfig) string {
+	return fmt.Sprintf(ollamaprompts.MockViewBase, frameworkViewInstruct(cfg))
+}
+
+// BuildMockViewSystemPrompt is the exported version of buildMockViewSystemPrompt.
+func BuildMockViewSystemPrompt(cfg *model.FrameworkConfig) string {
+	return buildMockViewSystemPrompt(cfg)
+}
+
+// BuildMockStylerSystemPrompt returns the system prompt for the Styler post-processing
+// step, which rewrites class="" attributes in assembled HTML to use only the correct
+// framework classes. Returns "" for FrameworkOther or nil config (caller should skip).
+func BuildMockStylerSystemPrompt(cfg *model.FrameworkConfig) string {
+	if cfg == nil || cfg.Framework == model.FrameworkOther {
+		return ""
+	}
+	contract, ok := frameworkStylerContracts[cfg.Framework]
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(ollamaprompts.MockStyler, contract)
+}
+
+// BuildMockPlannerSystemPrompt returns the system prompt used by the orchestrated
+// planner step to decompose a UX artifact into a screen list.
+func BuildMockPlannerSystemPrompt() string {
+	return fmt.Sprintf(ollamaprompts.MockPlanner)
+}
+
+// AssembleMockHTML combines generated view fragments into a single self-contained
+// HTML file with tab navigation. This is purely deterministic — no LLM involved.
+func AssembleMockHTML(cfg *model.FrameworkConfig, views []MockView) string {
+	var b strings.Builder
+
+	b.WriteString("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
+	b.WriteString("<meta charset=\"UTF-8\">\n")
+	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n")
+	b.WriteString("<title>UI Mockup</title>\n")
+	b.WriteString(frameworkShellHead(cfg))
+	b.WriteString("\n<style>\n")
+	b.WriteString("*{box-sizing:border-box}\n")
+	b.WriteString(".mock-tab-bar{display:flex;gap:4px;padding:8px 16px;background:#1e293b;border-bottom:1px solid #334155;flex-wrap:wrap}\n")
+	b.WriteString(".mock-tab{padding:6px 16px;border:none;border-radius:6px;cursor:pointer;background:transparent;color:#94a3b8;font-size:14px;font-family:inherit}\n")
+	b.WriteString(".mock-tab.active{background:#3b82f6;color:#fff}\n")
+	b.WriteString(".mock-screen{display:none}\n")
+	b.WriteString(".mock-screen.active{display:block}\n")
+	b.WriteString("</style>\n</head>\n<body>\n")
+
+	// Tab bar — only when there are multiple screens
+	if len(views) > 1 {
+		b.WriteString("<nav class=\"mock-tab-bar\">\n")
+		for i, v := range views {
+			active := ""
+			if i == 0 {
+				active = " active"
+			}
+			b.WriteString(fmt.Sprintf(
+				"  <button class=\"mock-tab%s\" onclick=\"mockShow('%s',this)\">%s</button>\n",
+				active, v.ID, v.Title,
+			))
+		}
+		b.WriteString("</nav>\n")
+	}
+
+	// Screen containers
+	for i, v := range views {
+		active := ""
+		if i == 0 {
+			active = " active"
+		}
+		b.WriteString(fmt.Sprintf("<div id=\"mock-screen-%s\" class=\"mock-screen%s\">\n", v.ID, active))
+		b.WriteString(v.HTML)
+		b.WriteString("\n</div>\n")
+	}
+
+	// Tab-switching script
+	b.WriteString("<script>\n")
+	b.WriteString("function mockShow(id,btn){\n")
+	b.WriteString("  document.querySelectorAll('.mock-screen').forEach(function(s){s.classList.remove('active')});\n")
+	b.WriteString("  document.querySelectorAll('.mock-tab').forEach(function(t){t.classList.remove('active')});\n")
+	b.WriteString("  var s=document.getElementById('mock-screen-'+id);\n")
+	b.WriteString("  if(s)s.classList.add('active');\n")
+	b.WriteString("  if(btn)btn.classList.add('active');\n")
+	b.WriteString("}\n")
+	b.WriteString("</script>\n")
+
+	b.WriteString("</body>\n</html>")
+	return b.String()
+}
+
 // buildMockSystemPrompt constructs the mock generation prompt for the given framework.
 func buildMockSystemPrompt(cfg *model.FrameworkConfig) string {
 	if cfg == nil {
@@ -122,9 +330,16 @@ Here is your previous (wrong) response for reference — do NOT repeat this mist
 
 Now output the complete HTML wireframe mockup wrapped in the required XML envelope.`
 
-// hasHTMLBlock checks whether the response contains the XML envelope with htmlcontent.
+// hasHTMLBlock checks whether the response contains the XML envelope with htmlcontent,
+// or raw HTML content (for models that don't follow the envelope format).
 func hasHTMLBlock(s string) bool {
-	return strings.Contains(s, "<htmlcontent>") && strings.Contains(s, "</htmlcontent>")
+	if strings.Contains(s, "<htmlcontent>") && strings.Contains(s, "</htmlcontent>") {
+		return true
+	}
+	// Fallback: check for raw HTML in the response
+	lower := strings.ToLower(s)
+	return (strings.Contains(lower, "<!doctype html>") || strings.Contains(lower, "<html")) &&
+		strings.Contains(lower, "</html>")
 }
 
 // HasHTMLBlock is the exported version of hasHTMLBlock. It checks whether the
@@ -138,148 +353,95 @@ func HasHTMLBlock(s string) bool { return hasHTMLBlock(s) }
 // calling the provider layer directly (bypassing agent.GenerateMock).
 func BuildMockSystemPrompt(cfg *model.FrameworkConfig) string { return buildMockSystemPrompt(cfg) }
 
+// BuildMockContext builds a compressed project context block that precedes the
+// UX design document in mock generation prompts. This ensures the LLM knows
+// what the app is about (its name, vision, and high-level plan) rather than
+// generating generic wireframes that don't match the project.
+func BuildMockContext(projectName, visionContent, buildContent string) string {
+	if visionContent == "" && buildContent == "" && projectName == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Project Context\n")
+	if projectName != "" {
+		b.WriteString("Project: ")
+		b.WriteString(projectName)
+		b.WriteString("\n")
+	}
+	if visionContent != "" {
+		b.WriteString("\n### Vision\n")
+		// Include up to ~2000 chars of vision to keep context manageable
+		if len(visionContent) > 2000 {
+			b.WriteString(visionContent[:2000])
+			b.WriteString("\n... (truncated)\n")
+		} else {
+			b.WriteString(visionContent)
+			b.WriteString("\n")
+		}
+	}
+	if buildContent != "" {
+		b.WriteString("\n### Build Plan Summary\n")
+		// Include up to ~1500 chars of build plan for high-level context
+		if len(buildContent) > 1500 {
+			b.WriteString(buildContent[:1500])
+			b.WriteString("\n... (truncated)\n")
+		} else {
+			b.WriteString(buildContent)
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\n---\n\n")
+	return b.String()
+}
+
 // MockRetryPrompt is the exported correction prompt template used when the LLM
 // returns conversational text instead of a valid HTML envelope. Callers should
 // fmt.Sprintf(agent.MockRetryPrompt, snippet) where snippet is the first 500
 // characters of the bad response.
 const MockRetryPrompt = mockRetryPrompt
 
-// invokeMockClaude runs a single Claude invocation and collects streamed events.
-// It sends chunks to the provided channel and returns the full response text.
-func invokeMockClaude(ctx context.Context, systemPrompt, userPrompt string, ch chan<- StreamEvent) (string, error) {
-	cmd := exec.CommandContext(ctx, claudeBin,
-		"--print",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--system-prompt", systemPrompt,
-	)
-	cmd.Stdin = strings.NewReader(userPrompt)
-	cmd.Stderr = os.Stderr // surface claude errors in server logs
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("stdout pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start claude: %w", err)
-	}
-
-	var fullResponse strings.Builder
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		var event claudeEvent
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue
-		}
-
-		switch event.Type {
-		case "assistant":
-			if event.Message != nil {
-				for _, c := range event.Message.Content {
-					if c.Type == "text" && c.Text != "" {
-						fullResponse.WriteString(c.Text)
-						ch <- StreamEvent{Type: "chunk", Content: c.Text}
-					}
-				}
-			}
-		case "result":
-			if event.IsError {
-				cmd.Wait() // reap before returning
-				return "", fmt.Errorf("claude error: %s", event.Result)
-			}
-			if event.Usage != nil {
-				ch <- StreamEvent{Type: "tokens", Content: strconv.Itoa(event.Usage.OutputTokens)}
-			}
-			if fullResponse.Len() == 0 && event.Result != "" {
-				fullResponse.WriteString(event.Result)
-				ch <- StreamEvent{Type: "chunk", Content: event.Result}
-			}
-		}
-	}
-
-	if serr := scanner.Err(); serr != nil {
-		cmd.Wait() // reap before returning
-		return "", fmt.Errorf("reading claude output: %w", serr)
-	}
-
-	if werr := cmd.Wait(); werr != nil {
-		if ctx.Err() != nil {
-			return "", fmt.Errorf("claude cancelled: %w", ctx.Err())
-		}
-		return "", fmt.Errorf("claude exited with error: %w", werr)
-	}
-
-	return fullResponse.String(), nil
-}
-
-// GenerateMock streams an HTML wireframe mockup from Claude based on UX artifact content.
-// If Claude returns conversational text instead of raw HTML, it retries up to maxMockRetries
-// times with a correction prompt.
-func GenerateMock(ctx context.Context, uxArtifact string, refinement string, frameworkCfg *model.FrameworkConfig) (<-chan StreamEvent, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-
-	var prompt strings.Builder
-	prompt.WriteString("UX Design Document:\n---\n")
-	prompt.WriteString(uxArtifact)
-	prompt.WriteString("\n---\n\nGenerate the HTML wireframe mockup for all screens described above.")
-	if refinement != "" {
-		prompt.WriteString("\n\nRefinement instruction: ")
-		prompt.WriteString(refinement)
-	}
-
-	systemPrompt := buildMockSystemPrompt(frameworkCfg)
-
-	ch := make(chan StreamEvent, 64)
-
-	go func() {
-		defer cancel()
-		defer close(ch)
-
-		userPrompt := prompt.String()
-
-		for attempt := 0; attempt <= maxMockRetries; attempt++ {
-			if ctx.Err() != nil {
-				return
-			}
-
-			response, err := invokeMockClaude(ctx, systemPrompt, userPrompt, ch)
-			if err != nil {
-				ch <- StreamEvent{Type: "error", Content: err.Error()}
-				return
-			}
-
-			if hasHTMLBlock(response) {
-				ch <- StreamEvent{Type: "done", Content: response}
-				return
-			}
-
-			// Response was not HTML — retry with correction prompt
-			if attempt < maxMockRetries {
-				// Truncate the bad response for the retry prompt (keep first 500 chars)
-				snippet := response
-				if len(snippet) > 500 {
-					snippet = snippet[:500] + "..."
-				}
-				userPrompt = fmt.Sprintf(mockRetryPrompt, snippet)
-				ch <- StreamEvent{Type: "chunk", Content: "\n\n[Response was not valid HTML — retrying...]\n\n"}
-			} else {
-				// Exhausted retries — return whatever we got
-				ch <- StreamEvent{Type: "done", Content: response}
-			}
-		}
-	}()
-
-	return ch, nil
-}
-
 // ExtractHTML extracts HTML from a Claude XML envelope response.
+// Falls back to extracting raw HTML if no envelope is found.
 func ExtractHTML(raw string) string {
-	return ParseResponse(raw).HTML
+	html := ParseResponse(raw).HTML
+	if html != "" {
+		return html
+	}
+	// Fallback: extract raw HTML from the response
+	return extractRawHTML(raw)
+}
+
+// extractRawHTML finds HTML content in a response that lacks the XML envelope.
+// It looks for <!DOCTYPE html>...</html> or <html>...</html> blocks,
+// including inside code blocks (```html ... ```).
+func extractRawHTML(s string) string {
+	// Try code block first
+	codeStart := strings.Index(s, "```html")
+	if codeStart >= 0 {
+		after := s[codeStart+7:]
+		codeEnd := strings.Index(after, "```")
+		if codeEnd > 0 {
+			candidate := strings.TrimSpace(after[:codeEnd])
+			if len(candidate) > 50 {
+				return candidate
+			}
+		}
+	}
+
+	// Try raw HTML
+	lower := strings.ToLower(s)
+	dtIdx := strings.Index(lower, "<!doctype html>")
+	if dtIdx < 0 {
+		dtIdx = strings.Index(lower, "<html")
+	}
+	if dtIdx < 0 {
+		return ""
+	}
+
+	endIdx := strings.LastIndex(lower, "</html>")
+	if endIdx < dtIdx {
+		return ""
+	}
+
+	return strings.TrimSpace(s[dtIdx : endIdx+7])
 }

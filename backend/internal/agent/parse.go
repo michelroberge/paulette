@@ -34,19 +34,110 @@ type ParsedResponse struct {
 	JSON       []byte // <jsonplan> content as bytes
 }
 
+// StripThinkBlocks removes all <think>...</think> blocks produced by reasoning
+// models (qwen3, deepseek-r1, etc.) before any parsing occurs. The removal is
+// case-insensitive on the tag name. Nested blocks are handled by repeated passes.
+// An unclosed opening tag causes everything from that tag to the end to be dropped.
+func StripThinkBlocks(s string) string {
+	const open = "<think>"
+	const close = "</think>"
+	for {
+		lo := strings.ToLower(s)
+		si := strings.Index(lo, open)
+		if si < 0 {
+			return s
+		}
+		rest := lo[si:]
+		ei := strings.Index(rest, close)
+		if ei < 0 {
+			// Unclosed block — drop everything from the opening tag onward.
+			return strings.TrimSpace(s[:si])
+		}
+		s = s[:si] + s[si+ei+len(close):]
+	}
+}
+
 // ParseResponse extracts all sections from a model response.
 // It tries the XML envelope format first (<discussion>, <artifact>, etc.).
 // If no XML tags are found it falls back to the plain "## Discussion / ## Artifact"
 // section-header format used by non-XML-friendly Ollama models.
+// As a last resort, if the response looks like a standalone document (starts with a
+// markdown heading and is substantial), it is returned as the Artifact so that
+// models like codellama that ignore section-header instructions still produce a
+// saved artifact rather than dumping everything into the chat discussion.
 func ParseResponse(raw string) ParsedResponse {
-	if strings.Contains(raw, "<"+TagDiscussion+">") || strings.Contains(raw, "<"+TagArtifact+">") {
+	raw = StripThinkBlocks(raw)
+	hasStartMarker := strings.Contains(raw, markerStart)
+	hasArtTag      := strings.Contains(raw, "<"+TagArtifact+">")
+	hasDiscTag     := strings.Contains(raw, "<"+TagDiscussion+">")
+	hasJSONTag     := strings.Contains(raw, "<"+TagJSON+">")
+
+	// Require either (a) properly paired open+close tags, or (b) the envelope
+	// start marker combined with any structural tag. Prevents false positives
+	// when small models (e.g. llama3.2:1b) use <artifact> as an inline prose
+	// marker — those outputs have no closing tag and no envelope marker, so
+	// neither condition fires and the response falls through to the
+	// looksLikeDocument / extractDocumentAfterPreamble fallbacks.
+	properPairedTags := (hasArtTag  && strings.Contains(raw, "</"+TagArtifact+">")) ||
+		(hasDiscTag && strings.Contains(raw, "</"+TagDiscussion+">")) ||
+		hasJSONTag
+	envelopedTags := hasStartMarker && (hasArtTag || hasDiscTag || hasJSONTag)
+
+	if properPairedTags || envelopedTags {
 		return parseXMLEnvelope(raw)
 	}
-	if strings.Contains(raw, "## Discussion") || strings.Contains(raw, "## Artifact") {
+	lower := strings.ToLower(raw)
+	if strings.Contains(lower, "## discussion") || strings.Contains(lower, "## artifact") {
 		return parsePlainSections(raw)
 	}
-	// No known structure — return everything as discussion.
-	return ParsedResponse{Discussion: strings.TrimSpace(raw)}
+	// No known structure — check if this looks like a document (artifact).
+	// Models that ignore section-header formatting instructions often output the
+	// document directly, starting with a markdown heading. Treat those as artifacts
+	// so the file gets saved. Short/conversational responses remain as discussion.
+	trimmed := strings.TrimSpace(raw)
+	if looksLikeDocument(trimmed) {
+		return ParsedResponse{Artifact: trimmed}
+	}
+	// Check for a short preamble before the actual document (common with small models
+	// that add "Sure! Here's the regenerated artifact:" before the markdown content).
+	if artifact, preamble, ok := extractDocumentAfterPreamble(trimmed); ok {
+		return ParsedResponse{Discussion: preamble, Artifact: artifact}
+	}
+	return ParsedResponse{Discussion: trimmed}
+}
+
+// extractDocumentAfterPreamble detects a conversational preamble (< 500 chars)
+// followed by a substantial markdown document starting with a heading.
+// Returns (artifact, preamble, true) when found.
+func extractDocumentAfterPreamble(s string) (string, string, bool) {
+	for _, prefix := range []string{"\n# ", "\n## "} {
+		idx := strings.Index(s, prefix)
+		if idx > 0 && idx < 500 {
+			docPart := strings.TrimSpace(s[idx:])
+			if len(docPart) >= 100 {
+				preamble := strings.TrimSpace(s[:idx])
+				return docPart, preamble, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// looksLikeDocument reports whether s appears to be a standalone document
+// rather than a conversational reply. Checks: starts with a markdown heading
+// and is substantial (≥100 bytes), OR contains multiple markdown headings
+// indicating structured content regardless of what it starts with.
+func looksLikeDocument(s string) bool {
+	if len(s) < 100 {
+		return false
+	}
+	// Starts with heading — classic document pattern
+	if strings.HasPrefix(s, "# ") || strings.HasPrefix(s, "## ") {
+		return true
+	}
+	// Multiple headings indicate structured document even without leading heading
+	headingCount := strings.Count(s, "\n# ") + strings.Count(s, "\n## ") + strings.Count(s, "\n### ")
+	return headingCount >= 2
 }
 
 // parseXMLEnvelope extracts sections from the XML envelope format.
@@ -68,26 +159,49 @@ func parsePlainSections(raw string) ParsedResponse {
 	}
 }
 
-// extractPlainSection returns the content after the given "## Heading" marker up to
-// the next "## " heading or end of string. Uses the last occurrence of the heading
-// so a preamble before the real content is skipped.
+// rePlainHeading matches markdown headings with 1-3 # characters, case-insensitive.
+// Captures: group 1 = heading text (lowercased comparison done by caller).
+var rePlainHeading = regexp.MustCompile(`(?im)^#{1,3}\s+(.+)$`)
+
+// extractPlainSection returns the content after the given heading keyword up to
+// the next markdown heading or end of string. Matching is case-insensitive and
+// supports 1-3 # characters (e.g. "## Discussion", "### discussion", "# ARTIFACT").
+// Uses the last occurrence so a preamble before the real content is skipped.
 func extractPlainSection(raw, heading string) string {
-	idx := strings.LastIndex(raw, heading)
-	if idx < 0 {
+	// Extract just the keyword from the heading pattern (e.g. "## Discussion" → "discussion").
+	keyword := strings.ToLower(strings.TrimLeft(heading, "# "))
+
+	// Find all heading positions and pick the last one matching our keyword.
+	matches := rePlainHeading.FindAllStringIndex(raw, -1)
+	matchIdx := -1
+	matchEnd := 0
+	for _, m := range matches {
+		line := raw[m[0]:m[1]]
+		// Extract heading text after the # characters.
+		text := strings.TrimSpace(strings.TrimLeft(line, "#"))
+		if strings.EqualFold(text, keyword) {
+			matchIdx = m[0]
+			matchEnd = m[1]
+		}
+	}
+	if matchIdx < 0 {
 		return ""
 	}
-	content := raw[idx+len(heading):]
+
+	content := raw[matchEnd:]
 	// Strip the newline immediately after the heading.
 	content = strings.TrimLeft(content, "\r\n")
-	// Stop at the next "## " heading if present.
-	if next := strings.Index(content, "\n## "); next >= 0 {
-		content = content[:next]
+	// Stop at the next markdown heading if present.
+	if next := rePlainHeading.FindStringIndex(content); next != nil {
+		content = content[:next[0]]
 	}
 	return strings.TrimSpace(content)
 }
 
 // extractBetween returns trimmed content between open and close tags.
-// Returns "" if either tag is absent or close precedes open.
+// Returns "" if the open tag is absent. If the close tag is absent (truncated
+// response from token-limited models), returns content from the open tag to end
+// of string so that partially generated artifacts are still captured.
 func extractBetween(s, open, close string) string {
 	si := strings.Index(s, open)
 	if si < 0 {
@@ -96,7 +210,13 @@ func extractBetween(s, open, close string) string {
 	si += len(open)
 	ei := strings.LastIndex(s, close)
 	if ei <= si {
-		return ""
+		// Close tag missing — treat content from open tag to end as the body.
+		// This handles token-limited models (e.g. Groq) that truncate mid-artifact.
+		trimmed := strings.TrimSpace(s[si:])
+		if trimmed == "" {
+			return ""
+		}
+		return trimmed
 	}
 	return strings.TrimSpace(s[si:ei])
 }
@@ -111,16 +231,47 @@ func extractCDATA(s string) string {
 	return s
 }
 
+// reCodeFenceJSON matches a ```json ... ``` code fence.
+var reCodeFenceJSON = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.*?)\\n\\s*```")
+
 // extractJSONPlan pulls <jsonplan> content as a byte slice for json.Unmarshal.
-// Falls back to extracting the first top-level JSON object or array found in the
-// string when no <jsonplan> tags are present (e.g. Ollama models that ignore the
-// envelope instruction and return raw JSON).
+// Falls back through multiple strategies for models that ignore envelope instructions:
+// 1. <jsonplan> tags (preferred)
+// 2. ```json code fence
+// 3. First line starting with { or [ through last line ending with } or ]
+// 4. Outermost { ... } or [ ... ] in the raw string (most aggressive)
 func extractJSONPlan(s string) []byte {
+	s = StripThinkBlocks(s)
+
+	// Strategy 1: <jsonplan> tags
 	content := extractBetween(s, "<"+TagJSON+">", "</"+TagJSON+">")
 	if content != "" {
 		return repairJSON([]byte(content))
 	}
-	// Fallback: find the outermost { ... } or [ ... ] in the raw string.
+
+	// Strategy 2: ```json code fence
+	if m := reCodeFenceJSON.FindStringSubmatch(s); len(m) > 1 {
+		return repairJSON([]byte(m[1]))
+	}
+
+	// Strategy 3: line-based — find first line starting with {/[ and last ending with }/]
+	lines := strings.Split(s, "\n")
+	startLine, endLine := -1, -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if startLine < 0 && len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+			startLine = i
+		}
+		if len(trimmed) > 0 && (trimmed[len(trimmed)-1] == '}' || trimmed[len(trimmed)-1] == ']') {
+			endLine = i
+		}
+	}
+	if startLine >= 0 && endLine >= startLine {
+		block := strings.Join(lines[startLine:endLine+1], "\n")
+		return repairJSON([]byte(block))
+	}
+
+	// Strategy 4: outermost braces (most aggressive fallback)
 	start := strings.IndexAny(s, "{[")
 	if start < 0 {
 		return nil
@@ -237,6 +388,13 @@ func (f *StreamFilter) transition(tag string) (streamFilterState, bool) {
 	return 0, false
 }
 
+// reInsertCommaAfterValue matches a value (string, number, bool, null, }, ])
+// followed by whitespace/newline then a quote — missing comma before next key.
+var reInsertCommaAfterValue = regexp.MustCompile(`("|true|false|null|\d|[}\]])\s*\n\s*"`)
+
+// reInsertCommaObjects matches adjacent objects in an array: } { → }, {
+var reInsertCommaObjects = regexp.MustCompile(`\}\s*\{`)
+
 func repairJSON(input []byte) []byte {
 	s := string(input)
 
@@ -250,7 +408,22 @@ func repairJSON(input []byte) []byte {
 	// 2. Remove trailing commas
 	s = regexp.MustCompile(`,(\s*[}\]])`).ReplaceAllString(s, "$1")
 
-	// 3. Attempt to close braces/brackets
+	// 3. Insert missing commas between fields.
+	// Handles: "value"\n"key" → "value",\n"key"
+	s = reInsertCommaAfterValue.ReplaceAllStringFunc(s, func(m string) string {
+		// Find the split point: insert comma after the value token.
+		for i := len(m) - 1; i >= 0; i-- {
+			if m[i] == '"' && (i == 0 || m[i-1] != '\\') {
+				return m[:i] + "," + m[i:]
+			}
+		}
+		return m
+	})
+
+	// 4. Insert missing commas between adjacent objects: }{ → },{
+	s = reInsertCommaObjects.ReplaceAllString(s, "},{")
+
+	// 5. Attempt to close braces/brackets
 	openBraces := strings.Count(s, "{")
 	closeBraces := strings.Count(s, "}")
 	for closeBraces < openBraces {
@@ -380,15 +553,18 @@ func checkJSONType(value interface{}, typ string, path string) error {
 // It should invoke an LLM with the invalid JSON and schema, and return the fixed JSON.
 type JSONLLMFixer func(ctx context.Context, invalidJSON []byte, schema []byte) ([]byte, error)
 
+// maxFixerAttempts is the number of times the LLM fixer is called before giving up.
+const maxFixerAttempts = 2
+
 // ParseAndValidateJSON extracts <jsonplan> from raw then runs the full pipeline:
 //  1. repairJSON (already done inside extractJSONPlan)
 //  2. validateJSON against schema
-//  3. IF invalid → fixer(ctx, data, schema)
-//  4. repairJSON again
-//  5. validateJSON again
-//  6. IF still invalid → return error
+//  3. IF invalid → fixer(ctx, data, schema) up to maxFixerAttempts times
+//  4. repairJSON after each fix attempt
+//  5. validateJSON after each fix attempt
+//  6. IF still invalid after all attempts → return error
 //
-// If fixer is nil, steps 3–5 are skipped and the first validation error is returned.
+// If fixer is nil, step 3 is skipped and the first validation error is returned.
 func ParseAndValidateJSON(ctx context.Context, raw string, schema []byte, fixer JSONLLMFixer) ([]byte, error) {
 	data := extractJSONPlan(raw) // includes repairJSON
 	if data == nil {
@@ -401,16 +577,23 @@ func ParseAndValidateJSON(ctx context.Context, raw string, schema []byte, fixer 
 		return nil, err
 	}
 
-	fixed, fixErr := fixer(ctx, data, schema)
-	if fixErr != nil {
-		return nil, fmt.Errorf("LLM fix failed: %w", fixErr)
+	current := data
+	var lastErr error
+	for attempt := 0; attempt < maxFixerAttempts; attempt++ {
+		fixed, fixErr := fixer(ctx, current, schema)
+		if fixErr != nil {
+			return nil, fmt.Errorf("LLM fix attempt %d failed: %w", attempt+1, fixErr)
+		}
+
+		fixed = repairJSON(fixed)
+
+		if err := validateJSON(fixed, schema); err == nil {
+			return fixed, nil
+		} else {
+			lastErr = err
+			current = fixed // feed the partially-fixed result back
+		}
 	}
 
-	fixed = repairJSON(fixed)
-
-	if err := validateJSON(fixed, schema); err != nil {
-		return nil, fmt.Errorf("JSON invalid after LLM fix: %w", err)
-	}
-
-	return fixed, nil
+	return nil, fmt.Errorf("JSON invalid after %d LLM fix attempts: %w", maxFixerAttempts, lastErr)
 }
