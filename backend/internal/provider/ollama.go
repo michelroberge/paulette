@@ -73,10 +73,14 @@ type ollamaChatOptions struct {
 
 // ollamaChatRequest is the JSON body sent to POST /api/chat.
 type ollamaChatRequest struct {
-	Model    string           `json:"model"`
-	Messages []ollamaMessage  `json:"messages"`
-	Stream   bool             `json:"stream"`
+	Model    string             `json:"model"`
+	Messages []ollamaMessage    `json:"messages"`
+	Stream   bool               `json:"stream"`
 	Options  *ollamaChatOptions `json:"options,omitempty"`
+	// Format, when non-empty, constrains the model's output at the inference
+	// layer. Ollama accepts either the string "json" or a JSON Schema object
+	// (0.5+). json.RawMessage lets callers pass either without re-encoding.
+	Format json.RawMessage `json:"format,omitempty"`
 }
 
 // ollamaStreamChunk is one NDJSON line from the /api/chat stream.
@@ -392,6 +396,7 @@ func (p *OllamaProvider) buildChatRequest(req ChatRequest) ([]byte, error) {
 			NumCtx:      numCtx,
 			Temperature: temp,
 		},
+		Format: req.Format,
 	})
 }
 

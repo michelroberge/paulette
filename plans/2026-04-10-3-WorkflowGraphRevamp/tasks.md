@@ -1,0 +1,14 @@
+- [ ] Task: Add DecisionNode type (diamond shape) to WorkflowNodeTypes.tsx
+  - Related to: Plan
+- [ ] Task: Switch all handles from Left/Right to Top/Bottom
+  - Related to: DEC-007
+- [ ] Task: Rebuild graph definition with accurate flow, loops, branches, and approval gates
+  - Related to: Plan
+- [ ] Task: Switch dagre rankdir to TB
+  - Related to: DEC-007
+- [ ] Task: Add selected-node persistent highlight CSS
+  - Related to: Plan
+- [ ] Task: Add context artifacts display to WorkflowPromptEditor
+  - Related to: Plan
+- [ ] Task: Define context artifact mapping per node
+  - Related to: Plan

@@ -49,6 +49,20 @@ func WriteRunStepLog(logBase, projectName, runID, stepName, content string) (str
 	return filename, os.WriteFile(filepath.Join(dir, filename), []byte(content), 0644)
 }
 
+// WriteRunPromptLog writes a prompt snapshot JSON file into the run directory and returns the filename.
+func WriteRunPromptLog(logBase, projectName, runID string, snapshot any) (string, error) {
+	dir := runDir(logBase, projectName, runID)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	filename := "prompt.json"
+	return filename, os.WriteFile(filepath.Join(dir, filename), data, 0644)
+}
+
 // ReadProjectRuns reads all run meta.json files for a project, sorted newest-first.
 func ReadProjectRuns(logBase, projectName string) ([]model.RunLogEntry, error) {
 	pattern := filepath.Join(logBase, projectName, "runs", "*", "meta.json")

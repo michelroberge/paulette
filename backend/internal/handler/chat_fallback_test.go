@@ -35,7 +35,7 @@ type nopArtifactRepo struct{}
 func (r *nopArtifactRepo) Read(hostDir string, stage model.StageName) (string, error) {
 	return "", nil
 }
-func (r *nopArtifactRepo) ReadWithFallback(hostDir, version string, stage model.StageName) (string, error) {
+func (r *nopArtifactRepo) ReadWithFallback(dataDir, hostDir, version string, stage model.StageName) (string, error) {
 	return "", nil
 }
 func (r *nopArtifactRepo) Write(hostDir string, stage model.StageName, content string) error {
@@ -86,7 +86,9 @@ func TestChatHandler_NilRegistry_ResolveProviderFallback(t *testing.T) {
 		nil, // providerRegistry — nil triggers v0.1.0 fallback path
 		nil, // stageConfig
 		nil, // connStore
+		nil, // ragClient
 		"",  // logBase empty in tests
+		"",  // regPath empty in tests
 	)
 
 	cases := []struct {
@@ -142,7 +144,9 @@ func TestChatHandler_WithRegistryNoConfig_ResolveProviderFallback(t *testing.T) 
 		provRegistry,
 		stageConfig,
 		connStore,
-		"", // logBase empty in tests
+		nil, // ragClient
+		"",  // logBase empty in tests
+		"",  // regPath empty in tests
 	)
 
 	cases := []struct {

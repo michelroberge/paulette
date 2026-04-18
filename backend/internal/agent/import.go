@@ -34,18 +34,11 @@ type ImportResult struct {
 	Artifacts map[model.StageName]string
 }
 
-// readExistingDoc checks for a pre-existing stage document on disk.
-// Lookup order: docs/{version}/{stage}/{stage}.md → .paulette/{stage}/{stage}.md.
+// readExistingDoc checks for a pre-existing stage document in the committed docs.
 // Returns the content and true if found, or "" and false otherwise.
 func readExistingDoc(hostDir, version string, stage model.StageName) (string, bool) {
-	// Priority 1: docs/{version}/{stage}/{stage}.md
 	docsPath := filepath.Join(hostDir, "docs", version, string(stage), string(stage)+".md")
 	if b, err := os.ReadFile(docsPath); err == nil && len(strings.TrimSpace(string(b))) > 0 {
-		return string(b), true
-	}
-	// Priority 2: .paulette/{stage}/{stage}.md
-	paulettePath := filepath.Join(hostDir, ".paulette", string(stage), string(stage)+".md")
-	if b, err := os.ReadFile(paulettePath); err == nil && len(strings.TrimSpace(string(b))) > 0 {
 		return string(b), true
 	}
 	return "", false
@@ -53,8 +46,7 @@ func readExistingDoc(hostDir, version string, stage model.StageName) (string, bo
 
 // StreamImport analyzes an existing codebase and generates all pipeline artifacts.
 // It emits progress events via the emit callback and returns the generated artifacts.
-// Pre-existing docs are used when available (docs/{version} first, then .paulette),
-// falling back to AI generation only for missing stages.
+// Pre-existing committed docs are used when available, falling back to AI generation.
 func StreamImport(ctx context.Context, hostDir, version, projectName string, emit func(StreamEvent)) (*ImportResult, error) {
 	// Lazy-build codebase digest only when AI generation is needed.
 	var digest string
@@ -224,7 +216,7 @@ func buildCodebaseDigest(hostDir string) (string, error) {
 	// Collect all files, excluding common non-source directories
 	excludeDirs := map[string]bool{
 		".git": true, "node_modules": true, "vendor": true, "__pycache__": true,
-		".next": true, "dist": true, "build": true, ".paulette": true,
+		".next": true, "dist": true, "build": true,
 		".venv": true, "venv": true, "target": true, "bin": true, "obj": true,
 		".idea": true, ".vscode": true, "coverage": true, ".cache": true,
 	}

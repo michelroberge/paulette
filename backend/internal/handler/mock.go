@@ -13,9 +13,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"log"
+
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/llmparse"
 	"github.com/michelroberge/paulette/backend/internal/model"
+	"github.com/michelroberge/paulette/backend/internal/promptfiles"
 	"github.com/michelroberge/paulette/backend/internal/provider"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
@@ -42,7 +45,8 @@ type plannerComponent struct {
 	Description string `json:"description"`
 }
 
-const mockRelPath = ".paulette/ux/mock.html"
+const mockRelPath = "ux/mock.html"
+const mockSpecsRelPath = "ux/mock-specs.md"
 
 type MockHandler struct {
 	registry         repository.RegistryRepo
@@ -136,14 +140,14 @@ func (h *MockHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p := filepath.Join(project.HostDir, mockRelPath)
+	p := filepath.Join(project.DataDir, mockRelPath)
 	b, err := os.ReadFile(p)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			http.Error(w, "failed to read mock: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Not in .paulette — fall back to docs/{version}/ux/mock.html
+		// Not in working state — fall back to docs/{version}/ux/mock.html
 		b, err = fsrepo.ReadMockDoc(project.HostDir, project.Version)
 		if err != nil {
 			http.Error(w, "failed to read mock: "+err.Error(), http.StatusInternalServerError)
@@ -183,9 +187,9 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req) // optional body — ignore decode errors
 
 	// Resolve provider early so we can pick the right generation strategy.
-	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
+	uxContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageUX)
 	if uxContent == "" {
-		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
+		uxContent, _ = h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
 	}
 	prov, _, _, _ := h.resolveProviderOp(project.ID, project.HostDir, model.StageUX, provider.OperationUXMock)
 
@@ -207,6 +211,104 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	run.StreamTo(w, r, 0)
 }
 
+// synthesizeMockSpecs calls the LLM to condense vision + UX into a mock specs
+// document. Returns the specs content. If the synthesis is larger than the
+// originals combined, returns empty string (caller should use originals).
+// The result is cached at {dataDir}/ux/mock-specs.md.
+func (h *MockHandler) synthesizeMockSpecs(
+	project *model.Project,
+	visionContent, uxContent string,
+	prov provider.Provider,
+	modelID string,
+	sa *provider.StageAssignment,
+	run *stream.Run,
+	trace *runTrace,
+) string {
+	specsPath := filepath.Join(project.DataDir, mockSpecsRelPath)
+
+	// Cache check: if mock-specs.md exists, reuse it.
+	if data, err := os.ReadFile(specsPath); err == nil && len(data) > 0 {
+		specs := string(data)
+		// Size gate: if cached specs is bigger than originals, skip.
+		if len(specs) >= len(visionContent)+len(uxContent) {
+			log.Printf("mock-specs: cached specs larger than originals, using originals")
+			return ""
+		}
+		return specs
+	}
+
+	// Build synthesis prompt.
+	store := promptStoreForProject(project)
+	sysPrompt := promptfiles.Defaults["mock-specs-synthesize.md.tmpl"].Content
+	if store != nil {
+		if loaded, err := store.Load("mock-specs-synthesize.md.tmpl"); err == nil {
+			sysPrompt = loaded
+		}
+	}
+
+	var userMsg strings.Builder
+	userMsg.WriteString("## Product Vision\n---\n")
+	userMsg.WriteString(visionContent)
+	userMsg.WriteString("\n---\n\n## UX Design\n---\n")
+	userMsg.WriteString(uxContent)
+	userMsg.WriteString("\n---\n\nSynthesize these into a concise Mock Specs document.")
+
+	run.Emit(agent.StreamEvent{Type: "log", Content: "Synthesizing mock specs from vision + UX..."})
+
+	saTemp, saNumCtx, saStream := sa.Fields()
+	events, err := prov.Chat(run.Context(), provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: sysPrompt,
+		UserMessage:  userMsg.String(),
+		Stage:        "ux",
+		Temperature:  saTemp,
+		NumCtx:       saNumCtx,
+		Stream:       saStream,
+	})
+	if err != nil {
+		log.Printf("mock-specs: synthesis LLM call failed: %v", err)
+		return ""
+	}
+
+	var fullResponse strings.Builder
+	synthStart := time.Now()
+	for ev := range events {
+		if ev.Type == "chunk" {
+			fullResponse.WriteString(ev.Content)
+		}
+	}
+
+	// Record mock-specs synthesis exchange for tuning/inspection.
+	if trace != nil {
+		trace.logStep("mock_specs_synthesis", "ok",
+			fmt.Sprintf("resp=%d chars", fullResponse.Len()),
+			fmt.Sprintf("## System Prompt\n%s\n\n## User Message\n%s\n\n## Raw Response\n%s",
+				sysPrompt, userMsg.String(), fullResponse.String()),
+			time.Since(synthStart))
+	}
+
+	// Extract artifact from XML envelope.
+	parsed := agent.ParseResponse(fullResponse.String())
+	specs := parsed.Artifact
+	if specs == "" {
+		specs = strings.TrimSpace(fullResponse.String())
+	}
+
+	// Size gate: only use if smaller than originals combined.
+	if len(specs) >= len(visionContent)+len(uxContent) {
+		log.Printf("mock-specs: synthesis (%d bytes) >= originals (%d bytes), skipping", len(specs), len(visionContent)+len(uxContent))
+		return ""
+	}
+
+	// Persist.
+	if err := os.MkdirAll(filepath.Dir(specsPath), 0755); err == nil {
+		os.WriteFile(specsPath, []byte(specs), 0644)
+	}
+
+	run.Emit(agent.StreamEvent{Type: "log", Content: fmt.Sprintf("Mock specs synthesized (%d bytes, %.0f%% of originals)", len(specs), float64(len(specs))/float64(len(visionContent)+len(uxContent))*100)})
+	return specs
+}
+
 // StartMockRun starts a mock generation run without HTTP plumbing.
 // Returns (nil, nil) on race condition.
 //
@@ -216,21 +318,21 @@ func (h *MockHandler) Generate(w http.ResponseWriter, r *http.Request) {
 // provider — not just the Claude CLI — benefits from the same retry mechanism.
 func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*stream.Run, error) {
 	// Use UX artifact if available, fall back to vision artifact
-	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
+	uxContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageUX)
 	if uxContent == "" {
-		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
+		uxContent, _ = h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
 	}
 	if uxContent == "" {
 		return nil, fmt.Errorf("no artifact available — chat with the agent to generate content first")
 	}
 
-	frameworkCfg, _ := fsrepo.ReadFramework(project.HostDir)
+	frameworkCfg, _ := fsrepo.ReadFramework(project.DataDir)
 
 	run := h.runs.Start(project.ID, "ux", "mock")
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
+	writeActivity(h.activityRepo, project.DataDir, model.StageUX, "mock")
 	runLogID := startRunLog(h.logBase, project, model.StageUX, "mock")
 
 	// Resolve the LLM provider for mock generation (ux.mock → ux → Claude CLI fallback).
@@ -238,22 +340,34 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
-		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
+		clearActivity(h.activityRepo, project.DataDir, model.StageUX)
 		run.Finish(h.runs)
 		return run, nil
 	}
 
 	// Gather project context (vision, build plan) so the LLM knows what
 	// the app is about, not just the UX layout.
-	visionContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+	visionContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 
-	// Build the initial user prompt and the shared mock system prompt.
+	// Create trace early so synthesis logging can use it.
+	trace := newRunTrace(h.logBase, project.Name, runLogID)
+
+	// Try synthesized mock specs (vision + UX condensed into one doc).
+	// If synthesis is smaller, use it as sole context; otherwise use originals.
+	mockSpecs := h.synthesizeMockSpecs(project, visionContent, uxContent, prov, modelID, sa, run, trace)
+
 	var userPromptBuf strings.Builder
-	userPromptBuf.WriteString(agent.BuildMockContext(project.Name, visionContent, buildContent))
-	userPromptBuf.WriteString("UX Design Document:\n---\n")
-	userPromptBuf.WriteString(uxContent)
-	userPromptBuf.WriteString("\n---\n\nGenerate the HTML wireframe mockup for all screens described above.")
+	if mockSpecs != "" {
+		userPromptBuf.WriteString("Mock Specs Document:\n---\n")
+		userPromptBuf.WriteString(mockSpecs)
+		userPromptBuf.WriteString("\n---\n\nGenerate the HTML wireframe mockup for all screens described above.")
+	} else {
+		userPromptBuf.WriteString(agent.BuildMockContext(project.Name, visionContent, buildContent))
+		userPromptBuf.WriteString("UX Design Document:\n---\n")
+		userPromptBuf.WriteString(uxContent)
+		userPromptBuf.WriteString("\n---\n\nGenerate the HTML wireframe mockup for all screens described above.")
+	}
 	if refinement != "" {
 		userPromptBuf.WriteString("\n\nRefinement instruction: ")
 		userPromptBuf.WriteString(refinement)
@@ -263,25 +377,24 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageUX)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageUX)
 
 		var stageTokensAccum int
 		var rlErr string
 		runStart := time.Now()
-		trace := newRunTrace(h.logBase, project.Name, runLogID)
 		defer func() {
 			trace.flush()
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
-				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageUX, "mock"), stageTokensAccum, "")
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.DataDir, project.HostDir, model.StageUX, "mock"), stageTokensAccum, "")
 			}
 		}()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(model.StageUX, stageTokensAccum)
 				h.registry.Update(project)
-				recordSession(project.HostDir, model.StageUX, model.SessionMock, project.Iteration, runStart, stageTokensAccum)
+				recordSession(project.DataDir, model.StageUX, model.SessionMock, project.Iteration, runStart, stageTokensAccum)
 			}
 		}()
 
@@ -353,7 +466,7 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 			if agent.HasHTMLBlock(fullResponse) {
 				html := agent.ExtractHTML(fullResponse)
 				if html != "" {
-					p := filepath.Join(project.HostDir, mockRelPath)
+					p := filepath.Join(project.DataDir, mockRelPath)
 					if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
 						os.WriteFile(p, []byte(html), 0644)
 					}
@@ -383,7 +496,7 @@ func (h *MockHandler) StartMockRun(project *model.Project, refinement string) (*
 				// result persists even without a connected client.
 				html := agent.ExtractHTML(fullResponse)
 				if html != "" {
-					p := filepath.Join(project.HostDir, mockRelPath)
+					p := filepath.Join(project.DataDir, mockRelPath)
 					if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
 						os.WriteFile(p, []byte(html), 0644)
 					}
@@ -991,65 +1104,75 @@ func assembleScreenFragment(components []plannerComponent, htmlFragments map[str
 //
 // Returns (nil, nil) on race condition (another run already started).
 func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinement string) (*stream.Run, error) {
-	uxContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageUX)
+	uxContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageUX)
 	if uxContent == "" {
-		uxContent, _ = h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
+		uxContent, _ = h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
 	}
 	if uxContent == "" {
 		return nil, fmt.Errorf("no artifact available — chat with the agent to generate content first")
 	}
 
 	// Gather project context for the planner call.
-	visionContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageVision)
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
-	projectContext := agent.BuildMockContext(project.Name, visionContent, buildContent)
+	visionContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageVision)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 
-	frameworkCfg, _ := fsrepo.ReadFramework(project.HostDir)
+	frameworkCfg, _ := fsrepo.ReadFramework(project.DataDir)
 
 	run := h.runs.Start(project.ID, "ux", "mock")
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageUX, "mock")
+	writeActivity(h.activityRepo, project.DataDir, model.StageUX, "mock")
 	runLogID := startRunLog(h.logBase, project, model.StageUX, "mock")
 
 	prov, modelID, sa, provErr := h.resolveProviderOp(project.ID, project.HostDir, model.StageUX, provider.OperationUXMock)
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, model.StageUX, provErr))
-		clearActivity(h.activityRepo, project.HostDir, model.StageUX)
+		clearActivity(h.activityRepo, project.DataDir, model.StageUX)
 		run.Finish(h.runs)
 		return run, nil
 	}
 
+	// Create trace for orchestrated mock generation.
+	orchTrace := newRunTrace(h.logBase, project.Name, runLogID)
+
+	// Try synthesized mock specs for a smaller planner input.
+	mockSpecs := h.synthesizeMockSpecs(project, visionContent, uxContent, prov, modelID, sa, run, orchTrace)
+	var plannerInput string
+	if mockSpecs != "" {
+		plannerInput = "Mock Specs:\n---\n" + mockSpecs + "\n---\n"
+	} else {
+		plannerInput = agent.BuildMockContext(project.Name, visionContent, buildContent) + uxContent
+	}
+
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageUX)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageUX)
 
 		var tokensAccum int
 		var tokensMu sync.Mutex
 		var rlErr string
 		runStart := time.Now()
-		trace := newRunTrace(h.logBase, project.Name, runLogID)
 		defer func() {
-			trace.flush()
+			orchTrace.flush()
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
-				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, model.StageUX, "mock"), tokensAccum, "")
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.DataDir, project.HostDir, model.StageUX, "mock"), tokensAccum, "")
 			}
 		}()
 		defer func() {
 			if tokensAccum > 0 {
 				project.AddStageTokens(model.StageUX, tokensAccum)
 				h.registry.Update(project)
-				recordSession(project.HostDir, model.StageUX, model.SessionMock, project.Iteration, runStart, tokensAccum)
+				recordSession(project.DataDir, model.StageUX, model.SessionMock, project.Iteration, runStart, tokensAccum)
 			}
 		}()
 
 		// Step 1: Planner
 		run.Emit(agent.StreamEvent{Type: "chunk", Content: "Planning screens from UX artifact...\n"})
-		screens, err := runPlannerCall(prov, modelID, sa, run, projectContext+uxContent, refinement, &tokensAccum, trace)
+		screens, err := runPlannerCall(prov, modelID, sa, run, plannerInput, refinement, &tokensAccum, orchTrace)
 		if err != nil {
 			rlErr = err.Error()
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
@@ -1072,7 +1195,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 
 				// 2a. Component planner
 				run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Launching component planner...\n", sc.Title)})
-				components, compPlanErr := runComponentPlannerCall(prov, modelID, sa, run, frameworkCfg, sc, &tokensAccum, &tokensMu, trace)
+				components, compPlanErr := runComponentPlannerCall(prov, modelID, sa, run, frameworkCfg, sc, &tokensAccum, &tokensMu, orchTrace)
 				if compPlanErr != nil {
 					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s] Component planner failed — using fallback.\n", sc.Title)})
 					components = []plannerComponent{{
@@ -1087,7 +1210,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 				htmlFragments := make(map[string]string, len(components))
 				for _, comp := range components {
 					run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Launching component agent (%s, %s)...\n", sc.Title, comp.ID, comp.Type, comp.LayoutRole)})
-					compHTML, compErr := runComponentCall(prov, modelID, sa, run, frameworkCfg, comp, &tokensAccum, &tokensMu, trace)
+					compHTML, compErr := runComponentCall(prov, modelID, sa, run, frameworkCfg, comp, &tokensAccum, &tokensMu, orchTrace)
 					if compErr != nil {
 						run.Emit(agent.StreamEvent{Type: "chunk", Content: fmt.Sprintf("[%s > %s] Warning: %s\n", sc.Title, comp.ID, compErr.Error())})
 						compHTML = fmt.Sprintf(`<div class="mock-component"><p style="color:#f87171">Component failed: %s</p></div>`, comp.ID)
@@ -1112,7 +1235,7 @@ func (h *MockHandler) StartMockRunOrchestrated(project *model.Project, refinemen
 		finalHTML = sanitizeMockClasses(finalHTML, frameworkCfg)
 
 		// Persist + emit done
-		p := filepath.Join(project.HostDir, mockRelPath)
+		p := filepath.Join(project.DataDir, mockRelPath)
 		if err := os.MkdirAll(filepath.Dir(p), 0755); err == nil {
 			os.WriteFile(p, []byte(finalHTML), 0644)
 		}
@@ -1143,7 +1266,7 @@ func (h *MockHandler) GetFramework(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := fsrepo.ReadFramework(project.HostDir)
+	cfg, err := fsrepo.ReadFramework(project.DataDir)
 	if err != nil {
 		http.Error(w, "failed to read framework: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1188,7 +1311,7 @@ func (h *MockHandler) SetFramework(w http.ResponseWriter, r *http.Request) {
 		Framework:  model.UXFramework(req.Framework),
 		CustomName: req.CustomName,
 	}
-	if err := fsrepo.WriteFramework(project.HostDir, cfg); err != nil {
+	if err := fsrepo.WriteFramework(project.DataDir, cfg); err != nil {
 		http.Error(w, "failed to save framework: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

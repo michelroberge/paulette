@@ -18,6 +18,8 @@ import (
 	"github.com/michelroberge/paulette/backend/internal/handler"
 	authmw "github.com/michelroberge/paulette/backend/internal/middleware"
 	"github.com/michelroberge/paulette/backend/internal/provider"
+	"github.com/michelroberge/paulette/backend/internal/rag"
+	"github.com/michelroberge/paulette/backend/internal/refinement"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
@@ -37,6 +39,7 @@ type Server struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	gitIdentity      *git.GlobalIdentityStore
+	ragClient        *rag.Client
 	oidcHandler      *handler.OIDCHandler
 }
 
@@ -50,6 +53,7 @@ func New(
 	connStore *provider.ConnectionStore,
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
+	ragClient *rag.Client,
 ) *Server {
 	srv := &Server{
 		cfg:              cfg,
@@ -64,6 +68,7 @@ func New(
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
 		gitIdentity:      git.NewGlobalIdentityStore(cfg.RegistryPath),
+		ragClient:        ragClient,
 	}
 	if cfg.OIDC.Enabled {
 		oidcH, err := handler.NewOIDCHandler(&cfg.OIDC)
@@ -88,6 +93,11 @@ func (s *Server) Runs() *stream.Manager {
 // Orchestrator returns the autopilot orchestrator.
 func (s *Server) Orchestrator() *autopilot.Orchestrator {
 	return s.orchestrator
+}
+
+// RAGClient returns the RAG integration client (may be nil).
+func (s *Server) RAGClient() *rag.Client {
+	return s.ragClient
 }
 
 func (s *Server) Router() http.Handler {
@@ -143,26 +153,28 @@ func (s *Server) Router() http.Handler {
 		}
 	}
 
-	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.ReposPath)
-	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.chatRepo, s.runs, gitSvc, s.providerRegistry, s.stageConfig, logBase)
+	ph := handler.NewProjectHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.GitPath, s.cfg.DataPath, s.cfg.RAG.Enabled)
+	plh := handler.NewPipelineHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.chatRepo, s.runs, gitSvc, s.providerRegistry, s.stageConfig, s.ragClient, logBase)
 	ah := handler.NewArtifactHandler(s.registry, s.artifactRepo)
-	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
+	ch := handler.NewChatHandler(s.registry, s.chatRepo, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, s.ragClient, logBase, s.cfg.RegistryPath)
 	mh := handler.NewMockHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
 	bh := handler.NewBeadHandler(s.registry, s.projectRepo, s.artifactRepo, s.activityRepo, s.runs, skillRepo, logBase)
 	bh.SetProviderRegistry(s.providerRegistry, s.stageConfig)
 	bh.SetBuildPool(buildPool)
-	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs)
+	bh.SetRAGClient(s.ragClient)
+	instructH := handler.NewInstructHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, logBase)
 	instructH.SetProviderRegistry(s.providerRegistry, s.stageConfig)
 	rh := handler.NewResetHandler(s.registry, s.projectRepo)
-	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc)
+	eh := handler.NewEnhanceHandler(s.registry, s.projectRepo, s.artifactRepo, gitSvc, s.cfg.DataPath)
 	acth := handler.NewActivityHandler(s.runs, s.activityRepo, s.registry)
 	gh := handler.NewGitHandler(s.registry, s.projectRepo, gitSvc)
 	ggh := handler.NewGitGlobalHandler(gitSvc, s.gitIdentity)
-	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.ReposPath, s.gitIdentity)
+	ih := handler.NewImportHandler(s.registry, s.projectRepo, s.artifactRepo, s.runs, gitSvc, s.cfg.GitPath, s.cfg.DataPath, s.gitIdentity)
 	sh := handler.NewSessionHandler(s.registry)
 	vh := handler.NewVersionHandler(s.registry)
-	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs, s.providerRegistry, s.stageConfig)
+	skh := handler.NewSkillHandler(s.registry, s.artifactRepo, s.activityRepo, skillRepo, s.runs, s.providerRegistry, s.stageConfig, logBase)
 	rfh := handler.NewRefineHandler(s.registry, s.artifactRepo, s.chatRepo, s.runs, s.providerRegistry, s.stageConfig, s.connStore, logBase)
+	refH := refinement.NewHandler(s.registry, s.artifactRepo, s.activityRepo, s.runs, s.providerRegistry, s.stageConfig, logBase)
 
 	// Wire orchestrator (created once, reused across Router calls)
 	if s.orchestrator == nil {
@@ -171,14 +183,27 @@ func (s *Server) Router() http.Handler {
 			ch, mh, bh, plh, eh,
 		)
 	}
+	s.orchestrator.SetRefinementHandler(refH)
 	ph.SetOrchestrator(s.orchestrator)
 
 	cfgH := handler.NewConfigHandler(s.cfg)
 	r.Get("/api/config", cfgH.GetInfo)
 
+	ragH := handler.NewRAGHandler(s.ragClient)
+	r.Get("/api/rag/status", ragH.Status)
+
 	// Connection CRUD, test, and model-discovery endpoints.
-	connH := handler.NewConnectionHandler(s.connStore, s.providerRegistry, s.stageConfig, s.registry)
-	r.Route("/api/connections", connH.RegisterRoutes)
+	connH := handler.NewConnectionHandler(s.connStore, s.providerRegistry, s.stageConfig, s.registry, s.cfg.RegistryPath)
+	connPromptH := handler.NewConnectionPromptHandler(s.connStore, s.cfg.RegistryPath)
+	r.Route("/api/connections", func(cr chi.Router) {
+		connH.RegisterRoutes(cr)
+		// Per-connection prompt template management.
+		cr.Post("/{id}/prompts/init", connPromptH.Init)
+		cr.Get("/{id}/prompts", connPromptH.List)
+		cr.Get("/{id}/prompts/{name}", connPromptH.Get)
+		cr.Put("/{id}/prompts/{name}", connPromptH.Update)
+		cr.Post("/{id}/prompts/reset/{name}", connPromptH.Reset)
+	})
 
 	// Stage-config global defaults and operation-level overrides
 	scfgH := handler.NewStageConfigHandler(s.stageConfig, s.connStore, s.registry)
@@ -236,6 +261,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/stages/{stage}/chat", ch.GetHistory)
 		r.Post("/{id}/stages/{stage}/chat", ch.Send)
 		r.Post("/{id}/stages/{stage}/chat/resume", ch.Resume)
+
+		r.Post("/{id}/stages/vision/loop", refH.StartLoop)
+		r.Post("/{id}/stages/vision/loop/answer", refH.AnswerQuestion)
+		r.Get("/{id}/stages/vision/loop/state", refH.GetState)
+		r.Delete("/{id}/stages/vision/loop/state", refH.ResetState)
+		r.Get("/{id}/stages/vision/loop/review", refH.GetReviewItems)
+		r.Post("/{id}/stages/vision/loop/review/{itemId}/discard", refH.DiscardReviewItem)
+		r.Post("/{id}/stages/vision/loop/review/{itemId}/address", refH.AddressReviewItem)
 
 		r.Get("/{id}/stages/ux/mock", mh.Get)
 		r.Post("/{id}/stages/ux/mock", mh.Generate)
@@ -301,6 +334,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/{id}/versions/{version}", vh.GetVersionSnapshot)
 		r.Get("/{id}/versions/{version}/beads/{beadId}", vh.GetVersionBeadExecution)
 		r.Get("/{id}/versions/{version}/mock", vh.GetVersionMock)
+
+		// Prompt template management.
+		promptH := handler.NewPromptHandler(s.registry)
+		r.Post("/{id}/prompts/init", promptH.Init)
+		r.Get("/{id}/prompts", promptH.List)
+		r.Get("/{id}/prompts/{name}", promptH.Get)
+		r.Put("/{id}/prompts/{name}", promptH.Update)
+		r.Post("/{id}/prompts/reset/{name}", promptH.Reset)
 	})
 
 	rlh := handler.NewRunLogHandler(s.registry, logBase)

@@ -1,0 +1,27 @@
+- Relevant Decisions:
+  - No prior plans exist in this repository.
+
+- Reusable Patterns:
+  - Project model already has per-project toggles (Autonomous, UseRefinementLoop, BaseBranch) via PATCH /api/projects/{id}
+    - Used in: backend/internal/handler/project.go, frontend/src/api/projects.ts
+  - @xyflow/react + @dagrejs/dagre already in frontend deps, used for BeadGraph.tsx
+    - Used in: frontend/src/components/build/BeadGraph.tsx
+  - Monaco editor already available (@monaco-editor/react) for code editing
+    - Used in: frontend/src/components/build/BeadCodeTab.tsx
+  - RAG config loaded from .env (RAG_ENABLED, RAG_BASE_URL) in backend/internal/config/config.go
+    - Used in: RAGConfig struct, health monitoring, stage context building
+  - Existing prompt locations:
+    - backend/internal/agent/prompts.go — stage system prompts map, enhancement context, framework note
+    - backend/internal/prompts/stage.go — stage prompt templates (with fmt.Sprintf)
+    - backend/internal/prompts/bead.go — build plan parser, code writer, devil's advocate
+    - backend/internal/prompts/skill.go — skill analysis, bead observation
+    - backend/internal/prompts/summary.go — stream summary
+    - backend/internal/refinement/prompts.go — 13+ refinement micro-prompts (PromptSet interface)
+  - Slide-over panel pattern used for ProjectStageSettings.tsx
+    - Used in: frontend/src/components/configure/ProjectStageSettings.tsx
+
+- Risks / Conflicts:
+  - Duplicate prompt sources: agent/prompts.go and prompts/stage.go have overlapping constants — must consolidate during extraction
+  - Refinement prompts are methods returning (system, user) pairs — only system portion can be externalized
+  - fmt.Sprintf positional %s is fragile for user editing — must convert to named Go text/template variables
+  - Template injection risk — users could write malicious template directives (mitigate with restricted FuncMap)

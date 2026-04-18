@@ -1,0 +1,12 @@
+- [ ] Task: Add mock-specs-synthesize prompt to promptfiles/defaults.go
+  - Related to: DEC-001, DEC-008
+- [ ] Task: Add synthesizeMockSpecs to handler/mock.go (LLM call + size comparison + save)
+  - Related to: DEC-008
+- [ ] Task: Modify StartMockRun to load and use mock-specs.md when available
+  - Related to: DEC-008
+- [ ] Task: Modify StartMockRunOrchestrated similarly
+  - Related to: DEC-008
+- [ ] Task: Add mock-specs node to workflow graph + descriptions + prompt mapping
+  - Related to: Plan
+- [ ] Task: Update NODE_CONTEXT_MAP for the new node
+  - Related to: Plan

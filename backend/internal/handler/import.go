@@ -21,23 +21,25 @@ import (
 )
 
 type ImportHandler struct {
-	registry      repository.RegistryRepo
-	projectRepo   repository.ProjectRepo
-	artifactRepo  repository.ArtifactRepo
-	runs          *stream.Manager
-	git           *git.Service
-	reposPath     string
-	gitIdentity   *git.GlobalIdentityStore
+	registry     repository.RegistryRepo
+	projectRepo  repository.ProjectRepo
+	artifactRepo repository.ArtifactRepo
+	runs         *stream.Manager
+	git          *git.Service
+	gitPath      string
+	dataPath     string
+	gitIdentity  *git.GlobalIdentityStore
 }
 
-func NewImportHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager, gitSvc *git.Service, reposPath string, gitIdentity *git.GlobalIdentityStore) *ImportHandler {
+func NewImportHandler(registry repository.RegistryRepo, projectRepo repository.ProjectRepo, artifactRepo repository.ArtifactRepo, runs *stream.Manager, gitSvc *git.Service, gitPath, dataPath string, gitIdentity *git.GlobalIdentityStore) *ImportHandler {
 	return &ImportHandler{
 		registry:     registry,
 		projectRepo:  projectRepo,
 		artifactRepo: artifactRepo,
 		runs:         runs,
 		git:          gitSvc,
-		reposPath:    reposPath,
+		gitPath:      gitPath,
+		dataPath:     dataPath,
 		gitIdentity:  gitIdentity,
 	}
 }
@@ -67,16 +69,16 @@ func (h *ImportHandler) Import(w http.ResponseWriter, r *http.Request) {
 		_ = h.git.SetIdentity(req.HostDir, id.Name, id.Email)
 	}
 
-	// Initialize .paulette directory structure
-	if err := h.projectRepo.Init(req.HostDir); err != nil {
+	project := h.buildProject(&req)
+
+	// Initialize working-state directory
+	if err := h.projectRepo.Init(project.DataDir); err != nil {
 		http.Error(w, "failed to init project directory: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	project := h.buildProject(&req)
-
 	// Save project.json and register
-	if err := h.projectRepo.Save(req.HostDir, project); err != nil {
+	if err := h.projectRepo.Save(project.DataDir, project); err != nil {
 		http.Error(w, "failed to save project: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -104,7 +106,7 @@ func (h *ImportHandler) resolveRepo(req *importRequest) error {
 func (h *ImportHandler) resolveCloneImport(req *importRequest) error {
 	if req.HostDir == "" {
 		base := strings.TrimSuffix(filepath.Base(req.RepoURL), ".git")
-		req.HostDir = filepath.Join(h.reposPath, base)
+		req.HostDir = filepath.Join(h.gitPath, base)
 	}
 	if _, err := os.Stat(req.HostDir); err == nil {
 		return fmt.Errorf("hostDir already exists; for local import, omit repoUrl")
@@ -135,12 +137,15 @@ func (h *ImportHandler) buildProject(req *importRequest) *model.Project {
 		version = "1.0.0"
 	}
 	now := time.Now()
+	projectID := uuid.New().String()
+	dataDir := model.ComputeDataDir(h.dataPath, projectID, version)
 	return &model.Project{
-		ID:           uuid.New().String(),
+		ID:           projectID,
 		Name:         name,
 		Author:       req.Author,
 		Version:      version,
 		HostDir:      req.HostDir,
+		DataDir:      dataDir,
 		CurrentStage: model.StageVision,
 		Iteration:    1,
 		Imported:     true,
@@ -172,7 +177,7 @@ func (h *ImportHandler) startImportRun(project *model.Project) {
 
 		// Write all generated artifacts
 		for stage, content := range result.Artifacts {
-			if err := h.artifactRepo.Write(project.HostDir, stage, content); err != nil {
+			if err := h.artifactRepo.Write(project.DataDir, stage, content); err != nil {
 				log.Printf("import: failed to write %s artifact: %v", stage, err)
 				emit(agent.StreamEvent{Type: "error", Content: "failed to write " + string(stage) + " artifact"})
 				return

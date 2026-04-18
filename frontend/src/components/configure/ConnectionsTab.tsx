@@ -18,6 +18,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { CSSProperties } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { Connection, ProviderType, TestResult } from '../../types/provider';
 import { listConnections, deleteConnection, testConnection } from '../../api/connections';
 import { ConnectionForm } from './ConnectionForm';
@@ -175,6 +176,7 @@ function PlugIcon() {
 // ---------------------------------------------------------------------------
 
 export function ConnectionsTab({ highlight, clearHighlight }: ConnectionsTabProps) {
+  const navigate = useNavigate();
   const [connections, setConnections] = useState<Connection[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -417,6 +419,15 @@ export function ConnectionsTab({ highlight, clearHighlight }: ConnectionsTabProp
                       aria-label={`Test ${conn.name}`}
                     >
                       Test
+                    </button>
+                    <span style={s.actionDivider} aria-hidden="true">|</span>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/configure/connections/${conn.id}/workflow`)}
+                      style={{ ...s.actionBtn, color: '#a78bfa' }}
+                      aria-label={`Workflow prompts for ${conn.name}`}
+                    >
+                      Workflow
                     </button>
                     <span style={s.actionDivider} aria-hidden="true">|</span>
                     <button

@@ -30,6 +30,7 @@ export interface RunLogEntry {
   tokensTotal?: number;
   notes?: string;
   stepLogs?: StepLogRef[];
+  promptLog?: string; // filename within run dir, e.g. "prompt.json"
 }
 
 export function getProjectRunLog(projectId: string): Promise<RunLogEntry[]> {

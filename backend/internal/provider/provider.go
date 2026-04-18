@@ -6,6 +6,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -84,6 +85,12 @@ type ChatRequest struct {
 	// Stream controls whether the response is streamed.
 	// When nil, the provider defaults to streaming where supported.
 	Stream *bool
+
+	// Format, if non-empty, is passed through to providers that support
+	// structured-output enforcement at the inference layer. Currently only
+	// honoured by the Ollama provider (forwarded to /api/chat's "format"
+	// field — either the string "json" or a JSON Schema object).
+	Format json.RawMessage
 }
 
 // TempLow returns a pointer to 0.3, suitable for structured output prompts.

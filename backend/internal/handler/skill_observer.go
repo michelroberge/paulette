@@ -20,7 +20,8 @@ type SkillObserver struct {
 	mu               sync.Mutex
 	beads            []agent.ObservedBead
 	batchSize        int
-	hostDir          string
+	dataDir          string
+	hostDir          string // git repo root — for provider config and ProjectDir
 	skillRepo        *fsrepo.SkillRepo
 	run              *stream.Run
 	project          *model.Project
@@ -29,12 +30,13 @@ type SkillObserver struct {
 }
 
 // NewSkillObserver creates an observer for a bead execution run.
-func NewSkillObserver(hostDir string, skillRepo *fsrepo.SkillRepo, run *stream.Run, project *model.Project, batchSize int, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore) *SkillObserver {
+func NewSkillObserver(dataDir, hostDir string, skillRepo *fsrepo.SkillRepo, run *stream.Run, project *model.Project, batchSize int, providerRegistry *provider.Registry, stageConfig *provider.StageConfigStore) *SkillObserver {
 	if batchSize <= 0 {
 		batchSize = 5
 	}
 	return &SkillObserver{
 		batchSize:        batchSize,
+		dataDir:          dataDir,
 		hostDir:          hostDir,
 		skillRepo:        skillRepo,
 		run:              run,
@@ -134,7 +136,7 @@ func (o *SkillObserver) analyzeBatch() {
 
 	if tokens > 0 {
 		o.project.AddStageTokens(model.StageBuild, tokens)
-		recordSession(o.hostDir, model.StageBuild, model.SessionSkillObserve, o.project.Iteration, o.run.StartedAt, tokens)
+		recordSession(o.dataDir, model.StageBuild, model.SessionSkillObserve, o.project.Iteration, o.run.StartedAt, tokens)
 	}
 
 	suggestions, ok := agent.ExtractSkillSuggestions(fullText.String())
@@ -143,9 +145,9 @@ func (o *SkillObserver) analyzeBatch() {
 	}
 
 	// Append to observed skills file
-	existing, _ := fsrepo.ReadObservedSkills(o.hostDir)
+	existing, _ := fsrepo.ReadObservedSkills(o.dataDir)
 	existing.Suggestions = append(existing.Suggestions, suggestions...)
-	fsrepo.WriteObservedSkills(o.hostDir, existing)
+	fsrepo.WriteObservedSkills(o.dataDir, existing)
 
 	o.run.Emit(agent.StreamEvent{
 		Type:    "log",

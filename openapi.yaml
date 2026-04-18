@@ -1,0 +1,1656 @@
+openapi: 3.1.0
+info:
+  title: R³ RAG Pipeline
+  version: 0.3.0
+  description: |
+    RAG orchestration API — knowledge retrieval and shaping for AI coding workflows.
+    Responsibilities: ingestion, embedding, semantic retrieval, context construction,
+    ranking, deduplication, context compression, feedback storage, and metadata enrichment.
+    Code generation workflow state and LLM orchestration belong in the downstream consumer.
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development
+
+tags:
+  - name: Health
+    description: Service health check
+  - name: Ingest
+    description: Document ingestion — files and URLs, async jobs, dry-runs
+  - name: Query
+    description: Semantic search, RAG Q&A, intent classification, similarity, deduplication
+  - name: Context
+    description: Structured context construction and compression for LLM injection
+  - name: Feedback
+    description: Quality signals and chunk promotion for self-improving retrieval
+  - name: Collections
+    description: Qdrant collection management
+  - name: Metadata
+    description: Metadata schema governance and AI-powered chunk enrichment
+
+paths:
+
+  # ─── Health ───────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: health_check
+      responses:
+        "200":
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded, demo]
+                  qdrant:
+                    type: string
+                    examples: [connected]
+                  ollama:
+                    type: string
+                    examples: [connected]
+
+  # ─── Ingest ───────────────────────────────────────────────────────────────
+
+  /ingest:
+    get:
+      tags: [Ingest]
+      summary: List ingestion jobs
+      operationId: list_ingest_jobs
+      responses:
+        "200":
+          description: Active and recent ingestion jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IngestJobSummary"
+
+    put:
+      tags: [Ingest]
+      summary: Ingest a filesystem path
+      operationId: ingest_path
+      description: |
+        Starts an async ingestion job for a local filesystem path.
+        Returns immediately with a job_id; poll `/ingest/{job_id}` for status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestRequest"
+      responses:
+        "202":
+          description: Ingestion job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestResponse"
+
+  /ingest/{job_id}:
+    get:
+      tags: [Ingest]
+      summary: Get ingestion job status
+      operationId: get_ingest_job
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job status and results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestResponse"
+        "404":
+          description: Job not found
+
+  /ingest/dry-run:
+    post:
+      tags: [Ingest]
+      summary: Dry-run file ingestion
+      operationId: ingest_dry_run
+      description: |
+        Simulates ingestion of a filesystem path without writing to Qdrant.
+        Returns a preview of files that would be discovered and chunks that would be created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestRequest"
+      responses:
+        "200":
+          description: Dry-run preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DryRunResponse"
+
+  /ingest/url:
+    put:
+      tags: [Ingest]
+      summary: Ingest URLs
+      operationId: ingest_urls
+      description: |
+        Starts an async ingestion job for one or more URLs.
+        Returns immediately with a job_id; poll `/ingest/{job_id}` for status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UrlIngestRequest"
+      responses:
+        "202":
+          description: Ingestion job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestResponse"
+
+  /ingest/url/dry-run:
+    post:
+      tags: [Ingest]
+      summary: Dry-run URL ingestion
+      operationId: ingest_url_dry_run
+      description: |
+        Simulates ingestion of URLs without writing to Qdrant.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UrlIngestRequest"
+      responses:
+        "200":
+          description: Dry-run preview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DryRunResponse"
+
+  # ─── Query ────────────────────────────────────────────────────────────────
+
+  /query/rewrite:
+    post:
+      tags: [Query]
+      summary: Expand and optimize a query for retrieval
+      operationId: query_rewrite
+      description: |
+        Uses an LLM to expand a vague or short query with synonyms, symbol names,
+        and domain-specific terms — without rephrasing the original intent.
+        Also returns suggested metadata filters.
+
+        Pass `expanded` as the query in a follow-up `/search` or `/ask` call,
+        or use the `rewrite: true` flag on those endpoints to apply automatically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RewriteRequest"
+      responses:
+        "200":
+          description: Original query, expanded query, and suggested filters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RewriteResponse"
+
+  /search:
+    post:
+      tags: [Query]
+      summary: Semantic search
+      operationId: search
+      description: |
+        Embeds the query and performs a nearest-neighbour search in Qdrant.
+        Optionally filters by metadata fields and restricts to one or more collections.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Matching chunks ranked by embedding similarity
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/X-RateLimit-Reset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+
+  /ask:
+    post:
+      tags: [Query]
+      summary: RAG question answering
+      operationId: ask
+      description: |
+        Convenience endpoint: retrieves relevant chunks then generates an answer via LLM.
+        Uses the same retrieval path as /search — hybrid, hybrid_weight, score_threshold,
+        and filter_mode are all supported and behave identically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskRequest"
+      responses:
+        "200":
+          description: LLM-generated answer with source references
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/X-Request-ID"
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/X-RateLimit-Limit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/X-RateLimit-Remaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/X-RateLimit-Reset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskResponse"
+
+  /intent:
+    post:
+      tags: [Query]
+      summary: Classify query intent
+      operationId: detect_intent
+      description: |
+        Classifies a piece of text into a semantic intent category and returns
+        ready-to-use filters and a rewritten query for follow-up search/ask calls.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntentRequest"
+      responses:
+        "200":
+          description: Intent classification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntentResponse"
+
+  /compare:
+    post:
+      tags: [Query]
+      summary: Compare two chunks or texts
+      operationId: compare
+      description: |
+        Computes the cosine similarity between two pieces of content.
+        Each side can be an existing chunk_id or arbitrary text.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompareRequest"
+      responses:
+        "200":
+          description: Similarity score
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompareResponse"
+
+  /dedup:
+    post:
+      tags: [Query]
+      summary: Find duplicate chunks
+      operationId: find_duplicates
+      description: |
+        Scans a collection for near-duplicate chunk pairs above the similarity threshold.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DedupRequest"
+      responses:
+        "200":
+          description: List of duplicate pairs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DedupResponse"
+
+  # ─── Context ──────────────────────────────────────────────────────────────
+
+  /context/build:
+    post:
+      tags: [Context]
+      summary: Build structured context for LLM injection
+      operationId: context_build
+      description: |
+        Runs grouped semantic retrievals (one embedding per group, concurrent Qdrant searches)
+        and returns structured context blocks ready for direct LLM injection.
+
+        Each group (e.g. "examples", "patterns", "constraints") gets its own ranked chunk list.
+        Chunks are deduplicated across groups. Supports diversity, score boosting, and reranking.
+
+        Use `strategy.boost` with `{"_promoted": true}` to surface high-quality chunks first.
+        Use `strategy.chunk_types` to restrict results to specific chunk types (e.g. `["function"]`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextBuildRequest"
+            examples:
+              codegen_context:
+                summary: Codegen — build context for adding rate limiting
+                value:
+                  query: "add rate limiting to login endpoint"
+                  collections: [code, docs]
+                  filters:
+                    project: auth-service
+                  strategy:
+                    groups: [examples, patterns, constraints]
+                    max_chunks: 12
+                    diversity: true
+                    rerank: true
+                    chunk_types: [function, class]
+                    boost:
+                      _promoted: true
+      responses:
+        "200":
+          description: Grouped context blocks with formatted prompt context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextBuildResponse"
+        "422":
+          description: strategy.groups must not be empty
+
+  /context/compress:
+    post:
+      tags: [Context]
+      summary: Compress context to fit token budget
+      operationId: context_compress
+      description: |
+        Reduces context size via one of three strategies:
+        - **summarize**: LLM-generated summary of the full context
+        - **deduplicate**: Drop near-duplicate chunks (cosine similarity > 0.9)
+        - **merge**: Group chunks by source file, concatenate per file
+
+        Accepts either a `chunks` list (from `/context/build`) or a raw `context` string.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextCompressRequest"
+            examples:
+              deduplicate:
+                summary: Deduplicate a chunk list
+                value:
+                  strategy: deduplicate
+                  chunks:
+                    - chunk_id: abc123
+                      score: 0.92
+                      content: "func loginUser(...) { ... }"
+                      metadata:
+                        file_path: src/auth.go
+              summarize:
+                summary: Summarize to 500 tokens
+                value:
+                  strategy: summarize
+                  max_tokens: 500
+                  context: "Long context text here..."
+      responses:
+        "200":
+          description: Compressed context string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextCompressResponse"
+        "422":
+          description: Must provide either chunks or context
+
+  # ─── Agent-Preset Search ──────────────────────────────────────────────────
+
+  /search/code:
+    post:
+      tags: [Query]
+      summary: Code-tuned semantic search
+      operationId: search_code
+      description: |
+        Pre-tuned semantic search restricted to code chunks only.
+        Automatically filters to `chunk_type` in: function, class, method, struct, interface.
+        Avoids repeating filter configuration in agents that always want code context.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentSearchRequest"
+      responses:
+        "200":
+          description: Code chunks ranked by embedding similarity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+
+  /search/docs:
+    post:
+      tags: [Query]
+      summary: Docs-tuned semantic search
+      operationId: search_docs
+      description: |
+        Pre-tuned semantic search restricted to documentation chunks only.
+        Automatically filters to `chunk_type` in: section, paragraph.
+        Avoids repeating filter configuration in agents that always want doc context.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentSearchRequest"
+      responses:
+        "200":
+          description: Documentation chunks ranked by embedding similarity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+
+  # ─── Feedback ─────────────────────────────────────────────────────────────
+
+  /feedback:
+    post:
+      tags: [Feedback]
+      summary: Record a quality signal on a chunk
+      operationId: record_feedback
+      description: |
+        Appends a feedback signal to a chunk's Qdrant payload.
+        Signals accumulate over time and are queryable via `_feedback_signals`.
+
+        Use `/promote` to surface high-quality chunks in future `/context/build` calls
+        via `strategy.boost: {"_promoted": true}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedbackRequest"
+            examples:
+              mark_useful:
+                summary: Mark a chunk as useful
+                value:
+                  chunk_id: abc-123
+                  signal: useful
+                  source: code_review
+                  collection: code
+      responses:
+        "200":
+          description: Feedback recorded; running totals returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackResponse"
+        "404":
+          description: chunk_id not found in collection
+
+  /promote:
+    post:
+      tags: [Feedback]
+      summary: Promote a chunk to a golden target
+      operationId: promote_chunk
+      description: |
+        Sets `_promoted: true` and `_promotion_target` on a chunk's payload.
+        Promoted chunks can be surfaced first in `/context/build` via
+        `strategy.boost: {"_promoted": true}`.
+
+        Common target: `"golden_patterns"` (matches the optional collection name in RATIONALE).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PromoteRequest"
+            examples:
+              promote_to_golden:
+                summary: Promote to golden_patterns
+                value:
+                  chunk_id: abc-123
+                  target: golden_patterns
+                  collection: code
+      responses:
+        "200":
+          description: Chunk promoted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromoteResponse"
+        "404":
+          description: chunk_id not found in collection
+
+  # ─── Metadata ─────────────────────────────────────────────────────────────
+
+  /metadata/schema:
+    get:
+      tags: [Metadata]
+      summary: Get metadata field schema
+      operationId: get_metadata_schema
+      description: Returns the current list of recognized metadata field names.
+      responses:
+        "200":
+          description: Current metadata schema
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetadataSchemaResponse"
+
+    post:
+      tags: [Metadata]
+      summary: Update metadata field schema
+      operationId: set_metadata_schema
+      description: Replace the metadata field schema with a new list of fields.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetadataSchemaRequest"
+      responses:
+        "200":
+          description: Updated schema
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetadataSchemaResponse"
+        "422":
+          description: fields must not be empty
+
+  /metadata/enrich:
+    post:
+      tags: [Metadata]
+      summary: AI-enrich chunk metadata
+      operationId: enrich_chunk
+      description: |
+        Uses an LLM to infer metadata fields for an existing chunk and persists them
+        to the Qdrant payload. Optionally merges inferred values into the chunk's `tags`.
+
+        Useful for retroactively adding `quality`, `topic`, `pattern` to indexed chunks.
+        Quality values: `approved | review_needed | low_quality`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnrichRequest"
+            examples:
+              enrich_quality_topic:
+                summary: Infer quality and topic
+                value:
+                  chunk_id: abc-123
+                  collection: code
+                  infer: [topic, quality, pattern]
+                  add_tags: true
+      responses:
+        "200":
+          description: Inferred fields and tags added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnrichResponse"
+        "404":
+          description: chunk_id not found in collection
+
+  # ─── Collections ──────────────────────────────────────────────────────────
+
+  /collections:
+    get:
+      tags: [Collections]
+      summary: List collections
+      operationId: list_collections
+      responses:
+        "200":
+          description: All Qdrant collections
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  collections:
+                    type: array
+                    items:
+                      type: string
+                    examples: [[r3_rag, r3_rag_code, r3_rag_docs]]
+
+    post:
+      tags: [Collections]
+      summary: Create a collection
+      operationId: create_collection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CollectionCreateRequest"
+      responses:
+        "201":
+          description: Collection created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  dimensions:
+                    type: integer
+                  status:
+                    type: string
+                    examples: [created]
+
+  /collections/{name}:
+    delete:
+      tags: [Collections]
+      summary: Delete a collection
+      operationId: delete_collection
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Collection deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  status:
+                    type: string
+                    examples: [deleted]
+        "404":
+          description: Collection not found
+
+  /collections/{name}/stats:
+    get:
+      tags: [Collections]
+      summary: Collection statistics
+      operationId: get_collection_stats
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Collection statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionStats"
+        "404":
+          description: Collection not found
+
+# ─── Components ─────────────────────────────────────────────────────────────
+
+components:
+  schemas:
+
+    # ── Ingest ──────────────────────────────────────────────────────────────
+
+    IngestOptions:
+      type: object
+      description: Options controlling ingestion behaviour
+      properties:
+        recursive:
+          type: boolean
+          default: true
+          description: Traverse subdirectories recursively
+        max_depth:
+          type: integer
+          default: 20
+          description: Maximum directory depth when recursive is true
+        exclude_patterns:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Glob patterns for paths to skip (e.g. ["**/.git/**", "**/node_modules/**"])
+        force_reindex:
+          type: boolean
+          default: false
+          description: Re-ingest files even if their content hash is unchanged
+        collection:
+          type: string
+          nullable: true
+          description: Target collection name; uses the default collection if omitted
+        enable_routing:
+          type: boolean
+          nullable: true
+          description: Route files to type-specific collections (e.g. r3_rag_code, r3_rag_docs)
+        enable_ai_routing:
+          type: boolean
+          nullable: true
+          description: Use AI to validate collection routing decisions
+        ai_routing_threshold:
+          type: number
+          format: float
+          nullable: true
+          description: Minimum confidence score (0–1) required for AI routing to override heuristic routing
+
+    IngestRequest:
+      type: object
+      required: [path]
+      properties:
+        path:
+          type: string
+          description: Absolute filesystem path to ingest (file or directory)
+          examples: [/repos/my-project]
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Arbitrary key-value metadata attached to every chunk from this ingestion
+        options:
+          $ref: "#/components/schemas/IngestOptions"
+
+    UrlIngestRequest:
+      type: object
+      required: [urls]
+      properties:
+        urls:
+          type: array
+          items:
+            type: string
+            format: uri
+          minItems: 1
+          description: List of URLs to fetch and ingest
+          examples: [["https://example.com/docs/api"]]
+        metadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Arbitrary key-value metadata attached to every chunk from this ingestion
+        options:
+          $ref: "#/components/schemas/IngestOptions"
+
+    FileResultResponse:
+      type: object
+      properties:
+        path:
+          type: string
+        chunks:
+          type: integer
+        status:
+          type: string
+          enum: [ok, skipped, error]
+          default: ok
+        error:
+          type: string
+          nullable: true
+        collection:
+          type: string
+          nullable: true
+        routing_confidence:
+          type: number
+          format: float
+          nullable: true
+        ai_validated:
+          type: boolean
+          default: false
+        semantic_tags:
+          type: array
+          items:
+            type: string
+
+    IngestResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+          description: Unique identifier for this ingestion job
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        is_dry_run:
+          type: boolean
+          default: false
+        dry_run_result:
+          type: object
+          nullable: true
+          additionalProperties: true
+        files_discovered:
+          type: integer
+          default: 0
+        files_processed:
+          type: integer
+          default: 0
+        files_skipped:
+          type: integer
+          default: 0
+        total_chunks:
+          type: integer
+          default: 0
+        collections_used:
+          type: array
+          items:
+            type: string
+        ai_validated_count:
+          type: integer
+          default: 0
+        errors:
+          type: array
+          items:
+            type: string
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileResultResponse"
+          description: Per-file breakdown of ingestion results
+        current_step:
+          type: string
+          nullable: true
+          description: Current processing step (while status is processing)
+
+    IngestJobSummary:
+      type: object
+      properties:
+        job_id:
+          type: string
+        path:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        is_dry_run:
+          type: boolean
+        files_discovered:
+          type: integer
+        total_chunks:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    DryRunResponse:
+      type: object
+      properties:
+        job_id:
+          type: string
+        is_dry_run:
+          type: boolean
+          default: true
+        files_discovered:
+          type: integer
+        total_chunks:
+          type: integer
+        files:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          description: Per-file details including chunk previews
+
+    # ── Query ────────────────────────────────────────────────────────────────
+
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Natural language or code search query
+          examples: [how does authentication work]
+        filters:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: |
+            Qdrant filter payload. Keys are metadata field names.
+            Example: {"language": "python", "chunk_type": "function"}
+        limit:
+          type: integer
+          default: 10
+          minimum: 1
+          maximum: 100
+          description: Maximum number of results to return
+        score_threshold:
+          type: number
+          format: float
+          nullable: true
+          description: Minimum embedding similarity score (0–1); results below this are excluded
+        collection:
+          type: string
+          nullable: true
+          description: Single collection to search; uses the default collection if omitted
+        collections:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Search across multiple collections; results are merged and re-ranked
+        rewrite:
+          type: boolean
+          default: false
+          description: |
+            If true, auto-expand the query via LLM before embedding.
+            Equivalent to calling `/query/rewrite` first and passing `expanded` as the query.
+        hybrid:
+          type: boolean
+          default: false
+          description: |
+            If true, combine vector search with full-text keyword search.
+            Chunks matching both get a score boost (configurable via `hybrid_weight`).
+            Requires a content TEXT index on the collection (applied automatically on first ingest).
+        hybrid_weight:
+          type: number
+          format: float
+          default: 1.15
+          minimum: 0.5
+          maximum: 3.0
+          description: |
+            Score multiplier applied to chunks that match both vector and keyword search
+            when `hybrid: true`. Default 1.15 (15% boost). Ignored when `hybrid: false`.
+        offset:
+          type: integer
+          default: 0
+          minimum: 0
+          description: |
+            Skip this many results before returning. Use with `next_cursor` from a previous
+            response to page through ranked results. Note: large offsets may degrade
+            performance in Qdrant.
+        filter_mode:
+          type: string
+          enum: [strict, flexible]
+          default: flexible
+          description: |
+            Controls filter key validation.
+            - flexible (default): All filter keys are passed through to Qdrant as-is.
+            - strict: Only known metadata field keys are allowed; unknown keys return 422.
+              Known keys: project, repo, language, layer, quality, tags, chunk_type,
+              file_path, file_category.
+        debug:
+          type: boolean
+          default: false
+          description: |
+            If true, include `score_breakdown` on each result showing how the final score
+            was computed (embedding similarity, hybrid match, feedback penalty).
+
+    SearchResult:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+        score:
+          type: number
+          format: float
+          description: Embedding cosine similarity score (0–1), after all adjustments
+        content:
+          type: string
+          description: Raw text content of the chunk
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Chunk metadata (file_path, language, chunk_type, etc.)
+        score_breakdown:
+          type: object
+          nullable: true
+          description: |
+            Score component breakdown when `debug: true` is set on the request.
+            Fields: embedding (raw cosine), hybrid_match (bool), penalty (multiplier),
+            freshness (multiplier), boost (multiplier), final (resulting score).
+          additionalProperties: true
+
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+        query:
+          type: string
+          description: Echo of the original query
+        total:
+          type: integer
+          description: Number of results returned
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Present when more results may be available. Pass this value as `offset` in
+            the next request to retrieve the next page. Null when this is the last page.
+        debug_info:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: |
+            Present when `debug: true`. Contains:
+            - timing_ms: object with embedding_ms, search_ms, total_ms (all floats)
+            - Other diagnostics from the search pass.
+
+    AskRequest:
+      type: object
+      required: [question]
+      properties:
+        question:
+          type: string
+          examples: [What classes handle user authentication?]
+        filters:
+          type: object
+          additionalProperties: true
+          nullable: true
+        context_limit:
+          type: integer
+          default: 5
+          minimum: 1
+          maximum: 20
+          description: Number of chunks to include as LLM context
+        model:
+          type: string
+          nullable: true
+          description: Override the generation model (Ollama model name)
+        collection:
+          type: string
+          nullable: true
+        collections:
+          type: array
+          items:
+            type: string
+          nullable: true
+        rewrite:
+          type: boolean
+          default: false
+          description: If true, auto-expand the question via LLM before retrieval.
+        hybrid:
+          type: boolean
+          default: false
+          description: Enable hybrid (vector + keyword) retrieval, same as in /search.
+        hybrid_weight:
+          type: number
+          format: float
+          default: 1.15
+          minimum: 0.5
+          maximum: 3.0
+          description: Score multiplier for hybrid-matched chunks. Requires `hybrid: true`.
+        score_threshold:
+          type: number
+          format: float
+          nullable: true
+          description: Minimum similarity score for retrieved chunks. Same as in /search.
+        filter_mode:
+          type: string
+          enum: [strict, flexible]
+          default: flexible
+          description: Filter key validation mode. Same as in /search.
+
+    SourceReference:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+        file_path:
+          type: string
+          nullable: true
+        score:
+          type: number
+          format: float
+
+    AskResponse:
+      type: object
+      properties:
+        answer:
+          type: string
+          description: LLM-generated answer
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceReference"
+          description: Chunks used as context, ranked by relevance
+        model:
+          type: string
+          description: Model that generated the answer
+
+    IntentRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          description: Text to classify (query, question, or task description)
+          examples: [find all SQL migrations that modify the users table]
+        context:
+          type: string
+          nullable: true
+          description: Optional caller hint to improve classification accuracy
+
+    IntentResponse:
+      type: object
+      properties:
+        intent_category:
+          type: string
+          enum:
+            - code_search
+            - documentation
+            - debugging
+            - configuration
+            - data_schema
+            - test_coverage
+            - general
+        confidence:
+          type: string
+          enum: [high, medium, low]
+        semantic_topics:
+          type: array
+          items:
+            type: string
+          description: Up to 5 lowercase semantic tags extracted from the content
+          examples: [[sql, migrations, schema, users]]
+        suggested_filters:
+          type: object
+          additionalProperties: true
+          description: Ready-to-use filter payload for a SearchRequest or AskRequest
+        suggested_query:
+          type: string
+          nullable: true
+          description: Rewritten/expanded query for better retrieval, or null if unchanged
+        reasoning:
+          type: string
+          nullable: true
+          description: Brief explanation of the classification
+
+    CompareTarget:
+      type: object
+      description: One side of a comparison — either an existing chunk or arbitrary text
+      properties:
+        chunk_id:
+          type: string
+          nullable: true
+          description: ID of an existing chunk in Qdrant
+        text:
+          type: string
+          nullable: true
+          description: Arbitrary text to embed and compare
+
+    CompareRequest:
+      type: object
+      required: [source, target]
+      properties:
+        source:
+          $ref: "#/components/schemas/CompareTarget"
+        target:
+          $ref: "#/components/schemas/CompareTarget"
+        collection:
+          type: string
+          nullable: true
+
+    CompareResponse:
+      type: object
+      properties:
+        similarity:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Cosine similarity score between the two inputs
+        method:
+          type: string
+          default: cosine
+
+    DedupRequest:
+      type: object
+      properties:
+        filters:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Restrict dedup scan to a subset of chunks
+        similarity_threshold:
+          type: number
+          format: float
+          default: 0.95
+          minimum: 0
+          maximum: 1
+          description: Pairs above this score are considered duplicates
+        limit:
+          type: integer
+          default: 50
+          minimum: 1
+          description: Maximum number of duplicate pairs to return
+        collection:
+          type: string
+          nullable: true
+
+    DuplicatePair:
+      type: object
+      properties:
+        chunk_a_id:
+          type: string
+        chunk_b_id:
+          type: string
+        similarity:
+          type: number
+          format: float
+        content_preview_a:
+          type: string
+        content_preview_b:
+          type: string
+
+    DedupResponse:
+      type: object
+      properties:
+        duplicates:
+          type: array
+          items:
+            $ref: "#/components/schemas/DuplicatePair"
+        total_checked:
+          type: integer
+          description: Number of chunks scanned during the dedup pass
+
+    # ── Context ──────────────────────────────────────────────────────────────
+
+    ContextStrategy:
+      type: object
+      description: Retrieval strategy knobs for /context/build
+      properties:
+        groups:
+          type: array
+          items:
+            type: string
+          default: [examples, patterns, constraints]
+          description: Semantic group names; each becomes a separate retrieval sub-query
+        max_chunks:
+          type: integer
+          default: 12
+          minimum: 1
+          maximum: 50
+          description: Total chunk budget, split evenly across groups
+        diversity:
+          type: boolean
+          default: true
+          description: Avoid multiple chunks from the same source file within a group
+        rerank:
+          type: boolean
+          default: true
+          description: Sort each group's final chunks by score descending
+        chunk_types:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: |
+            Restrict retrieval to specific chunk types.
+            Code types: function, class, method, struct, interface, enum, type.
+            Doc types: section, paragraph.
+          examples: [["function", "class"]]
+        boost:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: |
+            Score boost for chunks matching these payload key/value pairs.
+            Matched chunks have their score multiplied by 1.2 before selection.
+          examples: [{"_promoted": true, "project": "auth-service"}]
+        freshness_boost:
+          type: boolean
+          default: false
+          description: |
+            If true, apply a time-decay multiplier based on `source_modified_at`.
+            Factor: max(0.7, 1.0 − (days_old / 365) × 0.3).
+            Chunks without `source_modified_at` are unaffected (factor = 1.0).
+
+    ContextBuildRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Natural language task or question to build context for
+          examples: [add rate limiting to login endpoint]
+        collections:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Collections to search; uses default collection if omitted
+        filters:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Base Qdrant filter applied to all group sub-queries
+        strategy:
+          $ref: "#/components/schemas/ContextStrategy"
+        debug:
+          type: boolean
+          default: false
+          description: |
+            If true, include `score_breakdown` on each chunk in the response showing
+            how its final score was computed (embedding, freshness, boost, penalty).
+
+    ContextBlock:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Group name (e.g. "examples", "patterns", "constraints")
+        chunks:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+
+    ContextBuildResponse:
+      type: object
+      properties:
+        context_blocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextBlock"
+          description: One block per group, chunks deduplicated across blocks
+        final_prompt_context:
+          type: string
+          description: |
+            Ready-to-inject formatted string with section headers per group.
+            Paste directly into an LLM system or user message.
+
+    ContextCompressRequest:
+      type: object
+      properties:
+        chunks:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+          nullable: true
+          description: Chunks from /context/build to compress
+        context:
+          type: string
+          nullable: true
+          description: Raw context string to compress (alternative to chunks)
+        strategy:
+          type: string
+          enum: [summarize, deduplicate, group_merge, merge]
+          default: summarize
+          description: |
+            - summarize: LLM-generated summary preserving technical details
+            - deduplicate: Drop near-duplicates (cosine similarity > 0.9)
+            - group_merge: Group by source file and concatenate
+            - merge: Backward-compatible alias for group_merge
+        max_tokens:
+          type: integer
+          default: 500
+          minimum: 50
+          maximum: 4000
+          description: Target token budget for summarize strategy
+        model:
+          type: string
+          nullable: true
+          description: Override generation model for summarize strategy
+
+    ContextCompressResponse:
+      type: object
+      properties:
+        compressed_context:
+          type: string
+          description: Compressed context ready for LLM injection
+        original_chunk_count:
+          type: integer
+          description: Number of chunks (or 1 for raw context) before compression
+        strategy_applied:
+          type: string
+          description: Strategy that was used
+
+    # ── Agent Search ─────────────────────────────────────────────────────────
+
+    AgentSearchRequest:
+      type: object
+      required: [query]
+      description: Simplified search request for agent-preset endpoints
+      properties:
+        query:
+          type: string
+        filters:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Additional filters merged with the preset chunk_type filter
+        limit:
+          type: integer
+          default: 10
+          minimum: 1
+          maximum: 100
+        collections:
+          type: array
+          items:
+            type: string
+          nullable: true
+        score_threshold:
+          type: number
+          format: float
+          nullable: true
+
+    # ── Feedback ─────────────────────────────────────────────────────────────
+
+    FeedbackRequest:
+      type: object
+      required: [chunk_id, signal]
+      properties:
+        chunk_id:
+          type: string
+        signal:
+          type: string
+          enum: [useful, not_useful, high_quality]
+          description: Quality signal to record
+        source:
+          type: string
+          nullable: true
+          description: Caller context (e.g. "code_review", "codegen_agent")
+        collection:
+          type: string
+          nullable: true
+
+    FeedbackResponse:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+        signal:
+          type: string
+        total_useful:
+          type: integer
+          description: Total useful + high_quality signals recorded for this chunk
+        total_not_useful:
+          type: integer
+
+    PromoteRequest:
+      type: object
+      required: [chunk_id]
+      properties:
+        chunk_id:
+          type: string
+        target:
+          type: string
+          default: golden_patterns
+          description: |
+            Label/target for the promotion. "golden_patterns" matches the
+            optional collection name in RATIONALE.md.
+        collection:
+          type: string
+          nullable: true
+
+    PromoteResponse:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+        promoted_to:
+          type: string
+        status:
+          type: string
+          examples: [promoted]
+
+    # ── Metadata ─────────────────────────────────────────────────────────────
+
+    EnrichRequest:
+      type: object
+      required: [chunk_id]
+      properties:
+        chunk_id:
+          type: string
+        collection:
+          type: string
+          nullable: true
+        infer:
+          type: array
+          items:
+            type: string
+          default: [topic, quality, pattern]
+          description: |
+            Fields to infer via LLM. Common values:
+            - topic: primary subject area
+            - quality: approved | review_needed | low_quality
+            - pattern: architectural pattern detected (e.g. "middleware", "repository")
+        add_tags:
+          type: boolean
+          default: true
+          description: Merge inferred string values into the chunk's tags list
+
+    EnrichResponse:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+        inferred:
+          type: object
+          additionalProperties: true
+          description: LLM-inferred field values persisted to the chunk payload
+        tags_added:
+          type: array
+          items:
+            type: string
+          description: New tag values merged into the chunk's tags list
+
+    MetadataSchemaRequest:
+      type: object
+      required: [fields]
+      properties:
+        fields:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          description: New list of recognized metadata field names
+          examples: [["project", "repo", "language", "layer", "quality", "tags"]]
+
+    MetadataSchemaResponse:
+      type: object
+      properties:
+        fields:
+          type: array
+          items:
+            type: string
+          description: Current metadata field schema
+
+    # ── Collections ──────────────────────────────────────────────────────────
+
+    CollectionCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Collection name (alphanumeric and underscores)
+          examples: [my_project_docs]
+        dimensions:
+          type: integer
+          nullable: true
+          description: Vector dimensions; auto-detected from the embedding model if omitted
+
+    CollectionStats:
+      type: object
+      properties:
+        name:
+          type: string
+        points_count:
+          type: integer
+          description: Total number of vectors stored
+        vectors_count:
+          type: integer
+          default: 0
+        status:
+          type: string
+          examples: [green]
+
+    # ── Query Rewrite ─────────────────────────────────────────────────────────
+
+    RewriteRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Query to expand
+          examples: [add rate limiting to login endpoint]
+        model:
+          type: string
+          nullable: true
+          description: Override the LLM used for rewriting (Ollama model name)
+
+    RewriteResponse:
+      type: object
+      properties:
+        original:
+          type: string
+          description: The query as submitted
+        expanded:
+          type: string
+          description: |
+            The original query plus appended synonyms, symbol names, and domain terms.
+            Use this as the `query` in a follow-up `/search` or `/ask` call.
+        filters:
+          type: object
+          additionalProperties: true
+          description: |
+            Suggested metadata filters inferred from the query.
+            Ready to merge into a SearchRequest or AskRequest `filters` field.
+
+  headers:
+    X-Request-ID:
+      description: Unique UUID assigned to this request, for distributed tracing
+      schema:
+        type: string
+        format: uuid
+    X-RateLimit-Limit:
+      description: Total requests allowed per rate-limit window (placeholder)
+      schema:
+        type: integer
+    X-RateLimit-Remaining:
+      description: Requests remaining in the current window (placeholder)
+      schema:
+        type: integer
+    X-RateLimit-Reset:
+      description: Unix epoch timestamp when the current window resets (placeholder)
+      schema:
+        type: integer

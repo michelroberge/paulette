@@ -25,6 +25,7 @@ type SkillHandler struct {
 	runs             *stream.Manager
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
+	logBase          string
 }
 
 func NewSkillHandler(
@@ -35,6 +36,7 @@ func NewSkillHandler(
 	runs *stream.Manager,
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
+	logBase string,
 ) *SkillHandler {
 	return &SkillHandler{
 		registry:         registry,
@@ -44,6 +46,7 @@ func NewSkillHandler(
 		runs:             runs,
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
+		logBase:          logBase,
 	}
 }
 
@@ -71,12 +74,12 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	buildContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageBuild)
+	buildContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageBuild)
 	if buildContent == "" {
 		http.Error(w, "no build artifact available", http.StatusBadRequest)
 		return
 	}
-	archContent, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, model.StageArchitecture)
+	archContent, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, model.StageArchitecture)
 
 	existingSkills, _ := h.skillRepo.List()
 
@@ -85,13 +88,13 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "skill analysis already running", http.StatusConflict)
 		return
 	}
-	writeActivity(h.activityRepo, project.HostDir, model.StageBuild, "skills-analyze")
+	writeActivity(h.activityRepo, project.DataDir, model.StageBuild, "skills-analyze")
 
 	// Resolve the LLM provider for the Build stage before entering the goroutine.
 	prov, modelID, sa, provErr := h.resolveProvider(project.ID, project.HostDir, model.StageBuild)
 	if provErr != nil {
 		run.Emit(agent.StreamEvent{Type: "error", Content: provErr.Error()})
-		clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
+		clearActivity(h.activityRepo, project.DataDir, model.StageBuild)
 		run.Finish(h.runs)
 		run.StreamTo(w, r, 0)
 		return
@@ -100,9 +103,11 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	// Build system prompt and user message outside the goroutine.
 	systemPrompt, userMsg := agent.BuildAnalyzeSkillsRequest(buildContent, archContent, existingSkills)
 
+	runLogID := startRunLog(h.logBase, project, model.StageBuild, "skills-analyze")
+
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, model.StageBuild)
+		defer clearActivity(h.activityRepo, project.DataDir, model.StageBuild)
 
 		runStart := time.Now()
 		saTemp, saNumCtx, saStream := sa.Fields()
@@ -117,6 +122,7 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 			Stream:       saStream,
 		})
 		if err != nil {
+			failRunLog(h.logBase, project.Name, runLogID, err.Error())
 			run.Emit(agent.StreamEvent{Type: "error", Content: err.Error()})
 			return
 		}
@@ -149,14 +155,26 @@ func (h *SkillHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if hadError {
+			failRunLog(h.logBase, project.Name, runLogID, "skill analysis had errors")
 			return
 		}
+
+		// Record full prompt snapshot for tuning/inspection.
+		writePromptSnapshot(h.logBase, project.Name, runLogID, model.PromptSnapshot{
+			Stage:        string(model.StageBuild),
+			Timestamp:    time.Now(),
+			Model:        modelID,
+			SystemPrompt: systemPrompt,
+			UserMessage:  userMsg,
+			RawResponse:  fullText.String(),
+		})
+		successRunLog(h.logBase, project.Name, runLogID, nil, tokens, "skill analysis")
 
 		// Record session
 		if tokens > 0 {
 			project.AddStageTokens(model.StageBuild, tokens)
 			h.registry.Update(project)
-			recordSession(project.HostDir, model.StageBuild, model.SessionSkillAnalyze, project.Iteration, runStart, tokens)
+			recordSession(project.DataDir, model.StageBuild, model.SessionSkillAnalyze, project.Iteration, runStart, tokens)
 		}
 
 		// Check for empty response

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useRunLog } from '../hooks/useRunLog';
 import type { RunLogEntry } from '../api/runlog';
 import { getTraceFile, deleteRun, pruneRuns } from '../api/runlog';
@@ -54,13 +54,111 @@ function TraceViewer({ title, content, onClose }: TraceViewerProps) {
   );
 }
 
+interface PromptSnapshot {
+  messageId: string;
+  stage: string;
+  timestamp: string;
+  model: string;
+  connectionId?: string;
+  systemPrompt: string;
+  ragContext?: string;
+  ragSources?: Array<{ title?: string; url?: string; score?: number }>;
+  history: Array<{ id?: string; role: string; content: string; timestamp: string }>;
+  userMessage: string;
+  rawResponse: string;
+}
+
+function CollapsibleSection({ title, children, defaultOpen }: { title: string; children: ReactNode; defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="run-log-prompt-section">
+      <button className="run-log-prompt-section-toggle" onClick={() => setOpen(o => !o)}>
+        {open ? '▼' : '▶'} {title}
+      </button>
+      {open && <div className="run-log-prompt-section-content">{children}</div>}
+    </div>
+  );
+}
+
+function PromptViewer({ content, onClose }: { content: string; onClose: () => void }) {
+  let snapshot: PromptSnapshot | null = null;
+  let parseError = '';
+  try { snapshot = JSON.parse(content); } catch (e) { parseError = String(e); }
+
+  if (!snapshot || parseError) {
+    return <TraceViewer title="prompt.json" content={content} onClose={onClose} />;
+  }
+
+  const s = snapshot;
+  return (
+    <div className="run-log-trace-overlay" onClick={onClose}>
+      <div className="run-log-prompt-modal" onClick={e => e.stopPropagation()}>
+        <div className="run-log-trace-header">
+          <span className="run-log-trace-title">Full Prompt — {s.stage}</span>
+          <button className="run-log-close-btn" onClick={onClose} title="Close">✕</button>
+        </div>
+        <div className="run-log-prompt-body">
+          <div className="run-log-prompt-meta">
+            <span>Model: <code>{s.model}</code></span>
+            {s.connectionId && <span>Connection: <code>{s.connectionId}</code></span>}
+            <span>{new Date(s.timestamp).toLocaleString()}</span>
+          </div>
+
+          <CollapsibleSection title="System Prompt" defaultOpen={false}>
+            <pre className="run-log-prompt-pre">{s.systemPrompt}</pre>
+          </CollapsibleSection>
+
+          {s.ragContext && (
+            <CollapsibleSection title="RAG Context" defaultOpen={false}>
+              <pre className="run-log-prompt-pre">{s.ragContext}</pre>
+            </CollapsibleSection>
+          )}
+
+          {s.ragSources && s.ragSources.length > 0 && (
+            <CollapsibleSection title={`RAG Sources (${s.ragSources.length})`} defaultOpen={true}>
+              <ul className="run-log-prompt-sources">
+                {s.ragSources.map((src, i) => (
+                  <li key={i}>{src.title ?? src.url ?? JSON.stringify(src)}</li>
+                ))}
+              </ul>
+            </CollapsibleSection>
+          )}
+
+          {s.history.length > 0 && (
+            <CollapsibleSection title={`Conversation History (${s.history.length} messages)`} defaultOpen={true}>
+              <div className="run-log-prompt-history">
+                {s.history.map((msg, i) => (
+                  <div key={i} className={`run-log-prompt-msg run-log-prompt-msg-${msg.role}`}>
+                    <span className="run-log-prompt-role">{msg.role}</span>
+                    <pre className="run-log-prompt-pre">{msg.content}</pre>
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+          )}
+
+          <div className="run-log-prompt-section">
+            <div className="run-log-prompt-section-label">User Message</div>
+            <pre className="run-log-prompt-pre run-log-prompt-user">{s.userMessage}</pre>
+          </div>
+
+          <CollapsibleSection title="Raw Response" defaultOpen={true}>
+            <pre className="run-log-prompt-pre">{s.rawResponse}</pre>
+          </CollapsibleSection>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface EntryRowProps {
   entry: RunLogEntry;
   onViewTrace: (filename: string, runId: string) => void;
+  onViewPrompt: (filename: string, runId: string) => void;
   onDelete: (runId: string) => void;
 }
 
-function EntryRow({ entry, onViewTrace, onDelete }: EntryRowProps) {
+function EntryRow({ entry, onViewTrace, onViewPrompt, onDelete }: EntryRowProps) {
   const [expanded, setExpanded] = useState(false);
   const hasDetail = !!entry.error || (entry.artifacts && entry.artifacts.length > 0) || !!entry.notes || (entry.stepLogs && entry.stepLogs.length > 0);
 
@@ -172,6 +270,18 @@ function EntryRow({ entry, onViewTrace, onDelete }: EntryRowProps) {
                 <div className="run-log-notes-full">{entry.notes}</div>
               </div>
             )}
+            {entry.promptLog && (
+              <div className="run-log-detail-section">
+                <div className="run-log-detail-label">Prompt</div>
+                <code
+                  className="run-log-trace-link"
+                  title="View full prompt sent to AI"
+                  onClick={e => { e.stopPropagation(); onViewPrompt(entry.promptLog!, entry.id); }}
+                >
+                  View full prompt →
+                </code>
+              </div>
+            )}
           </td>
         </tr>
       )}
@@ -185,6 +295,8 @@ export function RunLogView({ projectId, onClose }: Readonly<Props>) {
   const [stageFilter, setStageFilter] = useState<string>('all');
   const [traceContent, setTraceContent] = useState<{ title: string; content: string } | null>(null);
   const [traceLoading, setTraceLoading] = useState(false);
+  const [promptContent, setPromptContent] = useState<string | null>(null);
+  const [promptLoading, setPromptLoading] = useState(false);
 
   const stages = Array.from(new Set(entries.map(e => e.stage))).sort();
 
@@ -203,6 +315,18 @@ export function RunLogView({ projectId, onClose }: Readonly<Props>) {
       setTraceContent({ title: filename, content: `Failed to load trace: ${err}` });
     } finally {
       setTraceLoading(false);
+    }
+  };
+
+  const handleViewPrompt = async (filename: string, runId: string) => {
+    setPromptLoading(true);
+    try {
+      const content = await getTraceFile(projectId, runId, filename);
+      setPromptContent(content);
+    } catch (err) {
+      setPromptContent(`{"error": "Failed to load prompt: ${err}"}`);
+    } finally {
+      setPromptLoading(false);
     }
   };
 
@@ -286,6 +410,7 @@ export function RunLogView({ projectId, onClose }: Readonly<Props>) {
                   key={entry.id}
                   entry={entry}
                   onViewTrace={handleViewTrace}
+                  onViewPrompt={handleViewPrompt}
                   onDelete={handleDelete}
                 />
               ))}
@@ -308,6 +433,18 @@ export function RunLogView({ projectId, onClose }: Readonly<Props>) {
           content={traceContent.content}
           onClose={() => setTraceContent(null)}
         />
+      )}
+
+      {promptLoading && (
+        <div className="run-log-trace-overlay">
+          <div className="run-log-trace-modal">
+            <div className="run-log-loading">Loading prompt…</div>
+          </div>
+        </div>
+      )}
+
+      {promptContent && !promptLoading && (
+        <PromptViewer content={promptContent} onClose={() => setPromptContent(null)} />
       )}
     </div>
   );

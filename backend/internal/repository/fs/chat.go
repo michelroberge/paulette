@@ -15,12 +15,12 @@ func NewChatRepo() *ChatRepo {
 	return &ChatRepo{}
 }
 
-func chatFilePath(hostDir string, stage model.StageName) string {
-	return filepath.Join(hostDir, factoryDir, string(stage), "chat-history.json")
+func chatFilePath(dataDir string, stage model.StageName) string {
+	return filepath.Join(dataDir, string(stage), "chat-history.json")
 }
 
-func (r *ChatRepo) GetHistory(hostDir string, stage model.StageName) ([]model.Message, error) {
-	p := chatFilePath(hostDir, stage)
+func (r *ChatRepo) GetHistory(dataDir string, stage model.StageName) ([]model.Message, error) {
+	p := chatFilePath(dataDir, stage)
 	b, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -35,8 +35,8 @@ func (r *ChatRepo) GetHistory(hostDir string, stage model.StageName) ([]model.Me
 	return history.Messages, nil
 }
 
-func (r *ChatRepo) AppendMessage(hostDir string, stage model.StageName, msg model.Message) error {
-	messages, err := r.GetHistory(hostDir, stage)
+func (r *ChatRepo) AppendMessage(dataDir string, stage model.StageName, msg model.Message) error {
+	messages, err := r.GetHistory(dataDir, stage)
 	if err != nil {
 		return err
 	}
@@ -48,7 +48,7 @@ func (r *ChatRepo) AppendMessage(hostDir string, stage model.StageName, msg mode
 		return fmt.Errorf("marshal chat history: %w", err)
 	}
 
-	p := chatFilePath(hostDir, stage)
+	p := chatFilePath(dataDir, stage)
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return fmt.Errorf("create chat dir: %w", err)
 	}

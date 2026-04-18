@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,15 +13,40 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/michelroberge/paulette/backend/internal/agent"
 	"github.com/michelroberge/paulette/backend/internal/model"
 	"github.com/michelroberge/paulette/backend/internal/pipeline"
 	"github.com/michelroberge/paulette/backend/internal/provider"
+	"github.com/michelroberge/paulette/backend/internal/rag"
 	"github.com/michelroberge/paulette/backend/internal/repository"
 	fsrepo "github.com/michelroberge/paulette/backend/internal/repository/fs"
 	"github.com/michelroberge/paulette/backend/internal/stream"
 )
+
+// providerChatAdapter adapts a provider.Provider to agent.ChatExecutor. The
+// two interfaces share the same shape but different concrete types — agent
+// cannot import provider (provider already imports agent), so this thin
+// adapter bridges the two at the handler layer.
+type providerChatAdapter struct {
+	prov provider.Provider
+}
+
+func (a providerChatAdapter) Chat(ctx context.Context, req agent.ChatExecutorRequest) (<-chan agent.StreamEvent, error) {
+	return a.prov.Chat(ctx, provider.ChatRequest{
+		Model:        req.Model,
+		SystemPrompt: req.SystemPrompt,
+		History:      req.History,
+		UserMessage:  req.UserMessage,
+		ProjectDir:   req.ProjectDir,
+		Stage:        req.Stage,
+		Temperature:  req.Temperature,
+		NumCtx:       req.NumCtx,
+		Stream:       req.Stream,
+		Format:       req.Format,
+	})
+}
 
 // connectionErrorPayload is the structured JSON payload embedded in a
 // StreamEvent{Type: "error"} Content field when the error originates from a
@@ -41,12 +68,14 @@ type ChatHandler struct {
 	providerRegistry *provider.Registry
 	stageConfig      *provider.StageConfigStore
 	connStore        *provider.ConnectionStore
+	ragClient        *rag.Client
 	logBase          string
+	regPath          string // ~/.paulette — for connection prompt resolution
 }
 
-// NewChatHandler creates a ChatHandler. providerRegistry, stageConfig, and
-// connStore may be nil — in that case every stage falls back to the Claude CLI
-// provider, preserving v0.1.0 behaviour exactly.
+// NewChatHandler creates a ChatHandler. providerRegistry, stageConfig,
+// connStore, and ragClient may be nil — in that case every stage falls back to
+// the Claude CLI provider (preserving v0.1.0 behaviour) and RAG context is skipped.
 func NewChatHandler(
 	registry repository.RegistryRepo,
 	chatRepo repository.ChatRepo,
@@ -56,7 +85,9 @@ func NewChatHandler(
 	providerRegistry *provider.Registry,
 	stageConfig *provider.StageConfigStore,
 	connStore *provider.ConnectionStore,
+	ragClient *rag.Client,
 	logBase string,
+	regPath string,
 ) *ChatHandler {
 	return &ChatHandler{
 		registry:         registry,
@@ -67,7 +98,9 @@ func NewChatHandler(
 		providerRegistry: providerRegistry,
 		stageConfig:      stageConfig,
 		connStore:        connStore,
+		ragClient:        ragClient,
 		logBase:          logBase,
+		regPath:          regPath,
 	}
 }
 
@@ -96,6 +129,22 @@ func (h *ChatHandler) buildProviderErrorEvent(hostDir string, stage model.StageN
 	return agent.StreamEvent{Type: "error", Content: string(content)}
 }
 
+// fetchRAGContext retrieves RAG knowledge context for a stage chat message.
+// Returns ("", nil) if RAG is unavailable, unhealthy, or the retrieval times out.
+func (h *ChatHandler) fetchRAGContext(stage model.StageName, message string, projectName string) (string, []rag.SourceRef) {
+	if h.ragClient == nil || !h.ragClient.IsHealthy() {
+		return "", nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ragContext, sources, err := rag.BuildStageContext(ctx, h.ragClient, stage, message, projectName)
+	if err != nil {
+		log.Printf("RAG context retrieval failed for %s: %v", stage, err)
+		return "", nil
+	}
+	return ragContext, sources
+}
+
 // resolveProvider returns the Provider, model ID, and optional stage settings to
 // use for a stage. It delegates to the Registry when one is available; otherwise
 // it falls back to the Claude CLI provider using the hardcoded stage-model map
@@ -117,6 +166,62 @@ func (h *ChatHandler) resolveProviderOp(projectID, hostDir string, stage model.S
 	return provider.NewClaudeCLIProvider(), provider.FallbackModel(stage), nil, nil
 }
 
+// applyContextStrategy decides what history to send to the LLM:
+//
+//   - Refinement mode (artifact exists): replace full history with a single
+//     synthetic assistant message containing the current artifact. The artifact
+//     IS the state — prior discussion is no longer needed.
+//
+//   - Discussion mode (no artifact yet): trim history when estimated token usage
+//     exceeds 40% of the model's context window (reserves 60% for system prompt,
+//     prior-stage artifacts, and the model's response).
+func (h *ChatHandler) applyContextStrategy(dataDir, hostDir, version string, stage model.StageName, history []model.Message, numCtx int) []model.Message {
+	currentArtifact, _ := h.artifactRepo.ReadWithFallback(dataDir, hostDir, version, stage)
+	if strings.TrimSpace(currentArtifact) != "" {
+		return []model.Message{
+			{
+				Role: model.RoleAssistant,
+				Content: fmt.Sprintf(
+					"<!-- RESPONSE:START -->\n<discussion>Here is the current document:</discussion>\n<artifact>\n%s\n</artifact>\n<!-- RESPONSE:END -->",
+					strings.TrimSpace(currentArtifact),
+				),
+				Timestamp: time.Now(),
+			},
+		}
+	}
+	budget := numCtx * 40 / 100
+	if estimateHistoryTokens(history) > budget {
+		if len(history) > 4 {
+			return history[len(history)-4:]
+		}
+	}
+	return history
+}
+
+// estimateHistoryTokens approximates the token count of history messages
+// using the chars/4 heuristic (no external tokenizer needed).
+func estimateHistoryTokens(msgs []model.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += len(m.Content) / 4
+	}
+	return total
+}
+
+// resolveNumCtx returns the effective context window size for history budgeting.
+// Priority: explicit StageAssignment.NumCtx → model capability table → 4096 fallback.
+func resolveNumCtx(sa *provider.StageAssignment, modelID string) int {
+	if sa != nil && sa.NumCtx != nil && *sa.NumCtx > 0 {
+		return *sa.NumCtx
+	}
+	if modelID != "" {
+		if n := provider.ModelNumCtx(modelID); n > 0 {
+			return n
+		}
+	}
+	return 4096
+}
+
 func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	stage := model.StageName(chi.URLParam(r, "stage"))
@@ -127,7 +232,7 @@ func (h *ChatHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	messages, err := h.chatRepo.GetHistory(project.HostDir, stage)
+	messages, err := h.chatRepo.GetHistory(project.DataDir, stage)
 	if err != nil {
 		http.Error(w, "failed to get chat history: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -200,7 +305,7 @@ func (h *ChatHandler) Resume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, err := h.chatRepo.GetHistory(project.HostDir, stage)
+	history, err := h.chatRepo.GetHistory(project.DataDir, stage)
 	if err != nil {
 		http.Error(w, "failed to get chat history: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -234,7 +339,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 		if s == stage {
 			break
 		}
-		content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, s)
+		content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, s)
 		if content != "" {
 			previousArtifacts[s] = content
 		}
@@ -242,35 +347,26 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 
 	var frameworkCfg *model.FrameworkConfig
 	if stage == model.StageUX {
-		frameworkCfg, _ = fsrepo.ReadFramework(project.HostDir)
+		frameworkCfg, _ = fsrepo.ReadFramework(project.DataDir)
 	}
 
 	var enhCtx *agent.EnhancementContext
 	if project.EnhancementVision != "" {
 		enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+		summaryPath := filepath.Join(project.DataDir, "summary.md")
 		if data, err := os.ReadFile(summaryPath); err == nil {
 			enhCtx.Summary = string(data)
 		}
-		prevVersion := findPriorIterationVersion(project.HostDir)
+		prevVersion := findPriorDataVersion(project.DataDir)
 		if prevVersion != "" {
-			priorArtifactPath := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
+			priorArtifactPath := filepath.Join(project.HostDir, "docs", prevVersion, string(stage), string(stage)+".md")
 			if data, err := os.ReadFile(priorArtifactPath); err == nil {
 				enhCtx.PriorArtifact = string(data)
 			}
 		}
 	}
 
-	systemPrompt := agent.GetSystemPrompt(stage, project.Version, previousArtifacts, frameworkCfg, enhCtx)
-
-	run := h.runs.Start(project.ID, string(stage), "chat")
-	if run == nil {
-		return nil, nil // race
-	}
-	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
-
-	// Resolve the LLM provider for this stage. For UX we use the operation-specific
-	// "ux.chat" key so mock generation can use a different connection if configured.
+	// Resolve the LLM provider for this stage first (needed for connection-aware prompts).
 	var prov provider.Provider
 	var modelID string
 	var sa *provider.StageAssignment
@@ -280,12 +376,36 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 	} else {
 		prov, modelID, sa, provErr = h.resolveProvider(project.ID, project.HostDir, stage)
 	}
+
+	// Retrieve RAG context (non-blocking, 3s timeout).
+	ragContext, _ := h.fetchRAGContext(stage, message, project.Name)
+	connID := ""
+	if sa != nil {
+		connID = sa.ConnectionID
+	}
+	store := promptStoreWithConnection(project, connID, h.regPath)
+
+	// Synthesize upstream artifacts for architecture/build stages.
+	if prov != nil {
+		applySynthesis(context.Background(), stage, project, previousArtifacts, prov, modelID, sa, store)
+	}
+
+	systemPrompt := agent.GetSystemPromptWithRAG(stage, project.Version, previousArtifacts, frameworkCfg, ragContext, store, enhCtx)
+
+	run := h.runs.Start(project.ID, string(stage), "chat")
+	if run == nil {
+		return nil, nil // race
+	}
+	writeActivity(h.activityRepo, project.DataDir, stage, "chat")
+
 	if provErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
-		clearActivity(h.activityRepo, project.HostDir, stage)
+		clearActivity(h.activityRepo, project.DataDir, stage)
 		run.Finish(h.runs)
 		return run, nil
 	}
+
+	history = h.applyContextStrategy(project.DataDir, project.HostDir, project.Version, stage, history, resolveNumCtx(sa, modelID))
 
 	saTemp, saNumCtx, saStream := sa.Fields()
 	events, chatErr := prov.Chat(run.Context(), provider.ChatRequest{
@@ -301,14 +421,14 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 	})
 	if chatErr != nil {
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
-		clearActivity(h.activityRepo, project.HostDir, stage)
+		clearActivity(h.activityRepo, project.DataDir, stage)
 		run.Finish(h.runs)
 		return run, nil
 	}
 
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, stage)
+		defer clearActivity(h.activityRepo, project.DataDir, stage)
 
 		var stageTokensAccum int
 		var accumulated strings.Builder
@@ -317,7 +437,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(stage, stageTokensAccum)
 				h.registry.Update(project)
-				recordSession(project.HostDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
+				recordSession(project.DataDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
 			}
 		}()
 
@@ -333,7 +453,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 					fullContent = accumulated.String()
 				}
 				if artifact, found := agent.ExtractArtifact(fullContent); found {
-					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
+					if err := h.artifactRepo.Write(project.DataDir, stage, artifact); err != nil {
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
 						run.Emit(agent.StreamEvent{Type: "artifact", Content: string(stage) + "/" + string(stage) + ".md"})
@@ -346,7 +466,7 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 					Content:   chatContent,
 					Timestamp: time.Now(),
 				}
-				h.chatRepo.AppendMessage(project.HostDir, stage, assistantMsg)
+				h.chatRepo.AppendMessage(project.DataDir, stage, assistantMsg)
 
 				run.Emit(agent.StreamEvent{Type: "done", Content: chatContent})
 			} else {
@@ -366,11 +486,12 @@ func (h *ChatHandler) resumeChatRun(project *model.Project, stage model.StageNam
 func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName, message string) (*stream.Run, error) {
 	// Save user message
 	userMsg := model.Message{
+		ID:        uuid.NewString(),
 		Role:      model.RoleUser,
 		Content:   message,
 		Timestamp: time.Now(),
 	}
-	if err := h.chatRepo.AppendMessage(project.HostDir, stage, userMsg); err != nil {
+	if err := h.chatRepo.AppendMessage(project.DataDir, stage, userMsg); err != nil {
 		return nil, fmt.Errorf("failed to save message: %w", err)
 	}
 
@@ -380,7 +501,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 		if s == stage {
 			break
 		}
-		content, _ := h.artifactRepo.ReadWithFallback(project.HostDir, project.Version, s)
+		content, _ := h.artifactRepo.ReadWithFallback(project.DataDir, project.HostDir, project.Version, s)
 		if content != "" {
 			previousArtifacts[s] = content
 		}
@@ -388,30 +509,54 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 
 	var frameworkCfg *model.FrameworkConfig
 	if stage == model.StageUX {
-		frameworkCfg, _ = fsrepo.ReadFramework(project.HostDir)
+		frameworkCfg, _ = fsrepo.ReadFramework(project.DataDir)
 	}
 
 	// Build enhancement context if this is an enhancement iteration
 	var enhCtx *agent.EnhancementContext
 	if project.EnhancementVision != "" {
 		enhCtx = &agent.EnhancementContext{Vision: project.EnhancementVision}
-		summaryPath := filepath.Join(project.HostDir, ".paulette", "summary.md")
+		summaryPath := filepath.Join(project.DataDir, "summary.md")
 		if data, err := os.ReadFile(summaryPath); err == nil {
 			enhCtx.Summary = string(data)
 		}
-		prevVersion := findPriorIterationVersion(project.HostDir)
+		prevVersion := findPriorDataVersion(project.DataDir)
 		if prevVersion != "" {
-			priorArtifactPath := filepath.Join(project.HostDir, ".paulette", "iterations", "v"+prevVersion, string(stage), string(stage)+".md")
+			priorArtifactPath := filepath.Join(project.HostDir, "docs", prevVersion, string(stage), string(stage)+".md")
 			if data, err := os.ReadFile(priorArtifactPath); err == nil {
 				enhCtx.PriorArtifact = string(data)
 			}
 		}
 	}
 
-	systemPrompt := agent.GetSystemPrompt(stage, project.Version, previousArtifacts, frameworkCfg, enhCtx)
+	// Resolve the LLM provider for this stage first (needed for connection-aware prompts).
+	var prov provider.Provider
+	var modelID string
+	var sa *provider.StageAssignment
+	var provErr error
+	if stage == model.StageUX {
+		prov, modelID, sa, provErr = h.resolveProviderOp(project.ID, project.HostDir, stage, provider.OperationUXChat)
+	} else {
+		prov, modelID, sa, provErr = h.resolveProvider(project.ID, project.HostDir, stage)
+	}
+
+	// Retrieve RAG context (non-blocking, 3s timeout).
+	ragContext, ragSources := h.fetchRAGContext(stage, message, project.Name)
+	connID2 := ""
+	if sa != nil {
+		connID2 = sa.ConnectionID
+	}
+	store := promptStoreWithConnection(project, connID2, h.regPath)
+
+	// Synthesize upstream artifacts for architecture/build stages.
+	if prov != nil {
+		applySynthesis(context.Background(), stage, project, previousArtifacts, prov, modelID, sa, store)
+	}
+
+	systemPrompt := agent.GetSystemPromptWithRAG(stage, project.Version, previousArtifacts, frameworkCfg, ragContext, store, enhCtx)
 
 	// Get chat history for context
-	history, err := h.chatRepo.GetHistory(project.HostDir, stage)
+	history, err := h.chatRepo.GetHistory(project.DataDir, stage)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chat history: %w", err)
 	}
@@ -425,44 +570,32 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	if run == nil {
 		return nil, nil // race: already started
 	}
-	writeActivity(h.activityRepo, project.HostDir, stage, "chat")
+	writeActivity(h.activityRepo, project.DataDir, stage, "chat")
 	runLogID := startRunLog(h.logBase, project, stage, "chat")
+	trace := newRunTrace(h.logBase, project.Name, runLogID)
 
-	// Resolve the LLM provider for this stage. UX chat uses "ux.chat" operation key.
-	var prov provider.Provider
-	var modelID string
-	var sa *provider.StageAssignment
-	var provErr error
-	if stage == model.StageUX {
-		prov, modelID, sa, provErr = h.resolveProviderOp(project.ID, project.HostDir, stage, provider.OperationUXChat)
-	} else {
-		prov, modelID, sa, provErr = h.resolveProvider(project.ID, project.HostDir, stage)
-	}
 	if provErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, provErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, provErr))
-		clearActivity(h.activityRepo, project.HostDir, stage)
+		clearActivity(h.activityRepo, project.DataDir, stage)
 		run.Finish(h.runs)
 		return run, nil
 	}
 
-	// Start LLM streaming via the resolved provider (survives client disconnect).
+	history = h.applyContextStrategy(project.DataDir, project.HostDir, project.Version, stage, history, resolveNumCtx(sa, modelID))
+	// Capture trimmed history for the prompt snapshot (closed over in goroutine).
+	historyForPrompt := history
+
+
+	// Start LLM streaming. For the Vision stage with an Ollama provider, use the
+	// structured draft→critique runner (more reliable on small models). All other
+	// cases go straight to prov.Chat.
 	saTemp, saNumCtx, saStream := sa.Fields()
-	events, chatErr := prov.Chat(run.Context(), provider.ChatRequest{
-		Model:        modelID,
-		SystemPrompt: systemPrompt,
-		History:      history,
-		UserMessage:  message,
-		ProjectDir:   project.HostDir,
-		Stage:        string(stage),
-		Temperature:  saTemp,
-		NumCtx:       saNumCtx,
-		Stream:       saStream,
-	})
+	events, chatErr := h.startChatEvents(run.Context(), prov, modelID, systemPrompt, history, message, project.HostDir, stage, saTemp, saNumCtx, saStream, trace)
 	if chatErr != nil {
 		failRunLog(h.logBase, project.Name, runLogID, chatErr.Error())
 		run.Emit(h.buildProviderErrorEvent(project.HostDir, stage, chatErr))
-		clearActivity(h.activityRepo, project.HostDir, stage)
+		clearActivity(h.activityRepo, project.DataDir, stage)
 		run.Finish(h.runs)
 		return run, nil
 	}
@@ -471,25 +604,35 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	// LIFO defer order: token tracking (1st) → run log (2nd) → clearActivity → run.Finish
 	go func() {
 		defer run.Finish(h.runs)
-		defer clearActivity(h.activityRepo, project.HostDir, stage)
+		defer clearActivity(h.activityRepo, project.DataDir, stage)
+
+		// Emit RAG source references before the first LLM chunk so the
+		// frontend can display them immediately.
+		if len(ragSources) > 0 {
+			if sourcesJSON, err := json.Marshal(ragSources); err == nil {
+				run.Emit(agent.StreamEvent{Type: "rag_sources", Content: string(sourcesJSON)})
+			}
+		}
 
 		var stageTokensAccum int
 		var accumulated strings.Builder
 		var rlErr string
 		runStart := time.Now()
-		// Run log completion — runs after token tracking (declared before it, so runs after in LIFO)
+		// Run log completion — runs after token tracking (declared before it, so runs after in LIFO).
+		// trace.flush() must run before success/fail so the step entries appear in meta.json.
 		defer func() {
+			trace.flush()
 			if rlErr != "" {
 				failRunLog(h.logBase, project.Name, runLogID, rlErr)
 			} else {
-				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.HostDir, stage, "chat"), stageTokensAccum, "")
+				successRunLog(h.logBase, project.Name, runLogID, expectedArtifacts(project.DataDir, project.HostDir, stage, "chat"), stageTokensAccum, "")
 			}
 		}()
 		defer func() {
 			if stageTokensAccum > 0 {
 				project.AddStageTokens(stage, stageTokensAccum)
 				h.registry.Update(project)
-				recordSession(project.HostDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
+				recordSession(project.DataDir, stage, model.SessionChat, project.Iteration, runStart, stageTokensAccum)
 			}
 		}()
 
@@ -509,7 +652,7 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 				}
 				// Extract and save artifact if present
 				if artifact, found := agent.ExtractArtifact(fullContent); found {
-					if err := h.artifactRepo.Write(project.HostDir, stage, artifact); err != nil {
+					if err := h.artifactRepo.Write(project.DataDir, stage, artifact); err != nil {
 						rlErr = "failed to save artifact: " + err.Error()
 						run.Emit(agent.StreamEvent{Type: "error", Content: "failed to save artifact"})
 					} else {
@@ -519,12 +662,34 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 
 				// Save assistant response without artifact block
 				chatContent := agent.StripArtifact(fullContent)
+				assistantID := uuid.NewString()
 				assistantMsg := model.Message{
+					ID:        assistantID,
 					Role:      model.RoleAssistant,
 					Content:   chatContent,
 					Timestamp: time.Now(),
 				}
-				h.chatRepo.AppendMessage(project.HostDir, stage, assistantMsg)
+				h.chatRepo.AppendMessage(project.DataDir, stage, assistantMsg)
+
+				// Write full prompt snapshot so the UI can inspect the complete interaction.
+				snapshot := model.PromptSnapshot{
+					MessageID:    assistantID,
+					Stage:        string(stage),
+					Timestamp:    time.Now(),
+					Model:        modelID,
+					ConnectionID: connID2,
+					SystemPrompt: systemPrompt,
+					RAGContext:   ragContext,
+					RAGSources:   ragSources,
+					History:      historyForPrompt,
+					UserMessage:  message,
+					RawResponse:  fullContent,
+				}
+				if fname, err := fsrepo.WriteRunPromptLog(h.logBase, project.Name, runLogID, snapshot); err == nil {
+					attachPromptLog(h.logBase, project.Name, runLogID, fname)
+				} else {
+					log.Printf("runlog: write prompt snapshot %s: %v", runLogID, err)
+				}
 
 				run.Emit(agent.StreamEvent{Type: "done", Content: chatContent})
 			} else {
@@ -539,28 +704,101 @@ func (h *ChatHandler) StartChatRun(project *model.Project, stage model.StageName
 	return run, nil
 }
 
+// startChatEvents picks between the structured Vision runner and the
+// single-shot provider Chat call, returning the event channel to drain.
+//
+// The Vision runner activates only when:
+//   - stage is Vision, AND
+//   - the resolved provider is an Ollama provider, AND
+//   - PAULETTE_VISION_TURN_RUNNER is not "off".
+//
+// Any other stage or provider falls through to prov.Chat unchanged.
+func (h *ChatHandler) startChatEvents(ctx context.Context, prov provider.Provider, modelID, systemPrompt string, history []model.Message, message, projectDir string, stage model.StageName, temp *float64, numCtx *int, stream *bool, trace *runTrace) (<-chan agent.StreamEvent, error) {
+	if visionRunnerEnabled(stage, prov) {
+		return agent.RunVisionTurn(ctx, agent.VisionTurnOptions{
+			Executor:    providerChatAdapter{prov: prov},
+			Model:       modelID,
+			History:     history,
+			UserMessage: message,
+			ProjectDir:  projectDir,
+			Stage:       string(stage),
+			Temperature: temp,
+			NumCtx:      numCtx,
+			Stream:      stream,
+			Logger:      visionLoggerFor(trace),
+		})
+	}
+	return prov.Chat(ctx, provider.ChatRequest{
+		Model:        modelID,
+		SystemPrompt: systemPrompt,
+		History:      history,
+		UserMessage:  message,
+		ProjectDir:   projectDir,
+		Stage:        string(stage),
+		Temperature:  temp,
+		NumCtx:       numCtx,
+		Stream:       stream,
+	})
+}
+
+// visionLoggerFor returns a non-nil agent.StepLogger only when trace is set.
+// Direct assignment of a nil *runTrace to the interface would produce a
+// non-nil interface whose underlying value is nil — the classic Go pitfall.
+// The agent package then calls LogStep on a nil receiver and panics.
+func visionLoggerFor(trace *runTrace) agent.StepLogger {
+	if trace == nil {
+		return nil
+	}
+	return trace
+}
+
+// visionRunnerEnabled decides whether to use the structured draft→critique
+// runner for this call. Defaults on for Ollama providers at the Vision stage;
+// can be disabled globally via PAULETTE_VISION_TURN_RUNNER=off.
+func visionRunnerEnabled(stage model.StageName, prov provider.Provider) bool {
+	if stage != model.StageVision {
+		return false
+	}
+	if os.Getenv("PAULETTE_VISION_TURN_RUNNER") == "off" {
+		return false
+	}
+	_, isOllama := prov.(*provider.OllamaProvider)
+	return isOllama
+}
+
 func sseWrite(w http.ResponseWriter, flusher http.Flusher, event agent.StreamEvent) {
 	data, _ := json.Marshal(event)
 	fmt.Fprintf(w, "data: %s\n\n", data)
 	flusher.Flush()
 }
 
-// findPriorIterationVersion finds the most recent archived iteration version.
-func findPriorIterationVersion(hostDir string) string {
-	iterDir := filepath.Join(hostDir, ".paulette", "iterations")
-	entries, err := os.ReadDir(iterDir)
+// findPriorDataVersion finds the most recent sibling version directory in the
+// working-state tree. dataDir is `{dataPath}/{id}/default/{version}`; we walk
+// up to `{dataPath}/{id}/default/` and return the highest semver sibling that
+// sorts below the current version.
+func findPriorDataVersion(dataDir string) string {
+	current := filepath.Base(dataDir)
+	parent := filepath.Dir(dataDir)
+	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return ""
 	}
 	var versions []string
 	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "v") {
-			versions = append(versions, e.Name()[1:]) // strip "v" prefix
+		if e.IsDir() && e.Name() != current {
+			versions = append(versions, e.Name())
 		}
 	}
 	if len(versions) == 0 {
 		return ""
 	}
 	sort.Strings(versions)
-	return versions[len(versions)-1]
+	// Return the highest version that is less than current
+	result := ""
+	for _, v := range versions {
+		if v < current {
+			result = v
+		}
+	}
+	return result
 }
