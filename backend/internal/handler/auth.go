@@ -23,10 +23,14 @@ const (
 
 	claudeClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	claudeTokenURL = "https://console.anthropic.com/v1/oauth/token"
-	// claudeRedirectURI = "https://console.anthropic.com/oauth/code/callback"
-	// To do : read port from config and use it here
-	claudeRedirectURI = "http://localhost:8080/callback"
-	claudeAuthBase    = "https://claude.ai/oauth/authorize"
+	// Console callback is used so paulette works on any host (not just
+	// localhost:8080). The user completes the flow by copying the CODE#STATE
+	// shown on the console success page and pasting it into the login panel
+	// (handled by LoginInput below). The in-container /callback route is kept
+	// for anyone who switches back to the localhost redirect.
+	claudeRedirectURI = "https://console.anthropic.com/oauth/code/callback"
+	// claudeRedirectURI = "http://localhost:8080/callback"
+	claudeAuthBase = "https://claude.ai/oauth/authorize"
 	// claudeScope       = "org:create_api_key user:profile user:inference"
 	claudeScope = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 )

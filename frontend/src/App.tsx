@@ -60,7 +60,7 @@ interface StageTab {
   dimmed?: boolean;
 }
 
-function getTabsForStage(stage: StageName | null, hasVisionArtifact: boolean): StageTab[] {
+function getTabsForStage(stage: StageName | null): StageTab[] {
   if (!stage || stage === 'complete') return [];
   if (stage === 'ux') return [
     { id: 'chat', label: 'Chat' },
@@ -82,7 +82,7 @@ function getTabsForStage(stage: StageName | null, hasVisionArtifact: boolean): S
   ];
   return [
     { id: 'chat', label: 'Chat' },
-    { id: 'artifact', label: 'Artifact', dimmed: stage === 'vision' && !hasVisionArtifact },
+    { id: 'artifact', label: 'Artifact' },
   ];
 }
 
@@ -123,7 +123,6 @@ function ProjectDetailPage() {
   const [buildComplete, setBuildComplete] = useState(false);
   const [hasBeads, setHasBeads] = useState(false);
   const [hasBuildArtifact, setHasBuildArtifact] = useState(false);
-  const [hasVisionArtifact, setHasVisionArtifact] = useState(false);
   const [activeRuns, setActiveRuns] = useState<ActiveRun[]>([]);
   const [btwInput, setBtwInput] = useState('');
   const [btwSending, setBtwSending] = useState(false);
@@ -299,13 +298,11 @@ function ProjectDetailPage() {
     setBuildComplete(false);
     setHasBeads(false);
     setHasBuildArtifact(false);
-    setHasVisionArtifact(false);
 
     (async () => {
       try {
         const artifact = await getArtifact(project.id, selectedStage);
         const artifactExists = !!artifact?.content?.trim();
-        if (selectedStage === 'vision') setHasVisionArtifact(artifactExists);
         if (!artifactExists) { setActiveTab('chat'); return; }
 
         if (selectedStage === 'ux') {
@@ -335,9 +332,6 @@ function ProjectDetailPage() {
   useEffect(() => {
     if (selectedStage === 'build' && artifactUpdated > 0) {
       setHasBuildArtifact(true);
-    }
-    if (selectedStage === 'vision' && artifactUpdated > 0) {
-      setHasVisionArtifact(true);
     }
   }, [artifactUpdated, selectedStage]);
 
@@ -509,7 +503,7 @@ function ProjectDetailPage() {
 
   const currentStageInfo = pipeline?.stages.find(s => s.name === selectedStage);
   const isActiveStage = currentStageInfo?.status === 'active';
-  const tabs = getTabsForStage(selectedStage, hasVisionArtifact);
+  const tabs = getTabsForStage(selectedStage);
 
   return (
     <div className="app-shell">
