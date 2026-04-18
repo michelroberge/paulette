@@ -19,9 +19,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /paulette .
 # Build bd from source against bookworm's libicu72 so the runtime binary
 # links libicui18n.so.72 (available in bookworm) instead of .so.74 (trixie-only).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libicu-dev \
+    && apt-get install -y --no-install-recommends libicu-dev git \
     && rm -rf /var/lib/apt/lists/*
-RUN CGO_ENABLED=1 go install github.com/steveyegge/beads/cmd/bd@latest
+# `go install ...@latest` fails because beads' go.mod has replace directives.
+# Clone and build in-tree so the replace directives are honored.
+RUN git clone --depth 1 --branch v1.0.2 https://github.com/steveyegge/beads.git /tmp/beads \
+    && cd /tmp/beads \
+    && CGO_ENABLED=1 go build -o /go/bin/bd ./cmd/bd \
+    && rm -rf /tmp/beads
 
 # ── Stage 3: Lightweight runtime ───────────────────────────────────────────
 FROM node:22-bookworm-slim AS runtime

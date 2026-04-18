@@ -340,18 +340,26 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 		}
 
 		var fullResponse string
+		var accumulated strings.Builder
 		for event := range events {
 			if event.Type == "plan_limit" {
 				run.Emit(event)
 				return
 			} else if event.Type == "done" {
+				// "done" Content is the full accumulated response for some providers
+				// (e.g. Claude CLI, Anthropic). Others (e.g. Ollama chat stream) emit
+				// "done" with empty Content — fall back to accumulated chunks.
 				fullResponse = event.Content
+				if fullResponse == "" {
+					fullResponse = accumulated.String()
+				}
 			} else if event.Type == "tokens" {
 				var n int
 				fmt.Sscanf(event.Content, "%d", &n)
 				generateTokens += n
 				run.Emit(event)
 			} else if event.Type == "chunk" {
+				accumulated.WriteString(event.Content)
 				run.Emit(event)
 			}
 		}
@@ -381,9 +389,15 @@ func (h *BeadHandler) StartGenerateRun(project *model.Project) (*stream.Run, err
 				return nil, fixErr
 			}
 			var fixResp string
+			var fixAccum strings.Builder
 			for e := range fixEvents {
 				if e.Type == "done" {
 					fixResp = e.Content
+					if fixResp == "" {
+						fixResp = fixAccum.String()
+					}
+				} else if e.Type == "chunk" {
+					fixAccum.WriteString(e.Content)
 				}
 			}
 			raw, ok := agent.ExtractBeadJSON(fixResp)
