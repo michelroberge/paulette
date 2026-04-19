@@ -132,18 +132,6 @@ export function ChatPanel({ messages, streaming, streamingContent, onSend, onSto
       </div>
 
       <form className="chat-input" onSubmit={handleSubmit}>
-        {onGenerateArtifact && messages.length > 1 && !streaming && (
-          <button
-            type="button"
-            onClick={onGenerateArtifact}
-            style={{
-              width: '100%', padding: '0.4rem', marginBottom: '0.4rem',
-              borderRadius: '4px', fontSize: '0.8rem',
-              border: '1px solid #4caf50', background: 'transparent',
-              color: '#4caf50', cursor: 'pointer',
-            }}
-          >Generate {generateArtifactLabel || 'Artifact'}</button>
-        )}
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
@@ -152,15 +140,27 @@ export function ChatPanel({ messages, streaming, streamingContent, onSend, onSto
           disabled={streaming}
           rows={2}
         />
-        {streaming ? (
-          <button type="button" className="stop-button" onClick={onStop}>
-            Stop
-          </button>
-        ) : (
-          <button type="submit" disabled={!input.trim()}>
-            Send
-          </button>
-        )}
+        <div className="chat-input-actions">
+          {streaming ? (
+            <button type="button" className="stop-button" onClick={onStop}>
+              Stop
+            </button>
+          ) : (
+            <button type="submit" disabled={!input.trim()}>
+              Send
+            </button>
+          )}
+          {onGenerateArtifact && messages.length > 1 && !streaming && (
+            <button
+              type="button"
+              onClick={onGenerateArtifact}
+              className="chat-input-generate"
+              title={`Generate ${generateArtifactLabel || 'Artifact'}`}
+            >
+              Generate
+            </button>
+          )}
+        </div>
       </form>
     </div>
   );

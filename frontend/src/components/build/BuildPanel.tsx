@@ -35,7 +35,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
     setLocalRefresh(prev => prev + 1);
   }, []);
 
-  const { graph, setGraph, phase, loading, executionLog, streamingText, generateTokens, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit } = useBeads(projectId);
+  const { graph, setGraph, phase, loading, executionLog, streamingText, generateTokens, planLimitReached, buildError, loadGraph, generate, execute, stop, clearLog, clearPlanLimit, clearBuildError } = useBeads(projectId);
 
   const logRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
@@ -141,7 +141,7 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
             </>
           )}
           {loading && !hasBeads && !isGenerating && (
-            <BuildingAnimation />
+            <span className="execute-status-label" style={{ color: '#94a3b8' }}>Loading beads…</span>
           )}
           {!hasBeads && !isGenerating && !loading && (
             <button
@@ -149,8 +149,13 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
               onClick={handleGenerate}
               disabled={!artifactExists}
             >
-              Regenerate Beads
+              Generate Beads
             </button>
+          )}
+          {hasBeads && !isGenerating && !loading && (
+            <span className="execute-status-label" style={{ color: '#94a3b8' }}>
+              {graph.beads.length} bead{graph.beads.length !== 1 ? 's' : ''} loaded
+            </span>
           )}
         </div>
       )}
@@ -188,13 +193,13 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
                     className="generate-mock-button"
                     onClick={handleGenerate}
                   >
-                    Regenerate Beads
+                    Generate Beads
                   </button>
                 </div>
               )}
               {loading && !hasBeads && !isGenerating && (
-                <div style={{ padding: '1rem', borderTop: '1px solid #334155', display: 'flex', justifyContent: 'center' }}>
-                  <BuildingAnimation />
+                <div style={{ padding: '1rem', borderTop: '1px solid #334155', display: 'flex', justifyContent: 'center', color: '#94a3b8', fontSize: '0.85rem' }}>
+                  Loading beads…
                 </div>
               )}
             </div>
@@ -216,12 +221,21 @@ export function BuildPanel({ projectId, refreshTrigger, mode, onRequestExecuteTa
                 <button className="plan-limit-dismiss" onClick={clearPlanLimit} title="Dismiss">✕</button>
               </div>
             )}
+            {buildError && (
+              <div className="plan-limit-banner" style={{ background: '#450a0a', borderColor: '#ef4444' }}>
+                <span className="plan-limit-icon">⚠️</span>
+                <span className="plan-limit-message">
+                  AI connection error: {buildError}
+                </span>
+                <button className="plan-limit-dismiss" onClick={clearBuildError} title="Dismiss">✕</button>
+              </div>
+            )}
 
             <div className="execute-main">
               <div className="execute-graph">
                 {hasBeads ? (
                   <BeadGraph graph={graph} onBeadClick={setSelectedBeadId} />
-                ) : (isGenerating || loading) ? (
+                ) : isGenerating ? (
                   <div className="execute-paulette">
                     <BuildingAnimation />
                   </div>

@@ -655,6 +655,7 @@ body {
   padding: 1rem 1.5rem;
   border-top: 1px solid #334155;
   background: #1e293b;
+  flex-shrink: 0;
 }
 
 .chat-input textarea {
@@ -688,6 +689,34 @@ body {
 .chat-input button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.chat-input-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  align-self: stretch;
+  justify-content: flex-end;
+}
+
+.chat-input-actions .stop-button,
+.chat-input-actions button[type="submit"] {
+  align-self: auto;
+}
+
+.chat-input-generate {
+  padding: 0.4rem 0.75rem !important;
+  background: transparent !important;
+  color: #4caf50 !important;
+  border: 1px solid #4caf50 !important;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.chat-input-generate:hover {
+  background: rgba(76, 175, 80, 0.1) !important;
 }
 
 /* Artifact Preview */
@@ -4311,6 +4340,7 @@ pre.run-log-error-text {
 
   .chat-input {
     padding: 0.5rem 0.75rem;
+    flex-shrink: 0;
   }
 
   .chat-input textarea {
@@ -4325,6 +4355,40 @@ pre.run-log-error-text {
   .chat-input .stop-button {
     padding: 0.6rem 1rem;
     font-size: 0.85rem;
+  }
+
+  .chat-input-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  /* --- Build Wizard: ensure chat input stays visible on mobile --- */
+  .build-wizard {
+    min-height: 0;
+  }
+
+  .wizard-content {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .wizard-content > .chat-panel {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .wizard-steps {
+    padding: 0.4rem 0.6rem;
+    overflow-x: auto;
+  }
+
+  .wizard-step-label {
+    display: none;
+  }
+
+  .wizard-nav {
+    padding: 0.4rem 0.6rem;
   }
 
   /* --- Approve Bar --- */

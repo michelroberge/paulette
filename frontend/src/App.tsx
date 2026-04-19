@@ -312,10 +312,18 @@ function ProjectDetailPage() {
         } else if (selectedStage === 'build') {
           setHasBuildArtifact(true);
           const graph = await getBeadGraph(project.id);
-          if (graph?.beads?.length) {
+          const hasBeadsLocal = !!graph?.beads?.length;
+          if (hasBeadsLocal) {
             setHasBeads(true);
-            setActiveTab('execute');
             setBuildComplete(true);
+          }
+          // Restore last-visited wizard step for this project if valid.
+          const VALID_BUILD_STEPS = ['chat', 'artifact', 'skills', 'generate', 'execute'] as const;
+          const saved = localStorage.getItem(`paulette.build.wizard.${project.id}`);
+          if (saved && (VALID_BUILD_STEPS as readonly string[]).includes(saved)) {
+            setActiveTab(saved);
+          } else if (hasBeadsLocal) {
+            setActiveTab('execute');
           } else {
             setActiveTab('artifact');
           }
@@ -327,6 +335,12 @@ function ProjectDetailPage() {
       }
     })();
   }, [selectedStage]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist build wizard step per-project so returning to Build resumes where the user left off.
+  useEffect(() => {
+    if (!project || selectedStage !== 'build') return;
+    localStorage.setItem(`paulette.build.wizard.${project.id}`, activeTab);
+  }, [activeTab, selectedStage, project?.id]);
 
   // When a build artifact is produced mid-session, unblock the wizard Next button
   useEffect(() => {
@@ -343,6 +357,18 @@ function ProjectDetailPage() {
       }
     }
   }, [artifactUpdated]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Autopilot: advance build wizard past Build Plan / Skills when the orchestrator
+  // starts generating or executing beads. Skills analysis remains user-initiated,
+  // so we skip that step automatically in auto mode.
+  useEffect(() => {
+    if (selectedStage !== 'build' || !agentActive) return;
+    if (agentOperation === 'beads-generate' && (activeTab === 'artifact' || activeTab === 'skills')) {
+      setActiveTab('generate');
+    } else if (agentOperation === 'beads-execute' && (activeTab === 'artifact' || activeTab === 'skills' || activeTab === 'generate')) {
+      setActiveTab('execute');
+    }
+  }, [agentOperation, agentActive, selectedStage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll for summaryReady when at Complete stage
   useEffect(() => {

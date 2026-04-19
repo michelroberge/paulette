@@ -65,8 +65,62 @@ export function ArtifactSelectionToolbar({ projectId, stage, onArtifactUpdated }
 
   useEffect(() => {
     document.addEventListener('mouseup', handleSelection);
-    return () => document.removeEventListener('mouseup', handleSelection);
+    document.addEventListener('touchend', handleSelection);
+    document.addEventListener('selectionchange', handleSelection);
+    return () => {
+      document.removeEventListener('mouseup', handleSelection);
+      document.removeEventListener('touchend', handleSelection);
+      document.removeEventListener('selectionchange', handleSelection);
+    };
   }, [handleSelection]);
+
+  // Long-press on an artifact paragraph selects the whole block and opens the toolbar.
+  // Provides mobile parity for the desktop highlight→refine flow.
+  useEffect(() => {
+    if (mode !== 'idle') return;
+    const BLOCK_SEL = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, pre, td';
+    let timer: number | null = null;
+
+    const clear = () => {
+      if (timer != null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      const target = e.target as Element | null;
+      const artifactEl = target?.closest?.('.artifact-content');
+      if (!artifactEl) return;
+      const block = target?.closest?.(BLOCK_SEL) as Element | null;
+      if (!block) return;
+      clear();
+      timer = window.setTimeout(() => {
+        const range = document.createRange();
+        range.selectNodeContents(block);
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+        handleSelection();
+      }, 500);
+    };
+
+    const onTouchEndOrMove = () => clear();
+
+    document.addEventListener('touchstart', onTouchStart, { passive: true });
+    document.addEventListener('touchend', onTouchEndOrMove);
+    document.addEventListener('touchmove', onTouchEndOrMove);
+    document.addEventListener('touchcancel', onTouchEndOrMove);
+    return () => {
+      clear();
+      document.removeEventListener('touchstart', onTouchStart);
+      document.removeEventListener('touchend', onTouchEndOrMove);
+      document.removeEventListener('touchmove', onTouchEndOrMove);
+      document.removeEventListener('touchcancel', onTouchEndOrMove);
+    };
+  }, [handleSelection, mode]);
 
   const handleFineTune = () => {
     setMode('finetune');

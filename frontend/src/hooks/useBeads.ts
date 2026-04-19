@@ -13,6 +13,7 @@ export function useBeads(projectId: string | null) {
   const [streamingText, setStreamingText] = useState('');
   const [planLimitReached, setPlanLimitReached] = useState(false);
   const [generateTokens, setGenerateTokens] = useState(0);
+  const [buildError, setBuildError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const loadGraph = useCallback(async () => {
@@ -86,6 +87,8 @@ export function useBeads(projectId: string | null) {
         break;
       case 'error':
         setExecutionLog(l => [...l, `ERROR: ${event.content}`]);
+        setBuildError(event.content || 'Unknown error');
+        setPhase(prev => prev === 'generating' || prev === 'executing' ? 'graph' : prev);
         break;
     }
   }, []);
@@ -187,6 +190,7 @@ export function useBeads(projectId: string | null) {
     setStreamingText('');
     setGenerateTokens(0);
     setPlanLimitReached(false);
+    setBuildError(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -202,6 +206,7 @@ export function useBeads(projectId: string | null) {
     } catch (err) {
       if (err instanceof Error && err.name !== 'AbortError') {
         setExecutionLog(l => [...l, `ERROR: ${err.message}`]);
+        setBuildError(err.message);
         setPhase('plan');
       }
     } finally {
@@ -215,6 +220,7 @@ export function useBeads(projectId: string | null) {
     setExecutionLog([]);
     setStreamingText('');
     setPlanLimitReached(false);
+    setBuildError(null);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -229,6 +235,7 @@ export function useBeads(projectId: string | null) {
     } catch (err) {
       if (err instanceof Error && err.name !== 'AbortError') {
         setExecutionLog(l => [...l, `ERROR: ${err.message}`]);
+        setBuildError(err.message);
         setPhase('graph');
       }
     } finally {
@@ -238,6 +245,7 @@ export function useBeads(projectId: string | null) {
 
   const clearLog = useCallback(() => setExecutionLog([]), []);
   const clearPlanLimit = useCallback(() => setPlanLimitReached(false), []);
+  const clearBuildError = useCallback(() => setBuildError(null), []);
 
-  return { graph, setGraph, phase, loading, executionLog, streamingText, generateTokens, planLimitReached, loadGraph, generate, execute, stop, clearLog, clearPlanLimit };
+  return { graph, setGraph, phase, loading, executionLog, streamingText, generateTokens, planLimitReached, buildError, loadGraph, generate, execute, stop, clearLog, clearPlanLimit, clearBuildError };
 }
