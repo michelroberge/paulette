@@ -23,9 +23,59 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// rateLimitMaxRetries bounds how many 429s we tolerate per request before giving up.
+// With exponential backoff capped at 60s, 8 retries ⇒ ≤ ~4 minutes total wait.
+const rateLimitMaxRetries = 8
+
+// rateLimitBackoffCap is the upper bound on any single retry wait.
+const rateLimitBackoffCap = 60 * time.Second
+
+// waitForRateLimitRetry sleeps before retrying a 429 response. It honors a
+// Retry-After header (delta-seconds or HTTP-date) when present, otherwise falls
+// back to exponential backoff min(2^attempt, 60s). Returns false if the context
+// was cancelled — callers should abort the retry loop.
+func waitForRateLimitRetry(ctx context.Context, attempt int, resp *http.Response) bool {
+	delay := rateLimitRetryDelay(attempt, resp)
+	log.Printf("[openai-compat] rate limited (429), retrying in %v (attempt %d/%d)", delay, attempt+1, rateLimitMaxRetries)
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(delay):
+		return true
+	}
+}
+
+func rateLimitRetryDelay(attempt int, resp *http.Response) time.Duration {
+	if resp != nil {
+		if h := resp.Header.Get("Retry-After"); h != "" {
+			if secs, err := strconv.Atoi(strings.TrimSpace(h)); err == nil && secs > 0 {
+				d := time.Duration(secs) * time.Second
+				if d > rateLimitBackoffCap {
+					d = rateLimitBackoffCap
+				}
+				return d
+			}
+			if t, err := http.ParseTime(h); err == nil {
+				if d := time.Until(t); d > 0 {
+					if d > rateLimitBackoffCap {
+						d = rateLimitBackoffCap
+					}
+					return d
+				}
+			}
+		}
+	}
+	d := time.Duration(1<<attempt) * time.Second
+	if d > rateLimitBackoffCap || d <= 0 {
+		d = rateLimitBackoffCap
+	}
+	return d
+}
 
 // ── OpenAI-compatible request / response types ────────────────────────────────
 
@@ -159,10 +209,10 @@ func openAICompatChat(
 
 	log.Printf("[openai-compat] sending request to %s ...", url)
 
-	// Retry loop for rate limiting (HTTP 429)
+	// Retry loop for rate limiting (HTTP 429). Exponential backoff capped at 60s,
+	// honors Retry-After when provided by the upstream API (e.g. Groq).
 	var resp *http.Response
-	maxRetries := 5
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	for attempt := 0; attempt <= rateLimitMaxRetries; attempt++ {
 		if attempt > 0 {
 			// Re-create the request for retry (body was consumed)
 			httpReq, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyData))
@@ -184,17 +234,15 @@ func openAICompatChat(
 		log.Printf("[openai-compat] HTTP status: %d", resp.StatusCode)
 
 		if resp.StatusCode == http.StatusTooManyRequests {
-			_ = resp.Body.Close()
-			if attempt < maxRetries {
-				backoff := time.Duration(15*(attempt+1)) * time.Second
-				log.Printf("[openai-compat] rate limited (429), retrying in %v (attempt %d/%d)", backoff, attempt+1, maxRetries)
-				select {
-				case <-ctx.Done():
+			if attempt < rateLimitMaxRetries {
+				proceed := waitForRateLimitRetry(ctx, attempt, resp)
+				_ = resp.Body.Close()
+				if !proceed {
 					return nil, ctx.Err()
-				case <-time.After(backoff):
-					continue
 				}
+				continue
 			}
+			_ = resp.Body.Close()
 		}
 
 		if resp.StatusCode == http.StatusOK {
@@ -521,18 +569,35 @@ func doOpenAIRound(
 	if err != nil {
 		return nil, fmt.Errorf("openai-compat execute-agent: marshal: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("openai-compat execute-agent: create request: %w", err)
+
+	var resp *http.Response
+	for attempt := 0; attempt <= rateLimitMaxRetries; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, fmt.Errorf("openai-compat execute-agent: create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		for k, v := range extraHeaders {
+			httpReq.Header.Set(k, v)
+		}
+		resp, err = client.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("openai-compat execute-agent: request: %w", err)
+		}
+		if resp.StatusCode != http.StatusTooManyRequests {
+			break
+		}
+		if attempt >= rateLimitMaxRetries {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("openai-compat execute-agent: exhausted retries due to rate limiting")
+		}
+		proceed := waitForRateLimitRetry(ctx, attempt, resp)
+		_ = resp.Body.Close()
+		if !proceed {
+			return nil, ctx.Err()
+		}
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	for k, v := range extraHeaders {
-		httpReq.Header.Set(k, v)
-	}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("openai-compat execute-agent: request: %w", err)
-	}
+
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
