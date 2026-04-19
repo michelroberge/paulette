@@ -31,12 +31,20 @@
   heading and opens the toolbar.
   (`ArtifactSelectionToolbar.tsx`)
 
+- **BeadDetailPanel stuck on "Loading..."**: follow-up fix. `useBeadDetail`
+  now guards `loadDetail` with a 15s timeout, exposes a `loadError` state,
+  and the panel renders a dismissible error banner with a Retry button
+  instead of a permanent spinner.
+  (`useBeadDetail.ts`, `BeadDetailPanel.tsx`)
+
 ## Files touched
 
 - `frontend/src/components/chat/ChatPanel.tsx`
 - `frontend/src/components/build/BuildPanel.tsx`
+- `frontend/src/components/build/BeadDetailPanel.tsx`
 - `frontend/src/components/artifact/ArtifactSelectionToolbar.tsx`
 - `frontend/src/hooks/useBeads.ts`
+- `frontend/src/hooks/useBeadDetail.ts`
 - `frontend/src/App.tsx`
 - `frontend/src/App.css`
 

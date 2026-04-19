@@ -5,6 +5,7 @@ import type { BeadDetail, BeadGraph, InstructionPlan, Message, StreamEvent } fro
 export function useBeadDetail(projectId: string) {
   const [detail, setDetail] = useState<BeadDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [chatStreaming, setChatStreaming] = useState(false);
   const [chatStreamingContent, setChatStreamingContent] = useState('');
 
@@ -18,12 +19,20 @@ export function useBeadDetail(projectId: string) {
 
   const loadDetail = useCallback(async (beadId: string) => {
     setLoading(true);
+    setLoadError(null);
+    // Guard against a hung request leaving the UI stuck at "Loading…".
+    const timeoutId = window.setTimeout(() => {
+      setLoadError('Request timed out loading bead detail.');
+      setLoading(false);
+    }, 15000);
     try {
       const d = await getBeadDetail(projectId, beadId);
       setDetail(d);
     } catch (err) {
       console.error('Failed to load bead detail:', err);
+      setLoadError(err instanceof Error ? err.message : 'Failed to load bead detail');
     } finally {
+      window.clearTimeout(timeoutId);
       setLoading(false);
     }
   }, [projectId]);
@@ -174,6 +183,7 @@ export function useBeadDetail(projectId: string) {
   return {
     detail,
     loading,
+    loadError,
     chatStreaming,
     chatStreamingContent,
     instructStreaming,

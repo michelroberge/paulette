@@ -20,7 +20,7 @@ type ChatMode = 'ask' | 'instruct';
 
 export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelect, onClose, onBeadsUpdated, onBeadControlled }: Props) {
   const {
-    detail, loading,
+    detail, loading, loadError,
     chatStreaming, chatStreamingContent,
     instructStreaming, instructStreamingContent, instructionProposal, applyingProposal,
     beadStreaming,
@@ -156,7 +156,21 @@ export function BeadDetailPanel({ projectId, beadId, bead, allBeads, onBeadSelec
           <button className="bead-detail-close" onClick={onClose}>✕</button>
         </div>
 
-        {loading && !detail ? (
+        {loadError && (
+          <div className="plan-limit-banner" style={{ background: '#450a0a', borderColor: '#ef4444', margin: '0.5rem 1rem' }}>
+            <span className="plan-limit-icon">⚠️</span>
+            <span className="plan-limit-message">Failed to load bead: {loadError}</span>
+            <button
+              className="plan-limit-dismiss"
+              onClick={() => loadDetail(beadId)}
+              title="Retry"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {loading && !detail && !loadError ? (
           <div className="bead-detail-loading">Loading...</div>
         ) : (
           <div className="bead-detail-body">
